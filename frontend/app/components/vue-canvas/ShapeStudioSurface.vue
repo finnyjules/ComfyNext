@@ -17,7 +17,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import { mergeConfig, type GeoShapeConfig } from '~/lib/geoshape/config'
-import { renderShapes, toSvg, drawToCanvas, warmPaints, shapePaints, hasAsyncPaint } from '~/lib/geoshape/render'
+import { renderShapes, toSvg, drawToCanvas, warmPaints, shapePaints, hasAsyncPaint, framePad } from '~/lib/geoshape/render'
 import { reroll } from '~/lib/geoshape/randomize'
 import { GEO_CONTROLS, GEO_SECTIONS, visibleGeoControls, type GeoControl } from '~/lib/geoshape/controls'
 import { geoAgentControls, GEO_GUIDANCE } from '~/lib/geoshape/agentControls'
@@ -255,7 +255,7 @@ async function renderPreview() {
   try {
     const shapes = await renderShapes(config.value)
     if (token !== renderToken) return // superseded by a later render
-    drawToCanvas(shapes, ctx, el.width, el.height)
+    drawToCanvas(shapes, ctx, el.width, el.height, framePad(config.value))
     // Image/shader fills resolve to FALLBACK_FILL until their bitmap/field is
     // warmed (see render.ts's `drawToCanvas`/`warmPaints` docs) — mirrors the
     // Compositor's warm-then-paint split (`ensureLayerImages` ->
@@ -266,7 +266,7 @@ async function renderPreview() {
     if (hasAsyncPaint(paints)) {
       await warmPaints(paints, { w: el.width, h: el.height })
       if (token !== renderToken) return // a newer render superseded this warm
-      drawToCanvas(shapes, ctx, el.width, el.height)
+      drawToCanvas(shapes, ctx, el.width, el.height, framePad(config.value))
     }
   } catch (e) {
     console.error('[shape-studio] preview render failed', e)
@@ -333,7 +333,7 @@ async function rasterizePng(): Promise<Blob | null> {
   // this makes, or an image/shader fill would export `FALLBACK_FILL` gray.
   const paints = shapePaints(shapes)
   if (hasAsyncPaint(paints)) await warmPaints(paints, { w: off.width, h: off.height })
-  drawToCanvas(shapes, ctx, off.width, off.height)
+  drawToCanvas(shapes, ctx, off.width, off.height, framePad(config.value))
   return await new Promise<Blob | null>((resolve) => off.toBlob(resolve, 'image/png'))
 }
 

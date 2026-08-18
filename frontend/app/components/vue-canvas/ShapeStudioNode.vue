@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Gem, Pencil } from 'lucide-vue-next'
 import { mergeConfig } from '~/lib/geoshape/config'
-import { renderShapes, drawToCanvas } from '~/lib/geoshape/render'
+import { renderShapes, drawToCanvas, framePad } from '~/lib/geoshape/render'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
@@ -74,7 +74,7 @@ async function bakeOutput(): Promise<Blob | null> {
     canvas.height = Math.max(1, Math.round(h))
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
-    drawToCanvas(shapes, ctx, canvas.width, canvas.height)
+    drawToCanvas(shapes, ctx, canvas.width, canvas.height, framePad(cfg))
     const out = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
     if (!out) return null
     if (bakedThumb.value) URL.revokeObjectURL(bakedThumb.value)

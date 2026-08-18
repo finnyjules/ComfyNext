@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderShapes, toSvg, contentBounds } from '~/lib/geoshape/render'
+import { renderShapes, toSvg, contentBounds, framePad, fitScale } from '~/lib/geoshape/render'
 import { DEFAULT_CONFIG } from '~/lib/geoshape/config'
 import { paintToVectorPaint } from '~/lib/paint/toVector'
 import type { ImageFill } from '~/lib/compositor/paint'
@@ -40,6 +40,74 @@ describe('geoshape render', () => {
     }
     expect(maxAbsX).toBeGreaterThan(0)
     expect(maxAbsY).toBeGreaterThan(0)
+  })
+
+  // The "Padding" control is the canvas-fill lever: the live preview and the
+  // PNG bake (drawToCanvas) share `framePad`/`fitScale` with the SVG export
+  // (toSvg), so lowering padding grows the mark toward the edges everywhere,
+  // and padding 0 fills the frame edge-to-edge on its tight axis. Before this
+  // fix drawToCanvas used a fixed 0.9 margin and ignored padding entirely, so
+  // no control could make the preview/PNG fill the canvas.
+  it('framePad follows the padding control, including negative (overscan)', () => {
+    expect(framePad({ padding: 40, strokeWidth: 8 })).toBe(44)
+    expect(framePad({ padding: 0, strokeWidth: 0 })).toBe(0)
+    // Negative padding passes through (overscan) — the stroke half-width is a
+    // rounding term next to it, not a floor at 0 any more.
+    expect(framePad({ padding: -100, strokeWidth: 8 })).toBe(-96)
+  })
+
+  it('fitScale grows as padding shrinks, and pad 0 fills the tight axis edge-to-edge', () => {
+    const b = { w: 400, h: 300 }
+    const full = fitScale(b, 1024, 1024, 0)
+    const inset = fitScale(b, 1024, 1024, 100)
+    // Less padding => larger mark.
+    expect(full).toBeGreaterThan(inset)
+    // Pad 0 fits the tight (wider) axis exactly to the box: 1024 / 400.
+    expect(full).toBeCloseTo(1024 / 400, 6)
+    // Fit, never crop at pad 0: the taller axis stays within the box.
+    expect(b.h * full).toBeLessThanOrEqual(1024 + 1e-6)
+  })
+
+  it('fitScale overscans (crops to fill) on negative padding, then saturates', () => {
+    const b = { w: 400, h: 300 }
+    const touch = fitScale(b, 1024, 1024, 0)
+    const bleed = fitScale(b, 1024, 1024, -80)
+    // Negative padding grows the mark past the fit size.
+    expect(bleed).toBeGreaterThan(touch)
+    // Enough overscan makes BOTH axes exceed the box (true whole-canvas fill):
+    // the previously-letterboxed short axis now bleeds off the edges.
+    expect(b.h * bleed).toBeGreaterThan(1024)
+    // Extreme negative padding saturates instead of exploding: the padded
+    // extent floors at 20% of the raw extent, so scale caps at 5× the fit.
+    const extreme = fitScale(b, 1024, 1024, -100000)
+    expect(extreme).toBeCloseTo(1024 / (400 * 0.2), 6)
+    expect(Number.isFinite(extreme)).toBe(true)
+  })
+
+  it('toSvg keeps a positive, mark-centred viewBox even under heavy overscan', async () => {
+    const svg = await toSvg({ ...DEFAULT_CONFIG, padding: -100000 })
+    const m = svg.match(/viewBox="([^"]+)"/)
+    expect(m).toBeTruthy()
+    const [minX, minY, w, h] = (m![1].trim().split(/[\s,]+/).map(Number)) as [number, number, number, number]
+    // Never non-positive (would be an invalid SVG document / division blow-up).
+    expect(w).toBeGreaterThan(0)
+    expect(h).toBeGreaterThan(0)
+    // Still centred on the mark, so the crop is symmetric.
+    const b = contentBounds(await renderShapes(DEFAULT_CONFIG))
+    expect(minX + w / 2).toBeCloseTo(b.minX + b.w / 2, 2)
+    expect(minY + h / 2).toBeCloseTo(b.minY + b.h / 2, 2)
+  })
+
+  it('drawToCanvas and toSvg frame the mark identically (shared framePad)', async () => {
+    // toSvg's viewBox is bounds grown by framePad; drawToCanvas fits that same
+    // padded box into its output box. The scale drawToCanvas would pick for a
+    // square canvas equals output / (viewBox tight axis) — proving one framing.
+    const b = contentBounds(await renderShapes(DEFAULT_CONFIG))
+    const pad = framePad(DEFAULT_CONFIG)
+    const viewW = b.w + pad * 2
+    const viewH = b.h + pad * 2
+    const canvasScale = fitScale(b, 1024, 1024, pad)
+    expect(canvasScale).toBeCloseTo(Math.min(1024 / viewW, 1024 / viewH), 6)
   })
 
   it('viewBox contains the actual rendered geometry (regression: static-size cropping)', async () => {

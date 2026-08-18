@@ -104,6 +104,50 @@ export function contentBounds(shapes: VectorShape[]): { minX: number; minY: numb
 }
 
 /**
+ * The frame margin (document units) laid around the mark on every side — the
+ * ONE definition shared by `toSvg`'s viewBox and `drawToCanvas`'s fit-to-box
+ * scale, so the SVG download, the live preview, and the PNG bake all frame the
+ * mark identically. Driven by `cfg.padding` (the "Padding" control):
+ *   > 0  insets the mark (margin around it),
+ *   = 0  fills the frame edge-to-edge on its tight axis,
+ *   < 0  overscans — the mark grows past the frame and is cropped by the edges
+ *        (how you fill the WHOLE canvas on both axes, not just the tight one).
+ * `strokeWidth/2` keeps a drawn outline from being clipped at the edge when
+ * padding is non-negative; it's a rounding term next to any real overscan.
+ */
+export function framePad(cfg: Pick<GeoShapeConfig, 'padding' | 'strokeWidth'>): number {
+  return cfg.padding + cfg.strokeWidth / 2
+}
+
+/** How far one axis of the mark may be grown when overscanning (negative pad):
+ *  the padded extent is floored at this fraction of the raw extent, so extreme
+ *  negative padding SATURATES (the mark caps at ~1/FLOOR × its fit size) instead
+ *  of the box collapsing to zero and the scale exploding. Size-independent: the
+ *  cap is relative to the mark, so it behaves the same for a tiny or huge mark. */
+const OVERSCAN_FLOOR = 0.2
+
+/** One axis's framed extent: the raw extent grown by `pad` on both sides,
+ *  floored per `OVERSCAN_FLOOR` so negative `pad` can't drive it to/below zero.
+ *  Shared by `fitScale` (preview/PNG) and `toSvg` (SVG) so all three frame the
+ *  mark identically at any padding, positive or negative. */
+function paddedExtent(dim: number, pad: number): number {
+  const d = dim || 1
+  return Math.max(d * OVERSCAN_FLOOR, d + pad * 2)
+}
+
+/**
+ * Uniform scale that fits `bounds` grown by `pad` on every side into a `w`×`h`
+ * box. Positive `pad` insets (fit — the tighter axis governs, nothing cropped);
+ * `pad === 0` touches the tight axis; negative `pad` overscans, growing the mark
+ * past the box so it crops to fill. Pure and DOM-free so it's unit-testable;
+ * `drawToCanvas` layers the canvas translate/scale on top. `pad` is in the SAME
+ * document units as `bounds` (see `framePad`).
+ */
+export function fitScale(bounds: { w: number; h: number }, w: number, h: number, pad: number): number {
+  return Math.min(w / paddedExtent(bounds.w, pad), h / paddedExtent(bounds.h, pad))
+}
+
+/**
  * `GeoShapeConfig` -> a standalone SVG document, sized to fit the ACTUAL
  * rendered geometry plus `padding` on every side.
  *
@@ -150,13 +194,19 @@ export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = 
       if (vp) s.fill = vp
     }
   }
-  const pad = Math.max(0, cfg.padding) + cfg.strokeWidth / 2
-  const w = b.w + pad * 2
-  const h = b.h + pad * 2
+  const pad = framePad(cfg)
+  // `paddedExtent` + a mark-CENTRED viewBox (rather than `minX - pad`) so the
+  // frame stays correct when negative padding overscans: the box can shrink
+  // below the mark and crop it symmetrically without going non-positive. For
+  // non-negative padding this is identical to the old `minX - pad` box.
+  const w = paddedExtent(b.w, pad)
+  const h = paddedExtent(b.h, pad)
+  const cx = b.minX + b.w / 2
+  const cy = b.minY + b.h / 2
   return shapesToSVG(shapes, {
     width: w,
     height: h,
-    viewBox: [b.minX - pad, b.minY - pad, w, h],
+    viewBox: [cx - w / 2, cy - h / 2, w, h],
     ...opts,
   })
 }
@@ -186,10 +236,12 @@ const STILL_FIELD: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, 
  * The shapes are origin-centred document-space geometry, but their real
  * extent depends on `arrange`'s knobs (`radius`/`spacing`/etc.), not on the
  * canvas size — a fixed `translate(w/2,h/2)` with no scale crops the mark
- * exactly like `toSvg`'s old static-size bug. Fitting `contentBounds` into
- * the box (90% margin so nothing touches the edge) keeps the preview/bake
- * replay honest for the same reason `toSvg` now derives its size from
- * bounds instead of a static formula.
+ * exactly like `toSvg`'s old static-size bug. Fitting `contentBounds` grown
+ * by `pad` (document units, from `framePad(cfg)`) into the box via `fitScale`
+ * keeps the preview/bake replay honest AND matches `toSvg`'s framing exactly,
+ * so the live preview, the PNG bake, and the SVG download all inset the mark
+ * by the same margin. `pad === 0` fills the box edge-to-edge on its tight axis
+ * (the "Padding" control at 0), which is how a mark is made to fill the canvas.
  *
  * Used by both the live preview and the bake path, so there is one canvas
  * replay of this geometry, matching `toSvg`'s one SVG replay.
@@ -203,11 +255,10 @@ const STILL_FIELD: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, 
  * the CALLER's job: `warmPaints` below, then call this again. That degrades
  * gracefully either way; it never throws.
  */
-export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2D, w: number, h: number): void {
+export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2D, w: number, h: number, pad = 0): void {
   ctx.clearRect(0, 0, w, h)
   const b = contentBounds(shapes)
-  const margin = 0.9
-  const scale = Math.min(w / (b.w || 1), h / (b.h || 1)) * margin
+  const scale = fitScale(b, w, h, pad)
   ctx.save()
   ctx.translate(w / 2, h / 2)
   ctx.scale(scale, scale)

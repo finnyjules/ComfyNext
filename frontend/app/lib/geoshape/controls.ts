@@ -145,7 +145,8 @@ export const GEO_CONTROLS: GeoControl[] = [
   switchC('invert', 'Invert', DEFAULT_CONFIG.invert, 'Clip'),
 
   // --- Style -------------------------------------------------------------------
-  slider('padding', 'Padding', 0, 200, 1, 'Style', DEFAULT_CONFIG.padding),
+  slider('padding', 'Padding', -400, 200, 1, 'Style', DEFAULT_CONFIG.padding,
+    'Space framed around the mark. Lower it to grow the mark toward the canvas edges; 0 fills the canvas edge-to-edge; negative overscans so the mark bleeds past the edges and crops to fill the whole canvas.'),
   slider('strokeWidth', 'Stroke width', 0, 60, 1, 'Style', DEFAULT_CONFIG.strokeWidth, undefined, { when: (c) => c.stroke !== null }),
   slider('seed', 'Seed', 1, 999999, 1, 'Style', DEFAULT_CONFIG.seed,
     'The random seed behind Re-roll; use Re-roll to generate variations.'),
@@ -198,6 +199,6 @@ COMPOSITE: fillMode is the boolean fold across all clones (evenodd = classic cut
 
 SYMMETRY mirrors the whole composed mark across symmetryAxis (vertical/horizontal), offset by symmetrySpacing. CLIP crops the finished mark to clipMask (circle/square/hexagon) sized by clipMaskSize; invert swaps the mark's fill/ground so the shape reads as negative space.
 
-STYLE: padding is the margin the SVG export keeps around the mark; strokeWidth is the outline width wherever stroke is set. seed drives irregularSeed-style jitter and re-roll — same seed, same mark.
+STYLE: padding is the margin framed around the mark in the preview, the PNG, and the SVG alike — lower it to grow the mark toward the canvas edges, 0 fills the canvas edge-to-edge, and NEGATIVE padding overscans so the mark bleeds past the edges and crops to fill the whole canvas on both axes (this is the lever for "make it bigger / fill the canvas / bleed off the edges", NOT size, which is the base shape's radius and is auto-fit into the frame). strokeWidth is the outline width wherever stroke is set. seed drives irregularSeed-style jitter and re-roll — same seed, same mark.
 
 PAINT: fill colors the mark, stroke outlines it (leave stroke unset for a fill-only flat mark, the common logo case), overlapFill only matters when overlapMode is "shape". fillStrategy switches between one flat fill (single), one colour per clone (per-clone), or per-piece colouring with its own overlap regions (pieces); fillOrder sets the sequence those colours are handed out in (creation order, depth, left-to-right, top-to-bottom, row-by-row, column-by-column, center-out, or around like a colour wheel) whenever fillStrategy isn't single, and overlapSeparate (pieces only) gives crossing regions their own colours instead of reusing the piece colours. crossingMode (pieces only) picks how those crossings are cut: "depth" gives every overlap depth one shared colour, "split" breaks each crossing into its own piece coloured by fillOrder.`
