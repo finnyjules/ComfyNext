@@ -6,12 +6,19 @@
  * and returns `{ folder, files }`. Uses server/utils/multipart.ts, NOT h3's
  * readMultipartFormData (RangeError over 64 MiB). Must be allowlisted in
  * comfyui-proxy.ts (rides the /api/moodboards prefix).
+ *
+ * Stage 6 (Task 4): every file written into the engine input dir is recorded
+ * against the caller in `input_uploads` (hosted only) so the graph-reference
+ * validator + input listing can scope it — the moodboard's images become the
+ * caller's owned inputs.
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { MOODBOARD_FOLDER_RE } from '../../../shared/taste/moodboard'
 import { moodboardInputDir, safeImageFile } from '../../utils/moodboardImages'
 import { readUploadForm } from '../../utils/multipart'
+import { canonicalUploadKey, recordUpload } from '../../utils/inputUploads'
+import { isHosted } from '../../utils/deployMode'
 
 export default defineEventHandler(async (event) => {
   const form = await readUploadForm(event)
@@ -32,10 +39,13 @@ export default defineEventHandler(async (event) => {
   const dir = path.join(moodboardInputDir(), folder)
   await fs.mkdir(dir, { recursive: true })
 
+  const hosted = isHosted()
+  const userId = event.context.userId ?? null
   const files: string[] = []
   for (const [i, part] of valid.entries()) {
     const name = `${String(i).padStart(2, '0')}_${part.base}`
     await fs.writeFile(path.join(dir, name), part.data)
+    if (hosted && userId) await recordUpload(userId, canonicalUploadKey('input', folder, name))
     files.push(name)
   }
   return { folder, files }

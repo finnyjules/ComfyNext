@@ -4,30 +4,42 @@
  * (aspects) and v2 (formats) schemas.
  */
 import { readFile, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
+import { listOwned } from '../../utils/ownedJsonStore'
+import { storeDir } from '../../utils/dataDir'
 
-const LAYOUTS_DIR = join(process.cwd(), 'server', 'templates', 'layouts')
+const OPTS = { kind: 'template', dir: storeDir('templates-layouts') }
 
-export default defineEventHandler(async () => {
-  const files = await readdir(LAYOUTS_DIR).catch(() => [])
+type TemplateItem = { id: string, record: Record<string, any> }
+
+async function readAllTemplates(): Promise<TemplateItem[]> {
+  const files = await readdir(OPTS.dir).catch(() => [])
   const items = await Promise.all(
-    files.filter((f) => f.endsWith('.json')).map(async (f) => {
+    files.filter((f) => f.endsWith('.json')).map(async (f): Promise<TemplateItem | null> => {
       try {
-        const raw = await readFile(join(LAYOUTS_DIR, f), 'utf8')
+        const raw = await readFile(join(OPTS.dir, f), 'utf8')
         const t = JSON.parse(raw) as Record<string, any>
         const formats = t.formats ?? t.aspects ?? {}
         return {
-          id: t.id,
-          name: t.name,
-          file: f,
-          version: t.version ?? 1,
-          formatCount: Object.keys(formats).length,
-          elementCount: Array.isArray(t.elements) ? t.elements.length : 0,
+          id: basename(f, '.json'),
+          record: {
+            id: t.id,
+            name: t.name,
+            file: f,
+            version: t.version ?? 1,
+            formatCount: Object.keys(formats).length,
+            elementCount: Array.isArray(t.elements) ? t.elements.length : 0,
+          },
         }
       } catch {
         return null
       }
     }),
   )
-  return { items: items.filter(Boolean) }
+  return items.filter((i): i is TemplateItem => i !== null)
+}
+
+export default defineEventHandler(async (event) => {
+  const items = await listOwned(OPTS, event.context.userId ?? null, readAllTemplates)
+  return { items }
 })

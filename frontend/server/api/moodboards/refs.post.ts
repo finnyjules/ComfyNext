@@ -18,11 +18,17 @@
  * like every moodboard route: folder must match MOODBOARD_FOLDER_RE (never a
  * lora_dataset_* folder), slug must match MOODBOARD_ID_RE (no traversal in
  * the minted names). Rides the /api/moodboards allowlist prefix.
+ *
+ * Stage 6 (Task 4): each flat root-level input written is recorded against
+ * the caller in `input_uploads` (hosted only), keyed by its empty-subfolder
+ * canonical key — the flat @ref becomes the caller's owned top-level input.
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { MOODBOARD_FOLDER_RE, MOODBOARD_ID_RE, MOODBOARD_MAX_REFS } from '../../../shared/taste/moodboard'
 import { moodboardInputDir, safeImageFile } from '../../utils/moodboardImages'
+import { canonicalUploadKey, recordUpload } from '../../utils/inputUploads'
+import { isHosted } from '../../utils/deployMode'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<Record<string, any>>(event)
@@ -37,12 +43,15 @@ export default defineEventHandler(async (event) => {
   try { names = await fs.readdir(path.join(inputDir, folder)) }
   catch { throw createError({ statusCode: 404, statusMessage: 'not found' }) }
 
+  const hosted = isHosted()
+  const userId = event.context.userId ?? null
   const sources = names.filter(safeImageFile).sort().slice(0, MOODBOARD_MAX_REFS)
   const files: string[] = []
   for (const [i, src] of sources.entries()) {
     const ext = src.split('.').pop()!.toLowerCase()
     const flat = `mb_${slug}_${i}.${ext}`
     await fs.copyFile(path.join(inputDir, folder, src), path.join(inputDir, flat))
+    if (hosted && userId) await recordUpload(userId, canonicalUploadKey('input', '', flat))
     files.push(flat)
   }
   return { files }

@@ -1,23 +1,30 @@
 /** List every saved moodboard (full entries — readings are tiny). */
 import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { validateMoodboardEntry, type MoodboardEntry } from '../../../shared/taste/moodboard'
+import { listOwned } from '../../utils/ownedJsonStore'
+import { storeDir } from '../../utils/dataDir'
 
-const DIR = join(process.cwd(), 'server', 'moodboards')
+const OPTS = { kind: 'moodboard', dir: storeDir('moodboards') }
 
-export default defineEventHandler(async () => {
+async function readAllMoodboards(): Promise<Array<{ id: string, record: MoodboardEntry }>> {
   let files: string[] = []
   try {
-    files = (await readdir(DIR)).filter(f => f.endsWith('.json'))
+    files = (await readdir(OPTS.dir)).filter(f => f.endsWith('.json'))
   } catch {
-    return { moodboards: [] } // directory missing on fresh checkouts
+    return [] // directory missing on fresh checkouts
   }
-  const moodboards: MoodboardEntry[] = []
+  const out: Array<{ id: string, record: MoodboardEntry }> = []
   for (const f of files) {
     try {
-      moodboards.push(validateMoodboardEntry(JSON.parse(await readFile(join(DIR, f), 'utf8'))))
+      out.push({ id: basename(f, '.json'), record: validateMoodboardEntry(JSON.parse(await readFile(join(OPTS.dir, f), 'utf8'))) })
     } catch { /* skip corrupt entries; never 500 the whole list */ }
   }
+  return out
+}
+
+export default defineEventHandler(async (event) => {
+  const moodboards = await listOwned(OPTS, event.context.userId ?? null, readAllMoodboards)
   moodboards.sort((a, b) => a.name.localeCompare(b.name))
   return { moodboards }
 })

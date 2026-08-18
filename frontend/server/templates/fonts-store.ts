@@ -8,8 +8,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { UploadedFont } from './fonts'
+import { storeDir } from '../utils/dataDir'
 
-export const USER_FONTS_DIR = join(process.cwd(), 'server', 'templates', 'fonts', 'user')
+export const USER_FONTS_DIR = storeDir('templates-fonts-user')
 const MANIFEST_PATH = join(USER_FONTS_DIR, 'index.json')
 
 /** Read the manifest; returns [] when the dir/manifest is missing (fresh checkout). */
