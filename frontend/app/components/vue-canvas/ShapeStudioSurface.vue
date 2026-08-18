@@ -2,27 +2,33 @@
 // Full-screen editor for the Shape Studio node — a procedural 2D-vector
 // "clone and arrange" logo generator (geoshape). Modeled on
 // VectorTypeSurface/GradientStudioSurface for the shell wiring (StudioModalShell,
-// StudioControlPanel, useStudioAutosave, useStudioAgent, the sailor:*StudioOutput
-// image-output path) but the RENDERER is entirely different: this used to be a
-// three.js `ShapeEngine` on a WebGL canvas with an orbit camera and a persistent
-// rAF loop; it is now a plain 2D `<canvas>` painted by `drawToCanvas` off the
-// `geoshape/render.ts` pipeline, re-run via an rAF-coalesced demand drain (see the
-// `drainRenders` comment) rather than a persistent frame loop — a slider drag
-// updates the mark live, but an idle studio does zero work (no per-frame re-render
-// of unchanged config, the "per-frame writes stomp event state" anti-pattern).
+// StudioControlPanel, StudioLayerStack, useStudioAutosave, useStudioAgent, the
+// sailor:*StudioOutput image-output path) but the RENDERER is a plain 2D `<canvas>`
+// painted by `drawToCanvas` off the `geoshape/render.ts` pipeline, re-run via an
+// rAF-coalesced demand drain (see `drainRenders`) rather than a persistent frame loop.
 //
-// Collection variable-binding (promote/bind/sweep, the pink glyph + var menu every
-// other studio wires) is deliberately NOT wired here — out of scope for this pass.
+// LAYERS: the studio now edits a `GeoStudioDoc` — a STACK of independent marks
+// (each a full `GeoShapeConfig`) plus a stack-level intersection palette and one
+// shared frame. The left rail (StudioLayerStack) selects a layer; the right panel
+// scopes to that layer's `mark`. Deselecting (click the active row again) shows the
+// composite properties (Frame + — Phase 2 — Intersections). A one-layer doc renders
+// identically to the old single-mark studio (see studio.ts migration).
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
-import { mergeConfig, type GeoShapeConfig } from '~/lib/geoshape/config'
-import { renderShapes, toSvg, drawToCanvas, warmPaints, shapePaints, hasAsyncPaint, framePad } from '~/lib/geoshape/render'
+import type { GeoShapeConfig } from '~/lib/geoshape/config'
+import {
+  renderStudio, studioToSvg, drawToCanvas, warmPaints, shapePaints, hasAsyncPaint, studioFramePad,
+} from '~/lib/geoshape/render'
+import {
+  LAYER_MAX, mergeLayer, studioDocFromPersisted, type GeoStudioDoc, type GeoLayer,
+} from '~/lib/geoshape/studio'
 import { reroll } from '~/lib/geoshape/randomize'
 import { GEO_CONTROLS, GEO_SECTIONS, visibleGeoControls, type GeoControl } from '~/lib/geoshape/controls'
 import { geoAgentControls, GEO_GUIDANCE } from '~/lib/geoshape/agentControls'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
 import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
@@ -36,13 +42,10 @@ import { useStudioAutosave } from '~/lib/studio/autosave'
 import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 
 // `nodes` is optional (defaults to []) so this surface can be smoke-tested standalone
-// before it is wired into VueNodeCanvas as `nodeId` + the live `nodes` array — same
-// posture ShapeStudioSurface always had, kept verbatim.
+// before it is wired into VueNodeCanvas as `nodeId` + the live `nodes` array.
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), { nodes: () => [] })
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-// Record generated stills as the current project's assets (Assets panel) — identical
-// composables every other studio's image output uses.
 const { recordAsset } = useProjectGenerations()
 const { activeTab } = useTabs()
 
@@ -50,33 +53,38 @@ function currentNode(): any | undefined {
   return props.nodes?.find((n: any) => String(n?.id) === String(props.nodeId))
 }
 
-// ── canvas dimensions (NOT part of GeoShapeConfig — mirrors every other studio's
-// separate W/H/aspectKey persisted alongside the effect config rather than inside it) ──
+// ── canvas dimensions (NOT part of the doc — mirrors every other studio's separate
+// W/H/aspectKey persisted alongside the effect config rather than inside it) ──
 const ASPECTS: Record<string, number> = { '1:1': 1, '4:3': 4 / 3, '3:4': 3 / 4, '16:9': 16 / 9, '9:16': 9 / 16, '3:2': 3 / 2, '2:3': 2 / 3 }
 const ASPECT_OPTIONS = Object.keys(ASPECTS)
 
-// ── config (single source of truth) — hydrate synchronously from the node's persisted
-// blob if present, else DEFAULT_CONFIG. mergeConfig deep-defends against partial/old/junk
-// JSON, so this is safe even if the schema grows later. The old blob's `orbit` (camera
-// state, meaningless to a 2D renderer) is simply not read here.
+// ── doc (single source of truth) — hydrate synchronously from the node's persisted
+// blob, migrating a legacy single-mark `{ config }` into a one-layer doc (studio.ts).
 const persisted = currentNode()?.data?.properties?.sailor_shapeStudio as
-  { config?: unknown; canvasW?: number; canvasH?: number; aspectKey?: string } | undefined
+  { doc?: unknown; config?: unknown; canvasW?: number; canvasH?: number; aspectKey?: string } | undefined
 
-const config = ref<GeoShapeConfig>(mergeConfig(persisted?.config))
+const doc = ref<GeoStudioDoc>(studioDocFromPersisted(persisted))
 const aspectKey = ref<string>(persisted?.aspectKey && ASPECTS[persisted.aspectKey] ? persisted.aspectKey : '1:1')
 const canvasW = ref<number>(typeof persisted?.canvasW === 'number' ? persisted.canvasW : 1024)
 const canvasH = ref<number>(
   typeof persisted?.canvasH === 'number' ? persisted.canvasH : Math.round(1024 / (ASPECTS[aspectKey.value] ?? 1)),
 )
-// Only the aspect SELECT drives H from W (a convenience) — editing W/H directly is
-// left free-form, same as Shape/Vector Type's own posture.
 watch(aspectKey, (k) => { canvasH.value = Math.max(16, Math.round(canvasW.value / (ASPECTS[k] ?? 1))) })
+
+// ── layer selection. `activeLayer` is an index, or -1 for NO selection (which shows
+// the composite properties: Frame + Intersections). `activeLayerObj`/`activeMark`
+// fall back to layer 0 so proxies/agent never dereference undefined even when nothing
+// is selected (the per-layer panel is hidden then, so the fallback is never shown).
+const activeLayer = ref<number>(0)
+const isSelected = computed(() => activeLayer.value >= 0 && activeLayer.value < doc.value.layers.length)
+const activeLayerObj = computed<GeoLayer>(() => doc.value.layers[isSelected.value ? activeLayer.value : 0]!)
+const activeMark = computed<GeoShapeConfig>(() => activeLayerObj.value.mark)
 
 function saveConfig() {
   const n = currentNode(); if (!n) return
   n.data ||= {}; n.data.properties ||= {}
   n.data.properties.sailor_shapeStudio = {
-    config: JSON.parse(JSON.stringify(config.value)),
+    doc: JSON.parse(JSON.stringify(doc.value)),
     canvasW: canvasW.value, canvasH: canvasH.value, aspectKey: aspectKey.value,
   }
 }
@@ -85,41 +93,31 @@ function closeEditor() {
   emit('close')
 }
 
-// Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
-// useStudioAutosave, debounced off everything saveConfig persists.
 const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(
-  () => ({ config: config.value, canvasW: canvasW.value, canvasH: canvasH.value, aspectKey: aspectKey.value }),
+  () => ({ doc: doc.value, canvasW: canvasW.value, canvasH: canvasH.value, aspectKey: aspectKey.value }),
   saveConfig,
 )
 
-// ── in-product agent — "tune" the mark in natural language, following every other
-// studio's useStudioAgent wiring exactly. geoshape's control keys are already flat
-// (1:1 with GeoShapeConfig's own leaves), so no per-layer indirection is needed.
+// ── in-product agent — "tune" the SELECTED LAYER's mark in natural language. The
+// proxy + vocabulary are rooted at the active layer's `mark`, so the geoshape control
+// keys stay flat (1:1 with GeoShapeConfig) exactly as before; the agent edits whichever
+// layer is selected, matching every other studio's active-layer convention.
 const { getLocalSetting } = useLocalSettings()
-const paramsProxy = makeConfigParams(() => config.value)
-const activeAgentControls = computed(() => geoAgentControls(config.value))
+const paramsProxy = makeConfigParams(() => activeMark.value)
+const activeAgentControls = computed(() => geoAgentControls(activeMark.value))
 const shapeAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: paramsProxy, label: () => 'Shape studio',
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   guidance: () => GEO_GUIDANCE,
 })
 
-// ── StudioControlPanel wiring — GEO_CONTROLS/GEO_SECTIONS is the single source for
-// every slider/select/switch/color below except the three bespoke paint slots (fill/
-// overlapFill, which hold a full `Paint` the generic string-only color row can't
-// render, and stroke, kept solid) and the seed/re-roll row. `visibleGeoControls` is the schema's own
-// `when`-gate (control.ts's export) — mirrored into a Set so StudioControlPanel's
-// per-control `visible` callback is an O(1) lookup rather than re-deriving the
-// filtered list on every one of the ~30 controls it asks about.
-//
-// `seed` is deliberately excluded from the array handed to StudioControlPanel: the
-// bespoke Seed + Re-roll row above already displays it, and `cfg.seed` itself is never
-// read by the render pipeline (only the Re-roll button's `reroll`/`nextSeed` path uses
-// it) — an auto-generated slider for it would be a second, dead control for the same
-// field. `seed` stays in GEO_CONTROLS itself (the drift-guard test and the agent's
-// vocabulary both need it there); it is only dropped from this surface's own panel.
-const panelGeoControls = GEO_CONTROLS.filter((c) => c.key !== 'seed')
-const visibleControlSet = computed(() => new Set<GeoControl>(visibleGeoControls(config.value)))
+// ── StudioControlPanel wiring (per-layer). GEO_CONTROLS/GEO_SECTIONS drives every
+// slider/select/switch/color except the bespoke paint slots (fill/overlapFill/stroke)
+// and the seed/re-roll row. `seed` is dropped (the bespoke row shows it); `padding` is
+// dropped too — it is now the STACK frame (doc.padding), shown in the no-selection Frame
+// panel, not a per-layer knob.
+const panelGeoControls = GEO_CONTROLS.filter((c) => c.key !== 'seed' && c.key !== 'padding')
+const visibleControlSet = computed(() => new Set<GeoControl>(visibleGeoControls(activeMark.value)))
 function controlVisible(c: ControlSpec): boolean {
   return visibleControlSet.value.has(c as GeoControl)
 }
@@ -130,53 +128,108 @@ function paramValue(key: string): string | number | boolean {
   return paramsProxy[key] as string | number | boolean
 }
 
-// ── re-roll — geoshape's own deterministic reroll(cfg, locks): regenerates every
-// UNLOCKED section from a fresh derived seed. `config.value.locks` starts empty
-// (nothing locked), so a plain click re-rolls the whole mark; per-section lock
-// toggles are not exposed in this pass (the schema supports them; the inspector
-// doesn't surface them yet).
-function rerollConfig() { config.value = reroll(config.value, config.value.locks) }
+// ── stack-level controls (composite properties, shown when nothing is selected).
+// `padding` is the single frame margin around the whole composite; the range matches
+// the per-mark padding lever (negative overscans/bleeds — see render.ts framePad).
+const stackProxy = makeConfigParams(() => doc.value)
+const stackControls: ControlSpec[] = [
+  {
+    key: 'padding', label: 'Padding', kind: 'slider', min: -400, max: 200, step: 1, default: 40, group: 'Frame',
+    hint: 'Space framed around the whole composite. Lower to grow the marks toward the edges; 0 fills edge-to-edge; negative bleeds past the edges.',
+  } as ControlSpec,
+]
+function setStackControl(key: string, value: string | number | boolean | Paint | Paint[]) {
+  stackProxy[key] = value as string | number
+}
+function stackValue(key: string): string | number | boolean {
+  return stackProxy[key] as string | number | boolean
+}
 
-// ── Paint — fill/overlapFill are full `Paint` (string | gradient | pattern |
-// image) now, edited directly via FillControl in the template (see #control-fill/
-// #control-overlapFill below). `stroke` stays a plain solid string (StudioColorField)
-// — geoshape never draws a patterned stroke. `stroke` is nullable (no stroke drawn
-// at all); the switch mirrors Shape Studio's transparent-background toggle exactly,
-// so turning it off remembers the last color instead of losing it.
-const lastStrokeColor = ref(config.value.stroke ?? '#000000')
+// ── re-roll — regenerates every UNLOCKED section of the SELECTED layer's mark from a
+// fresh derived seed. `mark.locks` starts empty, so a plain click re-rolls the whole
+// active mark.
+function rerollConfig() {
+  const l = activeLayerObj.value
+  l.mark = reroll(l.mark, l.mark.locks)
+}
+
+// ── layer rail intents ─────────────────────────────────────────────────────────
+// Identity-based labels (derived from each layer's shape, de-duped with ordinals) so
+// reordering doesn't renumber and break references — same rationale as Gradient's
+// layerLabels.
+function titleCase(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1) }
+function layerLabel(i: number): string {
+  const layers = doc.value.layers
+  const shape = layers[i]?.mark.shape
+  if (!shape) return `Layer ${i + 1}`
+  let total = 0, ord = 0
+  for (let j = 0; j < layers.length; j++) {
+    if (layers[j]!.mark.shape === shape) { total++; if (j === i) ord = total }
+  }
+  return total > 1 ? `${titleCase(shape)} ${ord}` : titleCase(shape)
+}
+const railLayers = computed(() => doc.value.layers.map((l, i) => ({ label: layerLabel(i), enabled: l.enabled })))
+
+// Click a row to select it; click the ALREADY-active row again to deselect → the
+// right panel flips to the composite (Frame/Intersections) properties.
+function onSelectLayer(i: number) { activeLayer.value = activeLayer.value === i ? -1 : i }
+function addLayer() {
+  if (doc.value.layers.length >= LAYER_MAX) return
+  doc.value.layers.push(mergeLayer({}))
+  activeLayer.value = doc.value.layers.length - 1
+}
+function duplicateLayer(i: number) {
+  const src = doc.value.layers[i]; if (!src) return
+  const copy = mergeLayer(JSON.parse(JSON.stringify(src)))
+  copy.layerId = mergeLayer({}).layerId // fresh id so the two are addressable apart
+  doc.value.layers.splice(i + 1, 0, copy)
+  activeLayer.value = i + 1
+}
+function removeLayer(i: number) {
+  if (doc.value.layers.length <= 1) return
+  doc.value.layers.splice(i, 1)
+  if (activeLayer.value >= doc.value.layers.length) activeLayer.value = doc.value.layers.length - 1
+}
+function reorderLayer(from: number, to: number) {
+  const layers = doc.value.layers
+  if (from < 0 || from >= layers.length || to < 0 || to >= layers.length) return
+  const [m] = layers.splice(from, 1)
+  layers.splice(to, 0, m!)
+  activeLayer.value = to
+}
+function toggleLayer(i: number) {
+  const l = doc.value.layers[i]; if (l) l.enabled = !l.enabled
+}
+
+// ── Paint — fill/overlapFill are full `Paint`, edited via FillControl. `stroke` stays
+// a plain solid string, nullable. All bound to the SELECTED layer's mark.
+const lastStrokeColor = ref(activeMark.value.stroke ?? '#000000')
 const strokeEnabled = computed<boolean>({
-  get: () => config.value.stroke !== null,
-  set: (v: boolean) => {
-    if (v) { config.value.stroke = lastStrokeColor.value } else { config.value.stroke = null }
-  },
+  get: () => activeMark.value.stroke !== null,
+  set: (v: boolean) => { activeMark.value.stroke = v ? lastStrokeColor.value : null },
 })
 const strokeHex = computed<string>({
-  get: () => config.value.stroke ?? lastStrokeColor.value,
-  set: (v: string) => { lastStrokeColor.value = v; config.value.stroke = v },
+  get: () => activeMark.value.stroke ?? lastStrokeColor.value,
+  set: (v: string) => { lastStrokeColor.value = v; activeMark.value.stroke = v },
 })
 
-// ── fills list (fillStrategy !== 'single') — mirrors SpaceTypeSurface's fills block
-// STRUCTURE (grip-drag reorder + add/remove-keep-≥1) but operates directly on
-// `config.value.fills` rather than a separate reactive mirror synced by a
-// watcher: every mutation below reassigns `setGeoControl('fills', <new array>)`
-// with a fresh array reference, which both persists through the same
-// paramsProxy write path every other control uses and trips
-// `watch(config, …, { deep: true })` below, so the preview re-renders exactly
-// like a slider drag would.
-function addFill() { setGeoControl('fills', [...config.value.fills, '#4c6ef5']) }
+// ── fills / overlapFills list editors — operate on the SELECTED layer's mark via the
+// same paramsProxy write path every control uses (reassigns a fresh array so the deep
+// watch trips and the preview re-renders).
+function addFill() { setGeoControl('fills', [...activeMark.value.fills, '#4c6ef5']) }
 function removeFill(i: number) {
-  if (config.value.fills.length <= 1) return
-  setGeoControl('fills', config.value.fills.filter((_, j) => j !== i))
+  if (activeMark.value.fills.length <= 1) return
+  setGeoControl('fills', activeMark.value.fills.filter((_, j) => j !== i))
 }
 function updateFill(i: number, p: Paint) {
-  setGeoControl('fills', config.value.fills.map((x, j) => (j === i ? p : x)))
+  setGeoControl('fills', activeMark.value.fills.map((x, j) => (j === i ? p : x)))
 }
 const fillDrag = reactive<{ from: number; over: number }>({ from: -1, over: -1 })
 function fillDragStart(i: number, e: DragEvent) {
   fillDrag.from = i; fillDrag.over = i
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', String(i)) // Firefox needs some data to start a drag
+    e.dataTransfer.setData('text/plain', String(i))
     const row = (e.target as HTMLElement).closest('[data-row]') as HTMLElement | null
     if (row) e.dataTransfer.setDragImage(row, 14, 14)
   }
@@ -184,7 +237,7 @@ function fillDragStart(i: number, e: DragEvent) {
 function fillDragOver(i: number, e: DragEvent) { e.preventDefault(); fillDrag.over = i }
 function fillDrop(i: number) {
   if (fillDrag.from !== i && fillDrag.from >= 0) {
-    const next = [...config.value.fills]
+    const next = [...activeMark.value.fills]
     const [m] = next.splice(fillDrag.from, 1)
     next.splice(i, 0, m!)
     setGeoControl('fills', next)
@@ -193,23 +246,16 @@ function fillDrop(i: number) {
 }
 function fillDragEnd() { fillDrag.from = -1; fillDrag.over = -1 }
 
-// ── overlapFills list (pieces mode, overlapSeparate on) — same reassign-whole-
-// array pattern as the fills list above; no drag reorder (kept small: 2-deep,
-// 3-deep, ... rarely needs more than a couple of entries).
-function addOverlapFill() { setGeoControl('overlapFills', [...config.value.overlapFills, '#ffffff']) }
+function addOverlapFill() { setGeoControl('overlapFills', [...activeMark.value.overlapFills, '#ffffff']) }
 function removeOverlapFill(i: number) {
-  if (config.value.overlapFills.length <= 1) return
-  setGeoControl('overlapFills', config.value.overlapFills.filter((_, j) => j !== i))
+  if (activeMark.value.overlapFills.length <= 1) return
+  setGeoControl('overlapFills', activeMark.value.overlapFills.filter((_, j) => j !== i))
 }
 function updateOverlapFill(i: number, p: Paint) {
-  setGeoControl('overlapFills', config.value.overlapFills.map((x, j) => (j === i ? p : x)))
+  setGeoControl('overlapFills', activeMark.value.overlapFills.map((x, j) => (j === i ? p : x)))
 }
 
-// ── preview: a plain 2D canvas, event-driven ────────────────────────────────────
-// `renderPreview()` is invoked directly on mount, and again whenever
-// `config`/canvasW/canvasH change — coalesced to animation frames by
-// `scheduleRender`/`drainRenders` below (NOT a persistent per-frame loop) so a
-// slider drag updates the mark LIVE, self-throttled to the paper composite's cost.
+// ── preview: a plain 2D canvas, event-driven (rAF-coalesced demand drain) ─────────
 const canvas = ref<HTMLCanvasElement | null>(null)
 const exporting = ref(false)
 const svgExporting = ref(false)
@@ -237,10 +283,6 @@ function previewDims() {
 }
 
 let lastW = 0, lastH = 0
-// Bumped on every render start; a stale in-flight `renderShapes` that resolves
-// after a newer one has already painted is dropped rather than allowed to
-// overwrite a fresher frame — `renderShapes` is async (boolean folding), so two
-// overlapping calls can resolve out of order under a fast slider drag.
 let renderToken = 0
 async function renderPreview() {
   const el = canvas.value
@@ -253,34 +295,22 @@ async function renderPreview() {
   if (!ctx) return
   const token = ++renderToken
   try {
-    const shapes = await renderShapes(config.value)
+    const shapes = await renderStudio(doc.value)
     if (token !== renderToken) return // superseded by a later render
-    drawToCanvas(shapes, ctx, el.width, el.height, framePad(config.value))
-    // Image/shader fills resolve to FALLBACK_FILL until their bitmap/field is
-    // warmed (see render.ts's `drawToCanvas`/`warmPaints` docs) — mirrors the
-    // Compositor's warm-then-paint split (`ensureLayerImages` ->
-    // `paintLayerStack`) so this preview updates to the real paint once it
-    // loads instead of showing the placeholder forever. Skipped entirely for
-    // a solid/gradient/pattern-only mark, which already painted for real above.
+    const pad = studioFramePad(doc.value)
+    drawToCanvas(shapes, ctx, el.width, el.height, pad)
+    // Image/shader fills resolve to FALLBACK_FILL until warmed — warm-then-repaint.
     const paints = shapePaints(shapes)
     if (hasAsyncPaint(paints)) {
       await warmPaints(paints, { w: el.width, h: el.height })
-      if (token !== renderToken) return // a newer render superseded this warm
-      drawToCanvas(shapes, ctx, el.width, el.height, framePad(config.value))
+      if (token !== renderToken) return
+      drawToCanvas(shapes, ctx, el.width, el.height, pad)
     }
   } catch (e) {
     console.error('[shape-studio] preview render failed', e)
   }
 }
 
-// Render is coalesced to animation frames so a slider DRAG updates the preview
-// LIVE, not just after it stops (a trailing debounce felt laggy — nothing moved
-// until you let go). scheduleRender marks the preview dirty; one rAF drains it,
-// re-rendering as long as more changes keep arriving. `renderShapes` is async
-// (paper boolean folding), so this self-throttles to the composite's cost —
-// light configs update basically every frame, heavy ones as fast as they can,
-// but always DURING the interaction. This is a demand-driven drain, not a
-// persistent animation loop (geoshape has no animation to run per frame).
 let rafId: number | null = null
 let rendering = false
 let dirty = false
@@ -292,8 +322,6 @@ async function drainRenders() {
     while (dirty) { dirty = false; await renderPreview() }
   } finally {
     rendering = false
-    // A change can land in the gap between the last `dirty` check and clearing
-    // `rendering`; pick it up rather than stalling until the next input.
     if (dirty && rafId == null) rafId = requestAnimationFrame(() => { void drainRenders() })
   }
 }
@@ -301,7 +329,7 @@ function scheduleRender() {
   dirty = true
   if (rafId == null && !rendering) rafId = requestAnimationFrame(() => { void drainRenders() })
 }
-watch(config, scheduleRender, { deep: true })
+watch(doc, scheduleRender, { deep: true })
 watch([canvasW, canvasH], scheduleRender)
 
 function onWindowResize() { scheduleRender() }
@@ -318,27 +346,21 @@ onBeforeUnmount(() => {
 })
 
 // ── outputs ──────────────────────────────────────────────────────────────────────
-// Rasterize at the FULL export resolution (canvasW × canvasH), not the (possibly
-// smaller, DPR-scaled) preview backing store — same reasoning ShapeStudioSurface's
-// old `frameToBlob(canvasW, canvasH)` bake always applied.
+// Rasterize at the FULL export resolution (canvasW × canvasH), not the preview store.
 async function rasterizePng(): Promise<Blob | null> {
-  const shapes = await renderShapes(config.value)
+  const shapes = await renderStudio(doc.value)
   const off = document.createElement('canvas')
   off.width = Math.max(1, Math.round(canvasW.value))
   off.height = Math.max(1, Math.round(canvasH.value))
   const ctx = off.getContext('2d')
   if (!ctx) return null
-  // A ONE-SHOT render gets no second chance (unlike `renderPreview`, which
-  // redraws once its warm resolves) — warm BEFORE the only `drawToCanvas` call
-  // this makes, or an image/shader fill would export `FALLBACK_FILL` gray.
+  // A ONE-SHOT render gets no second chance — warm BEFORE the only draw.
   const paints = shapePaints(shapes)
   if (hasAsyncPaint(paints)) await warmPaints(paints, { w: off.width, h: off.height })
-  drawToCanvas(shapes, ctx, off.width, off.height, framePad(config.value))
+  drawToCanvas(shapes, ctx, off.width, off.height, studioFramePad(doc.value))
   return await new Promise<Blob | null>((resolve) => off.toBlob(resolve, 'image/png'))
 }
 
-// "As image": rasterize → upload → drop an Image node on the canvas — the existing
-// sailor:shapeStudioOutput path every studio's canvas-output button uses.
 async function exportPng() {
   exporting.value = true
   actionError.value = ''
@@ -362,8 +384,6 @@ async function exportPng() {
   }
 }
 
-// Real file download (distinct from exportPng, which uploads + drops an Image node
-// + closes the studio) — just saves a PNG.
 async function downloadPng() {
   try {
     const blob = await rasterizePng()
@@ -374,15 +394,13 @@ async function downloadPng() {
   }
 }
 
-// Download SVG: real vector output, sized to the actual rendered geometry (see
-// toSvg's own doc — it derives the box from contentBounds, not a static formula).
 async function exportSvg() {
   svgExporting.value = true
   actionError.value = ''
   try {
-    const svg = await toSvg(config.value)
+    const svg = await studioToSvg(doc.value)
     const blob = new Blob([svg], { type: 'image/svg+xml' })
-    downloadBlobAsFile(blob, `shape-studio-${config.value.seed}.svg`)
+    downloadBlobAsFile(blob, `shape-studio-${doc.value.seed}.svg`)
   } catch (e) {
     console.error('[shape-studio] SVG export failed', e)
     setActionError('SVG export failed — please try again')
@@ -399,11 +417,24 @@ async function exportSvg() {
     agent-placeholder="Describe the mark — e.g. more clones, sharper overlap, warmer fill…"
     @close="closeEditor"
   >
+    <!-- Left rail: the stack of shape layers (same component the other studios use). -->
+    <template #aside>
+      <StudioLayerStack
+        :layers="railLayers"
+        :active-index="activeLayer"
+        :max="LAYER_MAX"
+        @select="onSelectLayer"
+        @add="addLayer"
+        @remove="removeLayer"
+        @duplicate="duplicateLayer"
+        @reorder="reorderLayer"
+        @toggle="toggleLayer"
+      />
+    </template>
+
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
-        <!-- Checkered backdrop (cosmetic only — the exported PNG/SVG stay transparent):
-             both a near-black default fill and a carved even-odd hole would otherwise
-             be nearly invisible against the modal's own near-black chrome. -->
+        <!-- Checkered backdrop (cosmetic only — the exported PNG/SVG stay transparent). -->
         <canvas
           ref="canvas"
           class="max-h-full max-w-full rounded-lg shadow-2xl"
@@ -422,113 +453,148 @@ async function exportSvg() {
       }" />
     </template>
     <template #controls>
-      <!-- Seed + Re-roll -->
-      <div class="flex items-center justify-between rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
-        <div class="flex flex-col">
-          <span class="text-[10px] uppercase tracking-wide text-white/30">Seed</span>
-          <span class="font-mono text-[11px] text-white/70">{{ config.seed }}</span>
+      <!-- ══ A LAYER IS SELECTED → edit that layer's mark ══ -->
+      <template v-if="isSelected">
+        <!-- Seed + Re-roll (of the selected layer's mark) -->
+        <div class="flex items-center justify-between rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
+          <div class="flex flex-col">
+            <span class="text-[10px] uppercase tracking-wide text-white/30">Seed · {{ layerLabel(activeLayer) }}</span>
+            <span class="font-mono text-[11px] text-white/70">{{ activeMark.seed }}</span>
+          </div>
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-action/85"
+            @click="rerollConfig"
+          >
+            <Dices class="h-3.5 w-3.5" /> Re-roll
+          </button>
         </div>
-        <button
-          type="button"
-          class="flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-action/85"
-          @click="rerollConfig"
+
+        <!-- Placement — where this whole mark sits in the shared frame. -->
+        <StudioSection title="Placement">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Offset X</label>
+              <input v-model.number="activeLayerObj.offset.x" type="number" step="1"
+                     class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Offset Y</label>
+              <input v-model.number="activeLayerObj.offset.y" type="number" step="1"
+                     class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Scale</label>
+              <input v-model.number="activeLayerObj.offset.scale" type="number" min="0.05" max="8" step="0.05"
+                     class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Rotate</label>
+              <input v-model.number="activeLayerObj.offset.rotate" type="number" step="1"
+                     class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
+            </div>
+          </div>
+        </StudioSection>
+
+        <!-- Schema-driven inspector for the selected layer's mark. -->
+        <StudioControlPanel
+          :controls="panelGeoControls"
+          :order="GEO_SECTIONS"
+          :value="paramValue"
+          :visible="controlVisible"
+          @set="setGeoControl"
         >
-          <Dices class="h-3.5 w-3.5" /> Re-roll
-        </button>
-      </div>
+          <template #control-fill>
+            <FillControl allow-image :show-anchor="false" :model-value="activeMark.fill" @update:model-value="setGeoControl('fill', $event)" />
+          </template>
+          <template #control-overlapFill>
+            <FillControl allow-image :show-anchor="false" :model-value="activeMark.overlapFill" @update:model-value="setGeoControl('overlapFill', $event)" />
+          </template>
+          <template #control-stroke>
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] text-white/55">Stroke</span>
+              <StudioSwitch v-model="strokeEnabled" />
+            </div>
+            <StudioColorField v-if="strokeEnabled" label="Stroke color" v-model="strokeHex" />
+          </template>
+        </StudioControlPanel>
 
-      <!-- Schema-driven inspector: every slider/select/switch declared in GEO_CONTROLS,
-           grouped into Shape/Layout/Transform/Composite/Symmetry/Clip/Style/Paint cards
-           per GEO_SECTIONS. The three paint fields get bespoke slots (below): fill/
-           overlapFill hold a full `Paint` the generic string-only color row can't
-           render (FillControl instead); stroke stays solid via StudioColorField. -->
-      <StudioControlPanel
-        :controls="panelGeoControls"
-        :order="GEO_SECTIONS"
-        :value="paramValue"
-        :visible="controlVisible"
-        @set="setGeoControl"
-      >
-        <template #control-fill>
-          <FillControl allow-image :show-anchor="false" :model-value="config.fill" @update:model-value="setGeoControl('fill', $event)" />
-        </template>
-        <template #control-overlapFill>
-          <FillControl allow-image :show-anchor="false" :model-value="config.overlapFill" @update:model-value="setGeoControl('overlapFill', $event)" />
-        </template>
-        <template #control-stroke>
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Stroke</span>
-            <StudioSwitch v-model="strokeEnabled" />
+        <!-- Fills list editor — under the Paint card when fillStrategy isn't 'single'. -->
+        <div v-if="activeMark.fillStrategy !== 'single'" class="mt-2 space-y-2">
+          <div v-for="(f, i) in activeMark.fills" :key="i" data-row
+               class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5 transition-shadow"
+               :class="fillDrag.over === i && fillDrag.from !== i ? 'ring-1 ring-white/40' : ''"
+               @dragover="fillDragOver(i, $event)" @drop="fillDrop(i)">
+            <div class="flex items-center gap-1.5">
+              <span draggable="true" @dragstart="fillDragStart(i, $event)" @dragend="fillDragEnd"
+                    class="shrink-0 cursor-grab text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
+                <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
+              </span>
+              <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 1 }}</span>
+              <FillControl class="flex-1" allow-image :show-anchor="false" :model-value="f" @update:model-value="(v: Paint) => updateFill(i, v)" />
+              <button v-if="activeMark.fills.length > 1" type="button" @click="removeFill(i)" aria-label="Remove fill"
+                      class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+              </button>
+            </div>
           </div>
-          <StudioColorField v-if="strokeEnabled" label="Stroke color" v-model="strokeHex" />
-        </template>
-      </StudioControlPanel>
-
-      <!-- Fills list editor — rendered under the Paint card when fillStrategy is
-           anything but 'single'. Mirrors SpaceTypeSurface's fillList block structure
-           (index badge + grip-drag reorder + add/remove-keep-≥1) but each entry is a
-           full `Paint` edited via FillControl, not a Fill-shaped a/b/text swatch set. -->
-      <div v-if="config.fillStrategy !== 'single'" class="mt-2 space-y-2">
-        <div v-for="(f, i) in config.fills" :key="i" data-row
-             class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5 transition-shadow"
-             :class="fillDrag.over === i && fillDrag.from !== i ? 'ring-1 ring-white/40' : ''"
-             @dragover="fillDragOver(i, $event)" @drop="fillDrop(i)">
-          <div class="flex items-center gap-1.5">
-            <span draggable="true" @dragstart="fillDragStart(i, $event)" @dragend="fillDragEnd"
-                  class="shrink-0 cursor-grab text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
-              <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
-            </span>
-            <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 1 }}</span>
-            <FillControl class="flex-1" allow-image :show-anchor="false" :model-value="f" @update:model-value="(v: Paint) => updateFill(i, v)" />
-            <button v-if="config.fills.length > 1" type="button" @click="removeFill(i)" aria-label="Remove fill"
-                    class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
-            </button>
-          </div>
+          <button type="button" @click="addFill"
+                  class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
+          <p class="text-[10px] leading-relaxed text-white/35">Shapes cycle through these colours, in the chosen colour order.</p>
         </div>
-        <button type="button" @click="addFill"
-                class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
-        <p class="text-[10px] leading-relaxed text-white/35">Shapes cycle through these colours, in the chosen colour order.</p>
-      </div>
 
-      <!-- Overlap-fills list editor — pieces mode only, when overlapSeparate is on
-           (that switch + fillOrder render generically above via GEO_CONTROLS). Same
-           structure as the fills list but index badges start at 2 (2-deep is the
-           first overlap colour) and no drag reorder — kept small on purpose. -->
-      <div v-if="config.fillStrategy === 'pieces' && config.overlapSeparate" class="mt-3 space-y-2">
-        <p class="text-[10px] font-medium uppercase tracking-wide text-white/40">Overlap colours</p>
-        <div v-for="(f, i) in config.overlapFills" :key="'ov' + i"
-             class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
-          <div class="flex items-center gap-1.5">
-            <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 2 }}</span>
-            <FillControl class="flex-1" allow-image :show-anchor="false" :model-value="f" @update:model-value="(v: Paint) => updateOverlapFill(i, v)" />
-            <button v-if="config.overlapFills.length > 1" type="button" @click="removeOverlapFill(i)" aria-label="Remove overlap colour"
-                    class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
-            </button>
+        <!-- Overlap-fills list editor — pieces mode, overlapSeparate on. -->
+        <div v-if="activeMark.fillStrategy === 'pieces' && activeMark.overlapSeparate" class="mt-3 space-y-2">
+          <p class="text-[10px] font-medium uppercase tracking-wide text-white/40">Overlap colours</p>
+          <div v-for="(f, i) in activeMark.overlapFills" :key="'ov' + i"
+               class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
+            <div class="flex items-center gap-1.5">
+              <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 2 }}</span>
+              <FillControl class="flex-1" allow-image :show-anchor="false" :model-value="f" @update:model-value="(v: Paint) => updateOverlapFill(i, v)" />
+              <button v-if="activeMark.overlapFills.length > 1" type="button" @click="removeOverlapFill(i)" aria-label="Remove overlap colour"
+                      class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+              </button>
+            </div>
           </div>
+          <button type="button" @click="addOverlapFill"
+                  class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add overlap colour</button>
+          <p class="text-[10px] leading-relaxed text-white/35">By how many shapes cross — 2-deep, 3-deep, …</p>
         </div>
-        <button type="button" @click="addOverlapFill"
-                class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add overlap colour</button>
-        <p class="text-[10px] leading-relaxed text-white/35">By how many shapes cross — 2-deep, 3-deep, …</p>
-      </div>
+      </template>
 
-      <!-- Canvas (export dimensions — not part of GeoShapeConfig) -->
-      <StudioSection title="Canvas">
-        <StudioSelect label="Aspect" v-model="aspectKey" :options="ASPECT_OPTIONS" />
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Width</label>
-            <input v-model.number="canvasW" type="number" min="64" max="4096" step="1"
-                   class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
+      <!-- ══ NOTHING SELECTED → composite properties (Frame; Intersections in Phase 2) ══ -->
+      <template v-else>
+        <p class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 text-[11px] leading-relaxed text-white/45">
+          No layer selected — editing the whole composite. Pick a layer on the left to edit its shape.
+        </p>
+
+        <!-- Frame: the single padding lever around the whole composite. -->
+        <StudioControlPanel
+          :controls="stackControls"
+          :order="['Frame']"
+          :value="stackValue"
+          :visible="() => true"
+          @set="setStackControl"
+        />
+
+        <!-- Canvas (export dimensions — not part of the doc) -->
+        <StudioSection title="Canvas">
+          <StudioSelect label="Aspect" v-model="aspectKey" :options="ASPECT_OPTIONS" />
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Width</label>
+              <input v-model.number="canvasW" type="number" min="64" max="4096" step="1"
+                     class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Height</label>
+              <input v-model.number="canvasH" type="number" min="64" max="4096" step="1"
+                     class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
+            </div>
           </div>
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Height</label>
-            <input v-model.number="canvasH" type="number" min="64" max="4096" step="1"
-                   class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20" />
-          </div>
-        </div>
-      </StudioSection>
+        </StudioSection>
+      </template>
     </template>
   </StudioModalShell>
 </template>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Gem, Pencil } from 'lucide-vue-next'
-import { mergeConfig } from '~/lib/geoshape/config'
-import { renderShapes, drawToCanvas, framePad } from '~/lib/geoshape/render'
+import { renderStudio, drawToCanvas, studioFramePad } from '~/lib/geoshape/render'
+import { studioDocFromPersisted } from '~/lib/geoshape/studio'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
@@ -63,18 +63,18 @@ function onOutput(e: Event) {
 // card's own still for instant feedback (see bakedThumb).
 async function bakeOutput(): Promise<Blob | null> {
   const blob = props.data?.properties?.sailor_shapeStudio as
-    { config?: unknown; canvasW?: number; canvasH?: number } | undefined
-  const cfg = mergeConfig(blob?.config)
+    { doc?: unknown; config?: unknown; canvasW?: number; canvasH?: number } | undefined
+  const studioDoc = studioDocFromPersisted(blob)
   const w = typeof blob?.canvasW === 'number' ? blob.canvasW : 1024
   const h = typeof blob?.canvasH === 'number' ? blob.canvasH : 1024
   try {
-    const shapes = await renderShapes(cfg)
+    const shapes = await renderStudio(studioDoc)
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(w))
     canvas.height = Math.max(1, Math.round(h))
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
-    drawToCanvas(shapes, ctx, canvas.width, canvas.height, framePad(cfg))
+    drawToCanvas(shapes, ctx, canvas.width, canvas.height, studioFramePad(studioDoc))
     const out = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
     if (!out) return null
     if (bakedThumb.value) URL.revokeObjectURL(bakedThumb.value)
