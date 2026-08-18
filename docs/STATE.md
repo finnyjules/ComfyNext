@@ -240,6 +240,14 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
+## Compositor — occluded card loops paused (wired-studio 60fps jank) — LANDED 2026-08-18
+
+Commit `9681a23eb`. A wired Expressive/Space Type studio played back janky at 60fps inside the Compositor modal. Measured root cause (driven-rAF probe against the live app, not a guess): with the modal open, **three** loops ran every vsync — the studio card preview, the Frame card's full-resolution pull loop, and the modal's own pull loop — so the studio's headless engine rendered **twice** per tick (two unsynchronized clocks, so no frame sharing) and every tick paid two full-res WebGL→2D readbacks plus two full stack composites for pixels the fullscreen modal hides. ~12.4 ms mean per tick at 1080p in a near-empty scene, ~2× the modal-only cost — over the 16.7 ms 60fps budget once a real scene, retina dpr, or extra layers stack on; at 30fps the 33 ms budget masked it, which is why "set it up as 60fps" surfaced it.
+
+Fix: the Frame card gains SpaceTypeNode's `applyGate` pattern (compositor-modal open/close + `visibilitychange` + IntersectionObserver — offscreen Frame cards now stop animating at all), SpaceTypeNode pauses its card preview while any Compositor modal is open (separate `occluded` flag so `closeSpaceType` can't wrongly clear it), and VueNodeCanvas dispatches a new `sailor:closeCompositor` on modal close (method, not inline handler — `window` isn't in template scope, the documented closeSpaceTypeEditor trap). Verified live with a cancel-faithful rAF trap: modal open → card + studio callbacks stop re-registering, only the modal loop runs; real Escape close → both resume.
+
+Residual: the modal's own pull is still one full-res headless render + readback + composite per vsync (~7 ms at 1080p in a minimal scene) — a heavy scene at 60fps on retina may still be tight. Next lever if it shows up again: pull wired frames at composited display size instead of the studio's native output size (quality-neutral until zoom > 100%), and/or share one quantized-frame cache between consumers.
+
 ## Hosted-mode switch + ledger core + spend log — LANDED 2026-08-11
 
 Commits `93dd6a7e0`..`982edcd12` (10). Plan: [2026-08-11-hosted-mode-ledger-prep.md](superpowers/plans/2026-08-11-hosted-mode-ledger-prep.md) · roadmap: [2026-08-11-consumer-product-gap-list-and-roadmap.md](superpowers/specs/2026-08-11-consumer-product-gap-list-and-roadmap.md) · architecture stays the [2026-07-01 accounts spec](superpowers/specs/2026-07-01-accounts-credits-billing-design.md).
