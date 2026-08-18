@@ -5,12 +5,12 @@
  * deployMode() === 'hosted'.
  */
 import type { H3Event } from 'h3'
-import { createError, getRequestHeader, readRawBody, setResponseStatus } from 'h3'
-import { ownedPromptIds, ownsPrompt, outputKey, pendingRuns } from './graphRuns'
+import { createError, getRequestHeader, readRawBody, setResponseHeader, setResponseStatus } from 'h3'
+import { ownedOutputKeys, ownedPromptIds, ownsPrompt, outputKey, pendingRuns } from './graphRuns'
 import { resolveWorkerTarget } from './workerRoute'
 import { settleGraphSuccess } from './meterGraphRun'
 import { parseUploadForm } from './multipart'
-import { canonicalUploadKey, recordUpload, unsafeUploadTarget, uploadExistsOnDisk, uploadOwner } from './inputUploads'
+import { canonicalUploadKey, ownedInputFilenames, recordUpload, releaseUpload, unsafeUploadTarget, uploadExistsOnDisk, uploadOwner } from './inputUploads'
 import { normalizeEnginePath } from './enginePath'
 import { hostedCanMutate, ownedIds, ownerOf, recordOwner, releaseOwner } from './resourceOwners'
 
@@ -681,4 +681,215 @@ export async function handleHostedSailor(event: H3Event): Promise<unknown> {
     }
   }
   return body
+}
+
+// ---------------------------------------------------------------------------
+// Stage 6 Task 2b — the per-user /sailor DATA routes (files + timeline assets).
+// ---------------------------------------------------------------------------
+
+/**
+ * Timeline assets live in a SINGLE global user/timeline_assets.json with no
+ * owner field, so the resource_owners registry (kind 'timeline-asset', id =
+ * the asset uuid) IS the owner. Assets are PERSONAL like projects: an unowned
+ * asset is orphaned, not house content, so it is invisible in the list and
+ * 404s on every access — the same 404 for "yours doesn't exist" and "someone
+ * else's" so the gate can't be used to enumerate ids.
+ */
+export const SAILOR_ASSET_KIND = 'timeline-asset'
+
+export type SailorDataRoute =
+  | { kind: 'inputListing' }
+  | { kind: 'outputListing' }
+  | { kind: 'assetsList' }
+  | { kind: 'assetImport' }
+  | { kind: 'assetDelete', assetId: string }
+  | { kind: 'assetThumbnails', assetId: string }
+  | { kind: 'assetWaveform', assetId: string }
+  | { kind: 'inputThumbnail', filename: string }
+  | { kind: 'inputFileDelete', filename: string }
+  | { kind: 'outputFileDelete', filename: string, subfolder: string }
+  | { kind: 'reject', status: number, message: string }
+
+/**
+ * The exact path/verb table for the DATA bucket, parsed from the aiohttp
+ * routes themselves. Query params (`filename`, `subfolder`, `asset_id`) are
+ * read the way the engine reads them — decoded, via URLSearchParams — so the
+ * ownership key we build names the same file the engine will touch. An
+ * unexpected verb is refused here rather than falling through to a raw proxy.
+ */
+export function sailorDataRoute(pathNoQuery: string, query: string, method: string): SailorDataRoute {
+  const verb = (method || 'GET').toUpperCase()
+  const q = new URLSearchParams(query)
+  const reject = (status: number, message: string): SailorDataRoute => ({ kind: 'reject', status, message })
+  const badVerb = reject(405, 'This method is not available on this Sailor route')
+
+  if (pathNoQuery === '/sailor/input_listing') return verb === 'GET' ? { kind: 'inputListing' } : badVerb
+  if (pathNoQuery === '/sailor/output_listing') return verb === 'GET' ? { kind: 'outputListing' } : badVerb
+  if (pathNoQuery === '/sailor/assets') return verb === 'GET' ? { kind: 'assetsList' } : badVerb
+  if (pathNoQuery === '/sailor/asset_import') return verb === 'POST' ? { kind: 'assetImport' } : badVerb
+  if (pathNoQuery.startsWith('/sailor/assets/')) {
+    let assetId: string
+    try {
+      assetId = decodeURIComponent(pathNoQuery.slice('/sailor/assets/'.length))
+    }
+    catch {
+      return reject(400, 'Asset id is not addressable')
+    }
+    return verb === 'DELETE' ? { kind: 'assetDelete', assetId } : badVerb
+  }
+  if (pathNoQuery === '/sailor/asset_thumbnails') return verb === 'GET' ? { kind: 'assetThumbnails', assetId: q.get('asset_id') || '' } : badVerb
+  if (pathNoQuery === '/sailor/asset_waveform') return verb === 'GET' ? { kind: 'assetWaveform', assetId: q.get('asset_id') || '' } : badVerb
+  if (pathNoQuery === '/sailor/input_thumbnail') return verb === 'GET' ? { kind: 'inputThumbnail', filename: q.get('filename') || '' } : badVerb
+  if (pathNoQuery === '/sailor/input_file') return verb === 'DELETE' ? { kind: 'inputFileDelete', filename: q.get('filename') || '' } : badVerb
+  if (pathNoQuery === '/sailor/output_file') return verb === 'DELETE' ? { kind: 'outputFileDelete', filename: q.get('filename') || '', subfolder: q.get('subfolder') || '' } : badVerb
+
+  return reject(404, 'Not found')
+}
+
+/**
+ * Forward a BINARY engine response (input_thumbnail serves a raw PNG) with the
+ * bytes and content-type intact. forwardSailor round-trips through res.text()
+ * + JSON.parse, which is correct for the JSON routes but would UTF-8-mangle an
+ * image, so binary reads take this path once ownership is settled.
+ */
+async function forwardSailorBinary(event: H3Event): Promise<Buffer> {
+  const { port, cleanUrl } = resolveWorkerTarget(event.path)
+  const target = `http://127.0.0.1:${port}`
+  const enginePath = normalizeEnginePath(cleanUrl)
+  const res = await fetch(`${target}${enginePath}`, { headers: { origin: target } })
+  setResponseStatus(event, res.status)
+  const ct = res.headers?.get?.('content-type')
+  if (ct) setResponseHeader(event, 'content-type', ct)
+  const cc = res.headers?.get?.('cache-control')
+  if (cc) setResponseHeader(event, 'cache-control', cc)
+  return Buffer.from(await res.arrayBuffer())
+}
+
+/**
+ * The per-user DATA gate. Reads are filtered to the caller's owned files/
+ * assets; deletes and metadata reads are ownership-checked and 404 when the
+ * resource is not the caller's (no existence disclosure), with the ENGINE
+ * NEVER TOUCHED on a miss. Every forward reuses forwardSailor (JSON) or
+ * forwardSailorBinary (images) — same worker, same normalized path, no
+ * client-supplied identity headers.
+ */
+export async function handleHostedSailorData(event: H3Event): Promise<unknown> {
+  const userId = event.context.userId
+  if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+
+  const [pathNoQuery, query = ''] = normalizeEnginePath(event.path).split('?')
+  const route = sailorDataRoute(pathNoQuery ?? '', query, event.method)
+  if (route.kind === 'reject') throw createError({ statusCode: route.status, message: route.message })
+
+  // Same 404 for "unowned/other-owned" and "does not exist" — no oracle.
+  const notFound = () => createError({ statusCode: 404, message: 'Not found' })
+
+  const forwardJson = async (unavailable: string): Promise<{ status: number, body: unknown }> => {
+    const r = await forwardSailor(event)
+    if (r.status < 200 || r.status >= 300) throw createError({ statusCode: 502, message: unavailable })
+    return r
+  }
+
+  switch (route.kind) {
+    case 'inputListing': {
+      const { body } = await forwardJson('Engine input listing unavailable')
+      const owned = await ownedInputFilenames(userId)
+      const items = Array.isArray((body as { items?: unknown })?.items) ? (body as { items: unknown[] }).items : []
+      return { items: items.filter(it => owned.has(String((it as { filename?: unknown })?.filename ?? ''))) }
+    }
+    case 'outputListing': {
+      const { body } = await forwardJson('Engine output listing unavailable')
+      const owned = await ownedOutputKeys(userId)
+      const items = Array.isArray((body as { items?: unknown })?.items) ? (body as { items: unknown[] }).items : []
+      return {
+        items: items.filter((it) => {
+          const o = it as { filename?: unknown, subfolder?: unknown }
+          return owned.has(outputKey({ filename: String(o?.filename ?? ''), subfolder: String(o?.subfolder ?? ''), type: 'output' }))
+        }),
+      }
+    }
+    case 'assetsList': {
+      const { body } = await forwardJson('Engine assets list unavailable')
+      const owned = await ownedIds(SAILOR_ASSET_KIND, userId)
+      const list = Array.isArray((body as { assets?: unknown })?.assets) ? (body as { assets: unknown[] }).assets : []
+      return { assets: list.filter(a => owned.has(String((a as { id?: unknown })?.id ?? ''))) }
+    }
+    case 'assetImport': {
+      // A NEW asset has no owner to check — this write is how one is born.
+      // Record what the engine ACTUALLY stored (its `asset.id`) on a 2xx; a
+      // duplicate import returns the existing record, and recordOwner's
+      // first-owner-wins leaves that asset with its original owner.
+      const { status, body } = await forwardSailor(event)
+      setResponseStatus(event, status)
+      if (status >= 200 && status < 300) {
+        const id = (body as { asset?: { id?: unknown } })?.asset?.id
+        if (typeof id === 'string' && id) {
+          try {
+            await recordOwner(SAILOR_ASSET_KIND, id, userId)
+          }
+          catch (e) {
+            console.error('[engineGate] failed to record asset ownership', { id, error: e })
+          }
+        }
+      }
+      return body
+    }
+    case 'assetDelete': {
+      const owner = await ownerOf(SAILOR_ASSET_KIND, route.assetId)
+      if (owner !== userId) throw notFound()
+      const { status, body } = await forwardSailor(event)
+      setResponseStatus(event, status)
+      if (status >= 200 && status < 300) {
+        try {
+          await releaseOwner(SAILOR_ASSET_KIND, route.assetId)
+        }
+        catch (e) {
+          console.error('[engineGate] failed to release asset ownership', { id: route.assetId, error: e })
+        }
+      }
+      return body
+    }
+    case 'assetThumbnails':
+    case 'assetWaveform': {
+      if (!route.assetId) throw createError({ statusCode: 400, message: 'missing asset_id' })
+      const owner = await ownerOf(SAILOR_ASSET_KIND, route.assetId)
+      if (owner !== userId) throw notFound()
+      const { status, body } = await forwardSailor(event)
+      setResponseStatus(event, status)
+      return body
+    }
+    case 'inputThumbnail': {
+      if (!route.filename) throw notFound()
+      const owned = await ownedInputFilenames(userId)
+      if (!owned.has(route.filename)) throw notFound()
+      return forwardSailorBinary(event)
+    }
+    case 'inputFileDelete': {
+      if (!route.filename) throw createError({ statusCode: 400, message: 'invalid filename' })
+      const fileKey = canonicalUploadKey('input', '', route.filename)
+      const owner = await uploadOwner(fileKey)
+      if (owner !== userId) throw notFound()
+      const { status, body } = await forwardSailor(event)
+      setResponseStatus(event, status)
+      if (status >= 200 && status < 300) {
+        try {
+          await releaseUpload(fileKey)
+        }
+        catch (e) {
+          console.error('[engineGate] failed to release input upload ownership', { filename: route.filename, error: e })
+        }
+      }
+      return body
+    }
+    case 'outputFileDelete': {
+      if (!route.filename) throw createError({ statusCode: 400, message: 'invalid filename' })
+      const owned = await ownedOutputKeys(userId)
+      if (!owned.has(outputKey({ filename: route.filename, subfolder: route.subfolder, type: 'output' }))) throw notFound()
+      const { status, body } = await forwardSailor(event)
+      setResponseStatus(event, status)
+      return body
+    }
+  }
+  // Unreachable — sailorDataRoute returns a reject for everything else.
+  throw notFound()
 }

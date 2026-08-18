@@ -52,6 +52,39 @@ export async function uploadOwner(fileKey: string): Promise<string | null> {
 }
 
 /**
+ * Stage 6 Task 2b — the caller's OWN top-level input filenames, for filtering
+ * `/sailor/input_listing` and gating `/sailor/input_thumbnail`.
+ *
+ * `input_listing` walks only the TOP level of `input/` (a flat `os.listdir`),
+ * so the keys that matter are the empty-subfolder `input` uploads —
+ * canonicalUploadKey('input', '', name) === `input::<name>`. A row with a
+ * non-empty subfolder names a nested file the flat listing never shows, so it
+ * is deliberately excluded here.
+ */
+export async function ownedInputFilenames(userId: string): Promise<Set<string>> {
+  const { rows } = await db().query(
+    `SELECT file_key FROM input_uploads WHERE user_id = $1`, [userId])
+  const names = new Set<string>()
+  const prefix = 'input::'
+  for (const r of rows) {
+    const k = String(r.file_key)
+    if (k.startsWith(prefix)) names.add(k.slice(prefix.length))
+  }
+  return names
+}
+
+/**
+ * Drop an input file's ownership row after the engine deletes the file, so the
+ * name frees up for the next writer. Without this the deleted name stays
+ * claimed by its old owner: a different tenant who later uploads the same name
+ * (the engine keeps it, the file is gone) can never own — nor see — their own
+ * upload, because the stale row wins the ON CONFLICT.
+ */
+export async function releaseUpload(fileKey: string): Promise<void> {
+  await db().query(`DELETE FROM input_uploads WHERE file_key = $1`, [fileKey])
+}
+
+/**
  * The `type` folder name a request resolves to, mirroring server.py's
  * get_dir_by_type(): unknown and absent both mean `input`.
  */

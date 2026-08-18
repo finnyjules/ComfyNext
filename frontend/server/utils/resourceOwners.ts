@@ -13,7 +13,7 @@ type DbLike = { query(sql: string, params?: unknown[]): Promise<{ rows: any[] }>
 
 export const RESOURCE_KINDS = [
   'project', 'brand-kit', 'moodboard', 'template', 'template-font',
-  'character', 'lora', 'voice',
+  'character', 'lora', 'voice', 'timeline-asset',
 ] as const
 
 export type ResourceKind = typeof RESOURCE_KINDS[number]

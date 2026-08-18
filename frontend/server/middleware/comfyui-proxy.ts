@@ -6,7 +6,7 @@ import { resolveWorkerTarget } from '../utils/workerRoute'
 import { PROXY_PREFIXES } from '../utils/authGuard'
 import { deployMode } from '../utils/deployMode'
 import { handleMeteredPrompt } from '../utils/meterGraphRun'
-import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload, handleHostedSailor } from '../utils/engineGate'
+import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload, handleHostedSailor, handleHostedSailorData } from '../utils/engineGate'
 import { normalizeEnginePath, hostedEngineDecision } from '../utils/enginePath'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
@@ -47,6 +47,11 @@ export default defineEventHandler(async (event) => {
     // ownership is checked here against resource_owners before the engine is
     // asked anything — a project that isn't yours 404s, list included.
     if (decision.kind === 'sailorProjects') return handleHostedSailor(event)
+    // Stage 6 Task 2b: the per-user /sailor DATA routes (input/output file
+    // listings + deletes + thumbnails, and the timeline-asset library). Reads
+    // are filtered to owned rows and deletes 404 when the file/asset isn't the
+    // caller's — the engine is never touched on an ownership miss.
+    if (decision.kind === 'sailorData') return handleHostedSailorData(event)
     // Deny by default: an engine path that isn't explicitly allowlisted for
     // hosted raw proxying is refused, so a route nobody has audited can
     // never become a cross-tenant surface merely by existing upstream.

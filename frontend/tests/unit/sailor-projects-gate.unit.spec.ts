@@ -537,14 +537,13 @@ describe('LOCAL MODE IS BYTE-IDENTICAL — no registry, no filter, no 404', () =
 
 // ------------------------------------------------- non-projects /sailor routes
 
-describe('the rest of the /sailor extension keeps today\'s behaviour', () => {
-  it('still raw-proxies the un-audited engine extension routes in hosted mode', async () => {
-    // Task 2 audited exactly two families: projects (gated) and spend
-    // (refused). The other ~25 /sailor routes (assets, listings, shader
-    // effects, timeline render) are a separate audit — refusing them here
-    // would break the hosted canvas without closing this P0. Documented as a
-    // known gap rather than silently left inside HOSTED_RAW_ALLOW.
-    for (const p of ['/sailor/assets', '/sailor/shader_effects', '/sailor/output_listing']) {
+describe('the rest of the /sailor extension is audited (Task 2b)', () => {
+  it('audited stateless capability routes still raw-proxy in hosted mode', async () => {
+    // Task 2b closed the gap this test used to document: only the audited
+    // stateless catalog/capability routes now raw-proxy. The per-user DATA
+    // routes (assets, listings) are gated and the compute/write routes are
+    // refused — those are covered end to end in sailor-routes-gate.unit.spec.ts.
+    for (const p of ['/sailor/shader_effects', '/sailor/space_defaults', '/sailor/models/status']) {
       proxyRequest.mockClear()
       expect((await via(p, 'GET')).status, p).toBe('proxied')
     }

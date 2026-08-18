@@ -1,0 +1,539 @@
+/**
+ * Stage 6 Task 2b — the REST of the `/sailor` engine extension is tenant-gated.
+ *
+ * THE P0 THIS CLOSES: Task 2 gated `/sailor/projects*` and refused
+ * `/sailor/spend`, but its fallback (`match(p,'/sailor') => proxy`) still
+ * raw-proxied every OTHER `/sailor` route — ~27 of them across
+ * comfy_extras/{nodes_timeline,_lora_training,_model_downloads,nodes_compositor,
+ * nodes_shader_effects}.py — cross-tenant to the shared engine for any signed-in
+ * user. Those handlers carry no identity: `/sailor/assets` served the GLOBAL
+ * timeline_assets.json to everyone, `/sailor/output_listing` walked the shared
+ * output dir, DELETE `/sailor/input_file` removed anyone's upload, and the
+ * render/lora/model routes ran unmetered compute or wrote operator disk.
+ *
+ * Each route is now bucketed by a HANDLER AUDIT (classifySailor):
+ *   DATA   — reads filtered to the caller's owned files/assets; deletes and
+ *            metadata reads ownership-checked, 404 (not 403) when unowned so
+ *            the gate can't enumerate ids; engine NEVER touched on a miss.
+ *   PROXY  — audited stateless catalog/capability; raw-proxies in hosted.
+ *   REFUSE — compute / shared-state write; 403 this stage, fail closed.
+ *
+ * THE DURABLE DELIVERABLE is the coverage guard at the bottom: it greps the
+ * Python modules for every `/sailor` route and asserts each classifies into
+ * exactly one non-`unknown` bucket, matching a locked disposition table. A
+ * newly-added `/sailor` route fails this suite instead of silently proxying.
+ *
+ * These tests drive the REAL handler (handleHostedSailorData) and the REAL
+ * classifier with faked ownership tables + a faked engine fetch, so they fail
+ * against the pre-fix tree rather than describing a helper.
+ */
+import { readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const rawBody = vi.fn(async () => undefined as Buffer | undefined)
+const requestHeader = vi.fn((_e: any, _n: string) => undefined as string | undefined)
+let lastStatus = 0
+const lastHeaders: Record<string, string> = {}
+vi.mock('h3', async (orig) => {
+  const actual = await orig() as any
+  return {
+    ...actual,
+    readRawBody: (...a: any[]) => rawBody(...(a as [])),
+    getRequestHeader: (...a: any[]) => requestHeader(...(a as [any, string])),
+    setResponseStatus: (_e: any, s: number) => { lastStatus = s },
+    setResponseHeader: (_e: any, k: string, v: string) => { lastHeaders[k] = v },
+  }
+})
+
+let mode: 'local' | 'hosted' = 'hosted'
+vi.mock('../../server/utils/deployMode', () => ({
+  deployMode: () => mode,
+  isHosted: () => mode === 'hosted',
+}))
+
+const g = globalThis as any
+g.defineEventHandler = (fn: any) => fn
+g.createError = (o: { statusCode: number, message?: string, statusMessage?: string }) => {
+  const err = new Error(o.message ?? o.statusMessage) as Error & { statusCode: number }
+  err.statusCode = o.statusCode
+  return err
+}
+const proxyRequest = vi.fn(async (_e: any, url: string) => ({ proxiedTo: url }))
+g.proxyRequest = proxyRequest
+
+const { handleHostedSailorData, sailorDataRoute, SAILOR_ASSET_KIND } = await import('../../server/utils/engineGate')
+const { classifySailor, hostedEngineDecision, normalizeEnginePath } = await import('../../server/utils/enginePath')
+const { __setResourceOwnersDbForTests } = await import('../../server/utils/resourceOwners')
+const { __setInputUploadsDbForTests } = await import('../../server/utils/inputUploads')
+const { __setGraphRunsDbForTests } = await import('../../server/utils/graphRuns')
+const middleware = (await import('../../server/middleware/comfyui-proxy')).default as any
+
+// ----------------------------------------------------------- fake ownership
+
+const owners = new Map<string, string>() // resource_owners: `${kind}::${id}` -> user
+const uploads = new Map<string, string>() // input_uploads: file_key -> user
+const runs: { userId: string, outputs: string[] }[] = [] // graph_runs
+const okey = (kind: string, id: string) => `${kind}::${id}`
+
+__setResourceOwnersDbForTests({
+  async query(sql: string, params: unknown[] = []) {
+    if (/insert\s+into\s+resource_owners/i.test(sql)) {
+      const [kind, id, user] = params as string[]
+      if (!owners.has(okey(kind, id))) owners.set(okey(kind, id), user)
+      return { rows: [] }
+    }
+    if (/delete\s+from\s+resource_owners/i.test(sql)) {
+      const [kind, id] = params as string[]
+      owners.delete(okey(kind, id))
+      return { rows: [] }
+    }
+    if (/select\s+user_id\s+from\s+resource_owners/i.test(sql)) {
+      const [kind, id] = params as string[]
+      const u = owners.get(okey(kind, id))
+      return { rows: u ? [{ user_id: u }] : [] }
+    }
+    if (/select\s+resource_id\s+from\s+resource_owners/i.test(sql)) {
+      const [kind, user] = params as string[]
+      const rows = [...owners.entries()]
+        .filter(([k, u]) => k.startsWith(`${kind}::`) && u === user)
+        .map(([k]) => ({ resource_id: k.slice(kind.length + 2) }))
+      return { rows }
+    }
+    throw new Error(`unexpected resource_owners sql: ${sql}`)
+  },
+})
+
+__setInputUploadsDbForTests({
+  async query(sql: string, params: unknown[] = []) {
+    if (/insert\s+into\s+input_uploads/i.test(sql)) {
+      const [key, user] = params as string[]
+      if (!uploads.has(key)) uploads.set(key, user)
+      return { rows: [] }
+    }
+    if (/delete\s+from\s+input_uploads/i.test(sql)) {
+      const [key] = params as string[]
+      uploads.delete(key)
+      return { rows: [] }
+    }
+    if (/select\s+user_id\s+from\s+input_uploads/i.test(sql)) {
+      const [key] = params as string[]
+      const u = uploads.get(key)
+      return { rows: u ? [{ user_id: u }] : [] }
+    }
+    if (/select\s+file_key\s+from\s+input_uploads/i.test(sql)) {
+      const [user] = params as string[]
+      return { rows: [...uploads.entries()].filter(([, u]) => u === user).map(([file_key]) => ({ file_key })) }
+    }
+    throw new Error(`unexpected input_uploads sql: ${sql}`)
+  },
+})
+
+__setGraphRunsDbForTests({
+  async query(sql: string, params: unknown[] = []) {
+    if (/select\s+outputs\s+from\s+graph_runs/i.test(sql)) {
+      const [user] = params as string[]
+      return { rows: runs.filter(r => r.userId === user).map(r => ({ outputs: r.outputs })) }
+    }
+    throw new Error(`unexpected graph_runs sql: ${sql}`)
+  },
+})
+
+const fetchMock = vi.fn()
+;(globalThis as any).fetch = fetchMock
+
+/** Upstream JSON answer, as forwardSailor consumes it (status + text()). */
+function upstream(body: unknown, status = 200) {
+  fetchMock.mockResolvedValue({ status, ok: status >= 200 && status < 300, text: async () => JSON.stringify(body) })
+}
+
+beforeEach(() => {
+  mode = 'hosted'
+  fetchMock.mockReset()
+  upstream({ ok: true })
+  proxyRequest.mockClear()
+  rawBody.mockReset(); rawBody.mockResolvedValue(undefined)
+  requestHeader.mockReset(); requestHeader.mockReturnValue(undefined)
+  owners.clear(); uploads.clear(); runs.length = 0
+  for (const k of Object.keys(lastHeaders)) delete lastHeaders[k]
+  lastStatus = 0
+})
+
+function ev(path: string, method = 'GET', userId: string | null = 'u1') {
+  return { path, method, context: userId ? { userId } : {}, node: { req: {}, res: {} } }
+}
+
+/** Drive the real handler; return {status, body} or the thrown code. */
+async function call(path: string, method = 'GET', userId: string | null = 'u1'): Promise<any> {
+  try {
+    return { body: await handleHostedSailorData(ev(path, method, userId) as any), status: lastStatus }
+  }
+  catch (e: any) {
+    return { status: e?.statusCode ?? 'threw', message: e?.message }
+  }
+}
+
+// ================================================================ classifier
+
+describe('classifySailor — the audited bucket table', () => {
+  it('buckets each representative route', () => {
+    const cases: [string, string, string][] = [
+      ['/sailor/projects', 'GET', 'projects'],
+      ['/sailor/projects/abc', 'DELETE', 'projects'],
+      ['/sailor/spend/summary', 'GET', 'spend'],
+      ['/sailor/input_listing', 'GET', 'data'],
+      ['/sailor/output_listing', 'GET', 'data'],
+      ['/sailor/assets', 'GET', 'data'],
+      ['/sailor/asset_import', 'POST', 'data'],
+      ['/sailor/assets/a-1', 'DELETE', 'data'],
+      ['/sailor/asset_thumbnails', 'GET', 'data'],
+      ['/sailor/asset_waveform', 'GET', 'data'],
+      ['/sailor/input_thumbnail', 'GET', 'data'],
+      ['/sailor/input_file', 'DELETE', 'data'],
+      ['/sailor/output_file', 'DELETE', 'data'],
+      ['/sailor/shader_effects', 'GET', 'proxy'],
+      ['/sailor/shader_effects/assets/atlas.png', 'GET', 'proxy'],
+      ['/sailor/space_defaults', 'GET', 'proxy'],
+      ['/sailor/space_thumbnails', 'GET', 'proxy'],
+      ['/sailor/space_thumbnail/burst', 'GET', 'proxy'],
+      ['/sailor/font_subset', 'POST', 'proxy'],
+      ['/sailor/models/status', 'GET', 'proxy'],
+      ['/sailor/render_timeline', 'POST', 'refuse'],
+      ['/sailor/render_timeline_stream', 'POST', 'refuse'],
+      ['/sailor/timeline/render_frame', 'POST', 'refuse'],
+      ['/sailor/spacetype_encode', 'POST', 'refuse'],
+      ['/sailor/motion/cleanup_frames', 'POST', 'refuse'],
+      ['/sailor/lora/save_captions', 'POST', 'refuse'],
+      ['/sailor/lora/clear_dataset', 'POST', 'refuse'],
+      ['/sailor/models/download', 'GET', 'refuse'],
+      ['/sailor/space_default/burst', 'POST', 'refuse'],
+      ['/sailor/space_thumbnail/burst', 'POST', 'refuse'],
+    ]
+    for (const [p, m, bucket] of cases) {
+      expect(classifySailor(p, m).bucket, `${m} ${p}`).toBe(bucket)
+    }
+  })
+
+  it('space_thumbnail/{id} splits by verb (GET reads a shared thumb, POST writes one)', () => {
+    expect(classifySailor('/sailor/space_thumbnail/x', 'GET').bucket).toBe('proxy')
+    expect(classifySailor('/sailor/space_thumbnail/x', 'POST').bucket).toBe('refuse')
+  })
+
+  it('CORRECTION from the brief: spacetype_encode writes to input/ → refuse, not proxy', () => {
+    // Handler audit: `out_path = os.path.join(input_dir, out_name)` — it writes
+    // a video into the SHARED input directory, so it is compute+shared-write.
+    expect(classifySailor('/sailor/spacetype_encode', 'POST').bucket).toBe('refuse')
+  })
+
+  it('an unrecognised /sailor route is unknown → fail closed', () => {
+    expect(classifySailor('/sailor/brand_new_route', 'GET').bucket).toBe('unknown')
+    expect(classifySailor('/sailor', 'GET').bucket).toBe('unknown')
+    expect(classifySailor('/queue', 'GET').bucket).toBe('unknown')
+  })
+
+  it('hostedEngineDecision maps each bucket onto its EngineDecision kind', () => {
+    expect(hostedEngineDecision('/sailor/assets', 'GET').kind).toBe('sailorData')
+    expect(hostedEngineDecision('/sailor/shader_effects', 'GET').kind).toBe('proxy')
+    expect(hostedEngineDecision('/sailor/render_timeline', 'POST').kind).toBe('forbid')
+    expect(hostedEngineDecision('/sailor/projects/abc', 'GET').kind).toBe('sailorProjects')
+    // deny-by-default: unknown /sailor route → forbid, never proxy
+    expect(hostedEngineDecision('/sailor/brand_new_route', 'GET').kind).toBe('forbid')
+  })
+
+  it('takes the decision on the NORMALIZED path so /comfyui aliases cannot walk past it', () => {
+    expect(hostedEngineDecision(normalizeEnginePath('/comfyui/sailor/assets'), 'GET').kind).toBe('sailorData')
+    expect(hostedEngineDecision(normalizeEnginePath('/comfyui/sailor/render_timeline'), 'POST').kind).toBe('forbid')
+    // A dot segment must not carry a refused route into the proxy branch.
+    expect(hostedEngineDecision(normalizeEnginePath('/sailor/shader_effects/../render_timeline'), 'POST').kind).toBe('forbid')
+  })
+})
+
+// ============================================================== route parser
+
+describe('sailorDataRoute — path/verb table with decoded query params', () => {
+  it('parses each data route', () => {
+    expect(sailorDataRoute('/sailor/input_listing', '', 'GET')).toEqual({ kind: 'inputListing' })
+    expect(sailorDataRoute('/sailor/output_listing', '', 'GET')).toEqual({ kind: 'outputListing' })
+    expect(sailorDataRoute('/sailor/assets', '', 'GET')).toEqual({ kind: 'assetsList' })
+    expect(sailorDataRoute('/sailor/asset_import', '', 'POST')).toEqual({ kind: 'assetImport' })
+    expect(sailorDataRoute('/sailor/assets/a-1', '', 'DELETE')).toEqual({ kind: 'assetDelete', assetId: 'a-1' })
+    expect(sailorDataRoute('/sailor/asset_thumbnails', 'asset_id=a-1&count=5', 'GET')).toEqual({ kind: 'assetThumbnails', assetId: 'a-1' })
+    expect(sailorDataRoute('/sailor/asset_waveform', 'asset_id=a-1', 'GET')).toEqual({ kind: 'assetWaveform', assetId: 'a-1' })
+    expect(sailorDataRoute('/sailor/input_thumbnail', 'filename=a%20b.png', 'GET')).toEqual({ kind: 'inputThumbnail', filename: 'a b.png' })
+    expect(sailorDataRoute('/sailor/input_file', 'filename=a.png', 'DELETE')).toEqual({ kind: 'inputFileDelete', filename: 'a.png' })
+    expect(sailorDataRoute('/sailor/output_file', 'filename=a.png&subfolder=sub', 'DELETE')).toEqual({ kind: 'outputFileDelete', filename: 'a.png', subfolder: 'sub' })
+  })
+
+  it('refuses an unexpected verb rather than falling through to a proxy', () => {
+    expect(sailorDataRoute('/sailor/assets', '', 'POST').kind).toBe('reject')
+    expect(sailorDataRoute('/sailor/input_file', 'filename=a.png', 'GET').kind).toBe('reject')
+    expect(sailorDataRoute('/sailor/asset_import', '', 'GET').kind).toBe('reject')
+  })
+})
+
+// ============================================================ input listing
+
+describe('GET /sailor/input_listing filters to the caller\'s owned uploads', () => {
+  it('drops files owned by another tenant', async () => {
+    uploads.set('input::mine.png', 'u1')
+    uploads.set('input::theirs.png', 'u2')
+    upstream({ items: [
+      { filename: 'mine.png', type: 'input' },
+      { filename: 'theirs.png', type: 'input' },
+      { filename: 'orphan.png', type: 'input' }, // no ownership row
+    ] })
+    const r = await call('/sailor/input_listing', 'GET', 'u1')
+    expect(r.body.items.map((i: any) => i.filename)).toEqual(['mine.png'])
+  })
+
+  it('a subfolder upload does not leak into the flat top-level listing', async () => {
+    uploads.set('input:sub:nested.png', 'u1') // non-empty subfolder → excluded
+    upstream({ items: [{ filename: 'nested.png', type: 'input' }] })
+    const r = await call('/sailor/input_listing', 'GET', 'u1')
+    expect(r.body.items).toEqual([])
+  })
+})
+
+describe('GET /sailor/output_listing filters to the caller\'s owned outputs', () => {
+  it('keeps only outputs recorded against the caller\'s graph runs', async () => {
+    runs.push({ userId: 'u1', outputs: ['output::a.png', 'output:sub:b.png'] })
+    runs.push({ userId: 'u2', outputs: ['output::secret.png'] })
+    upstream({ items: [
+      { filename: 'a.png', subfolder: '', type: 'output' },
+      { filename: 'b.png', subfolder: 'sub', type: 'output' },
+      { filename: 'secret.png', subfolder: '', type: 'output' },
+    ] })
+    const r = await call('/sailor/output_listing', 'GET', 'u1')
+    expect(r.body.items.map((i: any) => i.filename).sort()).toEqual(['a.png', 'b.png'])
+  })
+})
+
+// ================================================================== assets
+
+describe('the timeline-asset library is per-user', () => {
+  it('GET /sailor/assets returns only the caller\'s owned assets (unowned are invisible)', async () => {
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-mine'), 'u1')
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-theirs'), 'u2')
+    upstream({ assets: [
+      { id: 'a-mine', name: 'mine.mp4' },
+      { id: 'a-theirs', name: 'theirs.mp4' },
+      { id: 'a-orphan', name: 'orphan.mp4' }, // no owner row
+    ] })
+    const r = await call('/sailor/assets', 'GET', 'u1')
+    expect(r.body.assets.map((a: any) => a.id)).toEqual(['a-mine'])
+  })
+
+  it('POST /sailor/asset_import records ownership from the engine\'s returned asset.id', async () => {
+    upstream({ asset: { id: 'a-new', name: 'clip.mp4' }, created: true })
+    const r = await call('/sailor/asset_import', 'POST', 'u1')
+    expect(r.body.asset.id).toBe('a-new')
+    expect(owners.get(okey(SAILOR_ASSET_KIND, 'a-new'))).toBe('u1')
+  })
+
+  it('asset_import ownership is first-writer-wins on a duplicate path import', async () => {
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-dup'), 'u2') // u2 imported it first
+    upstream({ asset: { id: 'a-dup', name: 'clip.mp4' }, created: false })
+    await call('/sailor/asset_import', 'POST', 'u1')
+    expect(owners.get(okey(SAILOR_ASSET_KIND, 'a-dup')), 'must not transfer ownership').toBe('u2')
+  })
+
+  it('DELETE /sailor/assets/{id} of another tenant\'s asset 404s, engine never touched', async () => {
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-theirs'), 'u2')
+    const r = await call('/sailor/assets/a-theirs', 'DELETE', 'u1')
+    expect(r.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(owners.has(okey(SAILOR_ASSET_KIND, 'a-theirs')), 'the victim\'s asset row survives').toBe(true)
+  })
+
+  it('DELETE of a NON-EXISTENT asset also 404s — same code, no oracle', async () => {
+    const r = await call('/sailor/assets/a-ghost', 'DELETE', 'u1')
+    expect(r.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('DELETE of the caller\'s own asset forwards and releases the ownership row', async () => {
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-mine'), 'u1')
+    const r = await call('/sailor/assets/a-mine', 'DELETE', 'u1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(r.status).toBe(200)
+    expect(owners.has(okey(SAILOR_ASSET_KIND, 'a-mine'))).toBe(false)
+  })
+
+  it('asset_thumbnails / asset_waveform of an unowned asset 404, engine never touched', async () => {
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-theirs'), 'u2')
+    for (const p of ['/sailor/asset_thumbnails?asset_id=a-theirs', '/sailor/asset_waveform?asset_id=a-theirs']) {
+      fetchMock.mockClear()
+      const r = await call(p, 'GET', 'u1')
+      expect(r.status, p).toBe(404)
+      expect(fetchMock, p).not.toHaveBeenCalled()
+    }
+  })
+
+  it('asset_thumbnails of the caller\'s own asset forwards', async () => {
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-mine'), 'u1')
+    upstream({ thumbnails: ['data:...'], asset_id: 'a-mine' })
+    const r = await call('/sailor/asset_thumbnails?asset_id=a-mine&count=5', 'GET', 'u1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(r.body.asset_id).toBe('a-mine')
+  })
+})
+
+// ============================================================ file deletes
+
+describe('DELETE /sailor/input_file is ownership-scoped', () => {
+  it('another tenant\'s upload → 404, engine never touched, victim row intact', async () => {
+    uploads.set('input::theirs.png', 'u2')
+    const r = await call('/sailor/input_file?filename=theirs.png', 'DELETE', 'u1')
+    expect(r.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(uploads.get('input::theirs.png')).toBe('u2')
+  })
+
+  it('an unclaimed (pre-table) filename → 404, engine never touched', async () => {
+    const r = await call('/sailor/input_file?filename=orphan.png', 'DELETE', 'u1')
+    expect(r.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('the caller\'s own upload forwards and frees the ownership row', async () => {
+    uploads.set('input::mine.png', 'u1')
+    const r = await call('/sailor/input_file?filename=mine.png', 'DELETE', 'u1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(r.status).toBe(200)
+    expect(uploads.has('input::mine.png'), 'name freed for the next writer').toBe(false)
+  })
+})
+
+describe('DELETE /sailor/output_file is ownership-scoped', () => {
+  it('an output the caller never produced → 404, engine never touched', async () => {
+    runs.push({ userId: 'u2', outputs: ['output::theirs.png'] })
+    const r = await call('/sailor/output_file?filename=theirs.png', 'DELETE', 'u1')
+    expect(r.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('the caller\'s own output (subfolder-aware) forwards', async () => {
+    runs.push({ userId: 'u1', outputs: ['output:sub:mine.png'] })
+    const r = await call('/sailor/output_file?filename=mine.png&subfolder=sub', 'DELETE', 'u1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(r.status).toBe(200)
+  })
+})
+
+// =========================================================== auth + errors
+
+describe('the data gate requires a signed-in tenant', () => {
+  it('401s an anonymous caller before any engine contact', async () => {
+    const r = await call('/sailor/assets', 'GET', null)
+    expect(r.status).toBe(401)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+// ============================================================ COVERAGE GUARD
+
+/**
+ * The durable deliverable: every `/sailor` route the engine registers must be
+ * classified into exactly one non-`unknown` bucket, and match the locked
+ * disposition table below. A route added upstream but not classified here
+ * fails as `unknown` (fail closed). A route whose bucket drifts fails the
+ * table check. Greps ALL of comfy_extras (not just the four named modules) so
+ * a route added in any module — shader_effects lives in a fifth — is caught.
+ */
+const COMFY_EXTRAS = fileURLToPath(new URL('../../../comfy_extras', import.meta.url))
+
+/** `${VERB} ${pathTemplate}` → expected bucket. THE verified disposition table. */
+const EXPECTED: Record<string, string> = {
+  // projects (Task 2)
+  'GET /sailor/projects': 'projects',
+  'GET /sailor/projects/{uuid}': 'projects',
+  'PUT /sailor/projects/{uuid}': 'projects',
+  'DELETE /sailor/projects/{uuid}': 'projects',
+  'POST /sailor/projects/{uuid}/versions': 'projects',
+  'GET /sailor/projects/{uuid}/versions/{vid}': 'projects',
+  'POST /sailor/projects/{uuid}/generations': 'projects',
+  'GET /sailor/projects/{uuid}/generations': 'projects',
+  'GET /sailor/spend/summary': 'spend',
+  // capability / catalog (proxy-allow)
+  'GET /sailor/shader_effects': 'proxy',
+  'GET /sailor/shader_effects/assets/{name}': 'proxy',
+  'GET /sailor/space_defaults': 'proxy',
+  'GET /sailor/space_thumbnails': 'proxy',
+  'GET /sailor/space_thumbnail/{effect_id}': 'proxy',
+  'POST /sailor/font_subset': 'proxy',
+  'GET /sailor/models/status': 'proxy',
+  // per-user data
+  'GET /sailor/input_listing': 'data',
+  'GET /sailor/output_listing': 'data',
+  'GET /sailor/assets': 'data',
+  'POST /sailor/asset_import': 'data',
+  'DELETE /sailor/assets/{asset_id}': 'data',
+  'GET /sailor/input_thumbnail': 'data',
+  'GET /sailor/asset_thumbnails': 'data',
+  'GET /sailor/asset_waveform': 'data',
+  'DELETE /sailor/input_file': 'data',
+  'DELETE /sailor/output_file': 'data',
+  // compute / shared-state write (refuse)
+  'POST /sailor/render_timeline_stream': 'refuse',
+  'POST /sailor/render_timeline': 'refuse',
+  'POST /sailor/spacetype_encode': 'refuse',
+  'POST /sailor/timeline/render_frame': 'refuse',
+  'POST /sailor/space_default/{effect_id}': 'refuse',
+  'POST /sailor/space_thumbnail/{effect_id}': 'refuse',
+  'POST /sailor/lora/save_captions': 'refuse',
+  'POST /sailor/lora/clear_dataset': 'refuse',
+  'GET /sailor/models/download': 'refuse',
+  'POST /sailor/motion/cleanup_frames': 'refuse',
+}
+
+/** Turn a `{param}` template into a concrete path classifySailor can match. */
+function concrete(template: string): string {
+  return template.replace(/\{[^}]+\}/g, 'X')
+}
+
+function grepSailorRoutes(): { verb: string, template: string }[] {
+  const out: { verb: string, template: string }[] = []
+  const re = /routes\.(get|post|put|delete)\("(\/sailor[^"]*)"/g
+  for (const fn of readdirSync(COMFY_EXTRAS)) {
+    if (!fn.endsWith('.py')) continue
+    const src = readFileSync(`${COMFY_EXTRAS}/${fn}`, 'utf8')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(src)) !== null) out.push({ verb: m[1]!.toUpperCase(), template: m[2]! })
+  }
+  return out
+}
+
+describe('coverage guard: every registered /sailor route is classified', () => {
+  const routes = grepSailorRoutes()
+
+  it('finds the full route surface (sanity: the grep matched a realistic count)', () => {
+    expect(routes.length).toBeGreaterThanOrEqual(35)
+  })
+
+  it('classifies every route into exactly one non-unknown bucket', () => {
+    const misclassified: string[] = []
+    for (const { verb, template } of routes) {
+      const key = `${verb} ${template}`
+      const bucket = classifySailor(concrete(template), verb).bucket
+      if (bucket === 'unknown') misclassified.push(`${key} → unknown (would fail closed, but MUST be classified)`)
+    }
+    expect(misclassified, 'every /sailor route must be audited into a bucket').toEqual([])
+  })
+
+  it('matches the locked disposition table (bucket drift or a new route fails here)', () => {
+    const mismatches: string[] = []
+    const seen = new Set<string>()
+    for (const { verb, template } of routes) {
+      const key = `${verb} ${template}`
+      seen.add(key)
+      const bucket = classifySailor(concrete(template), verb).bucket
+      const expected = EXPECTED[key]
+      if (expected === undefined) mismatches.push(`${key}: NOT in the disposition table (new route? classify it)`)
+      else if (expected !== bucket) mismatches.push(`${key}: table says ${expected} but classifier says ${bucket}`)
+    }
+    for (const key of Object.keys(EXPECTED)) {
+      if (!seen.has(key)) mismatches.push(`${key}: in the table but NOT found in comfy_extras (route removed/renamed?)`)
+    }
+    expect(mismatches).toEqual([])
+  })
+})

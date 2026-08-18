@@ -108,6 +108,7 @@ export type EngineDecision =
   | { kind: 'objectInfo' }
   | { kind: 'upload' }
   | { kind: 'sailorProjects' }
+  | { kind: 'sailorData' }
   | { kind: 'proxy' }
   | { kind: 'forbid', message: string }
 
@@ -155,6 +156,111 @@ const HOSTED_RAW_ALLOW = [
 
 function match(pathNoQuery: string, prefix: string): boolean {
   return pathNoQuery === prefix || pathNoQuery.startsWith(prefix + '/')
+}
+
+/**
+ * STAGE 6 TASK 2b — the `/sailor` extension routes, bucketed by a HANDLER
+ * AUDIT rather than by how the path reads. This is the round-2 allowlist
+ * lesson applied a third time: `/sailor` LOOKED like Sailor's own namespace,
+ * so nobody read the ~27 non-project handlers, and Task 2's fallback
+ * (`match(p,'/sailor') => proxy`) raw-proxied every one of them cross-tenant.
+ * Each list below is a claim about what the upstream handler READS and WRITES,
+ * verified against comfy_extras/{nodes_timeline,_lora_training,
+ * _model_downloads,nodes_compositor,nodes_shader_effects}.py. The coverage
+ * guard in sailor-routes-gate.unit.spec.ts greps those modules and FAILS if a
+ * route classifies as `unknown` — a newly-added `/sailor` route fails the
+ * suite instead of silently proxying.
+ *
+ * `classifySailor` is the single source of truth; `hostedEngineDecision`
+ * below is a thin map from its bucket onto an EngineDecision.
+ */
+export type SailorBucket = 'projects' | 'spend' | 'data' | 'proxy' | 'refuse' | 'unknown'
+
+/**
+ * PER-USER DATA. Reads are filtered to the caller's owned files/assets and
+ * writes/deletes are ownership-checked (404 when unowned — no existence
+ * disclosure). `handleHostedSailorData` re-derives the exact route. The
+ * `/sailor/assets` prefix deliberately also covers DELETE
+ * `/sailor/assets/{asset_id}`; `asset_import`, `asset_thumbnails` and
+ * `asset_waveform` are distinct sibling names, not `assets/` subpaths.
+ */
+export const SAILOR_DATA_PREFIXES = [
+  '/sailor/input_listing',
+  '/sailor/output_listing',
+  '/sailor/input_file',
+  '/sailor/output_file',
+  '/sailor/input_thumbnail',
+  '/sailor/assets',
+  '/sailor/asset_import',
+  '/sailor/asset_thumbnails',
+  '/sailor/asset_waveform',
+]
+
+/**
+ * STATELESS shared catalog / capability — safe to raw-proxy in hosted, EACH
+ * entry audited against its handler:
+ *   /sailor/shader_effects (+ /assets/{name})  reads the bundled shader dir; no writes, no per-user data.
+ *   /sailor/space_defaults / space_thumbnails   read the operator-seeded shared preset dir (read-only listing).
+ *   /sailor/font_subset                          pure fn: base64 font in → subsetted base64 out, touches no disk.
+ *   /sailor/models/status                        read-only bundle-presence check.
+ * NOTE space_thumbnail/{id} is handled by VERB in classifySailor: GET reads a
+ * shared thumb (proxy), POST writes one (refuse) — so it is NOT a flat prefix
+ * here. spacetype_encode LOOKS like a stateless capability but WRITES a video
+ * into the shared input/ dir, so it is REFUSE, not proxy (see SAILOR_REFUSE).
+ */
+export const HOSTED_SAILOR_PROXY = [
+  '/sailor/shader_effects',
+  '/sailor/space_defaults',
+  '/sailor/space_thumbnails',
+  '/sailor/font_subset',
+  '/sailor/models/status',
+]
+
+const SPACE_THUMB_WRITE_MSG = 'Space preset thumbnails are operator content in hosted mode'
+
+/**
+ * COMPUTE / SHARED-STATE WRITE — refused this stage (fail closed; per-user
+ * versions are later work). Each writes to shared engine disk or spends
+ * compute that will be metered later. `verb` narrows the two routes whose
+ * refusal is method-specific (space_default/{id} POST; space_thumbnail/{id}
+ * POST is refused in classifySailor's verb branch above the proxy list).
+ */
+const SAILOR_REFUSE: { prefix: string, verb?: string, message: string }[] = [
+  { prefix: '/sailor/render_timeline_stream', message: 'Timeline render is not available in hosted mode — it writes to the shared output directory' },
+  { prefix: '/sailor/render_timeline', message: 'Timeline render is not available in hosted mode — it writes to the shared output directory' },
+  { prefix: '/sailor/timeline', message: 'Frame render is not available in hosted mode — it runs unmetered compute' },
+  { prefix: '/sailor/spacetype_encode', message: 'Video encode is not available in hosted mode — it writes to the shared input directory' },
+  { prefix: '/sailor/motion', message: 'Frame cleanup is not available in hosted mode — it deletes from the shared input directory' },
+  { prefix: '/sailor/lora', message: 'Dataset writes are not available in hosted mode — they mutate the shared training directory' },
+  { prefix: '/sailor/models/download', message: 'Model download is not available in hosted mode — it writes to the operator model disk' },
+  { prefix: '/sailor/space_default', verb: 'POST', message: 'Space presets are operator content in hosted mode' },
+]
+
+/**
+ * Classify a NORMALIZED `/sailor` path + method into exactly one bucket.
+ * Returns `unknown` for anything unclassified (including non-`/sailor` paths)
+ * so callers fail CLOSED. Spend/projects come first because they own the
+ * broadest sub-namespaces; data before proxy/refuse because a data prefix can
+ * never collide with a capability one; the verb-split for space_thumbnail/{id}
+ * sits above the proxy list so its POST is refused rather than proxied.
+ */
+export function classifySailor(pathNoQuery: string, method: string): { bucket: SailorBucket, message?: string } {
+  const p = pathNoQuery
+  const verb = (method || 'GET').toUpperCase()
+  if (!match(p, '/sailor')) return { bucket: 'unknown' }
+  if (match(p, '/sailor/spend')) return { bucket: 'spend' }
+  if (match(p, '/sailor/projects')) return { bucket: 'projects' }
+  if (SAILOR_DATA_PREFIXES.some(a => match(p, a))) return { bucket: 'data' }
+  // space_thumbnail/{id}: GET reads a shared preset thumb, POST writes one.
+  // (space_thumbnailS — the plural listing — never matches this prefix.)
+  if (match(p, '/sailor/space_thumbnail')) {
+    return verb === 'GET' ? { bucket: 'proxy' } : { bucket: 'refuse', message: SPACE_THUMB_WRITE_MSG }
+  }
+  if (HOSTED_SAILOR_PROXY.some(a => match(p, a))) return { bucket: 'proxy' }
+  for (const r of SAILOR_REFUSE) {
+    if (match(p, r.prefix) && (!r.verb || r.verb === verb)) return { bucket: 'refuse', message: r.message }
+  }
+  return { bucket: 'unknown' }
 }
 
 /**
@@ -226,14 +332,22 @@ export function hostedEngineDecision(enginePath: string, method: string): Engine
   // proxy layer, against the resource_owners registry, because the engine has
   // nowhere to keep it. The spend summary aggregates the whole install's
   // ledger across every project and user — operator data, not tenant data.
-  if (match(p, '/sailor/spend')) return { kind: 'forbid', message: 'Spend summary is operator data in hosted mode' }
-  if (match(p, '/sailor/projects')) return { kind: 'sailorProjects' }
-  // The rest of the /sailor extension (assets, input/output listings, shader
-  // effects, timeline render, model downloads) has NOT had the handler audit
-  // this list demands — it keeps its pre-Stage-6 raw behaviour so the hosted
-  // canvas keeps working, and is named here so the gap is visible instead of
-  // hiding inside HOSTED_RAW_ALLOW. Auditing it is a follow-up, not a claim.
-  if (match(p, '/sailor')) return { kind: 'proxy' }
+  // Stage 6 Task 2b — every `/sailor` route is now classified by a handler
+  // audit (classifySailor). Projects keep their dedicated ownership gate;
+  // spend stays operator-only; per-user DATA routes are filtered/ownership-
+  // checked; audited stateless catalog/capability routes raw-proxy; compute/
+  // shared-write routes are refused; and ANYTHING unclassified — a route added
+  // upstream since this audit — falls to the deny-by-default forbid rather
+  // than silently proxying cross-tenant.
+  if (match(p, '/sailor')) {
+    const c = classifySailor(p, verb)
+    if (c.bucket === 'spend') return { kind: 'forbid', message: 'Spend summary is operator data in hosted mode' }
+    if (c.bucket === 'projects') return { kind: 'sailorProjects' }
+    if (c.bucket === 'data') return { kind: 'sailorData' }
+    if (c.bucket === 'proxy') return { kind: 'proxy' }
+    if (c.bucket === 'refuse') return { kind: 'forbid', message: c.message! }
+    return { kind: 'forbid', message: 'This Sailor engine route is not available in hosted mode' }
+  }
 
   if (HOSTED_RAW_ALLOW.some(a => match(p, a))) return { kind: 'proxy' }
   return { kind: 'forbid', message: 'This engine endpoint is not available in hosted mode' }

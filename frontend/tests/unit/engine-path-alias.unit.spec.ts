@@ -53,12 +53,14 @@ const handleHostedInterrupt = vi.fn(async () => ({ handler: 'interrupt' }))
 const handleHostedObjectInfo = vi.fn(async () => ({ handler: 'objectInfo' }))
 const handleHostedUpload = vi.fn(async () => ({ handler: 'upload' }))
 const handleHostedSailor = vi.fn(async () => ({ handler: 'sailorProjects' }))
+const handleHostedSailorData = vi.fn(async () => ({ handler: 'sailorData' }))
 vi.mock('../../server/utils/engineGate', () => ({
   handleHostedQueueGet: (...a: any[]) => handleHostedQueueGet(...(a as [])),
   handleHostedInterrupt: (...a: any[]) => handleHostedInterrupt(...(a as [])),
   handleHostedObjectInfo: (...a: any[]) => handleHostedObjectInfo(...(a as [])),
   handleHostedUpload: (...a: any[]) => handleHostedUpload(...(a as [])),
   handleHostedSailor: (...a: any[]) => handleHostedSailor(...(a as [])),
+  handleHostedSailorData: (...a: any[]) => handleHostedSailorData(...(a as [])),
 }))
 
 let middleware: (event: any) => Promise<any>
@@ -78,6 +80,7 @@ beforeEach(() => {
   handleHostedObjectInfo.mockClear()
   handleHostedUpload.mockClear()
   handleHostedSailor.mockClear()
+  handleHostedSailorData.mockClear()
 })
 afterEach(() => { mode = 'local' })
 
@@ -336,11 +339,87 @@ describe('hosted mode: alias forms hit the same gates as canonical paths', () =>
     expect(proxyRequest).not.toHaveBeenCalled()
   })
 
-  it('T2: the un-audited rest of the /sailor extension still raw-proxies', async () => {
-    for (const p of ['/sailor/assets', '/sailor/shader_effects', '/sailor/output_listing', '/sailor/input_thumbnail']) {
+  // STAGE 6 TASK 2b — the rest of the /sailor extension is now audited and
+  // bucketed. This block used to assert the whole tail still raw-proxied; that
+  // was the un-audited gap Task 2 named out loud, and closing it is 2b's whole
+  // job. Per-user DATA routes go to the data gate, audited stateless
+  // capability routes still raw-proxy, compute/shared-write routes 403.
+  it('T2b: per-user DATA routes go to the data gate, never the raw proxy', async () => {
+    for (const [p, m] of [
+      ['/sailor/input_listing', 'GET'],
+      ['/sailor/output_listing', 'GET'],
+      ['/sailor/assets', 'GET'],
+      ['/sailor/asset_import', 'POST'],
+      ['/sailor/assets/a-1', 'DELETE'],
+      ['/sailor/asset_thumbnails?asset_id=a-1', 'GET'],
+      ['/sailor/asset_waveform?asset_id=a-1', 'GET'],
+      ['/sailor/input_thumbnail?filename=a.png', 'GET'],
+      ['/sailor/input_file?filename=a.png', 'DELETE'],
+      ['/sailor/output_file?filename=a.png&subfolder=', 'DELETE'],
+      ['/comfyui/sailor/assets', 'GET'],
+      ['/comfyui/sailor/input_file?filename=a.png', 'DELETE'],
+    ] as const) {
+      proxyRequest.mockClear(); handleHostedSailorData.mockClear()
+      await middleware(ev(p, m))
+      expect(handleHostedSailorData, `${m} ${p} must be data-gated`).toHaveBeenCalledTimes(1)
+      expect(proxyRequest, `${m} ${p} must not raw-proxy`).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T2b: audited stateless catalog/capability routes still raw-proxy', async () => {
+    for (const [p, m] of [
+      ['/sailor/shader_effects', 'GET'],
+      ['/sailor/shader_effects/assets/atlas.png', 'GET'],
+      ['/sailor/space_defaults', 'GET'],
+      ['/sailor/space_thumbnails', 'GET'],
+      ['/sailor/space_thumbnail/burst', 'GET'],
+      ['/sailor/font_subset', 'POST'],
+      ['/sailor/models/status', 'GET'],
+      ['/comfyui/sailor/shader_effects', 'GET'],
+    ] as const) {
       proxyRequest.mockClear()
-      await middleware(ev(p, 'GET'))
-      expect(proxyRequest, `${p} must still proxy`).toHaveBeenCalledTimes(1)
+      await middleware(ev(p, m))
+      expect(proxyRequest, `${m} ${p} must still proxy`).toHaveBeenCalledTimes(1)
+      expect(handleHostedSailorData, `${m} ${p} must not be data-gated`).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T2b: compute / shared-write routes are refused, engine never touched', async () => {
+    for (const [p, m] of [
+      ['/sailor/render_timeline', 'POST'],
+      ['/sailor/render_timeline_stream', 'POST'],
+      ['/sailor/timeline/render_frame', 'POST'],
+      ['/sailor/spacetype_encode', 'POST'],
+      ['/sailor/motion/cleanup_frames', 'POST'],
+      ['/sailor/lora/save_captions', 'POST'],
+      ['/sailor/lora/clear_dataset', 'POST'],
+      ['/sailor/models/download', 'GET'],
+      ['/sailor/space_default/burst', 'POST'],
+      ['/sailor/space_thumbnail/burst', 'POST'],
+      ['/comfyui/sailor/render_timeline', 'POST'],
+    ] as const) {
+      proxyRequest.mockClear()
+      expect(await status(p, m), `${m} ${p}`).toBe(403)
+      expect(proxyRequest, `${m} ${p} must never reach the engine`).not.toHaveBeenCalled()
+      expect(handleHostedSailorData).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T2b: an unclassified /sailor route fails closed (deny by default)', async () => {
+    for (const [p, m] of [['/sailor/some_future_route', 'GET'], ['/sailor/newthing', 'POST']] as const) {
+      proxyRequest.mockClear()
+      expect(await status(p, m), `${m} ${p}`).toBe(403)
+      expect(proxyRequest).not.toHaveBeenCalled()
+      expect(handleHostedSailorData).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T2b: the /api mirror of a data route fails closed, not proxied (/sailor not in ENGINE_ROUTE_PREFIXES)', async () => {
+    for (const [p, m] of [['/api/sailor/assets', 'GET'], ['/api/sailor/input_file?filename=a.png', 'DELETE'], ['/comfyui/api/sailor/assets', 'GET']] as const) {
+      proxyRequest.mockClear()
+      expect(await status(p, m), `${m} ${p}`).toBe(403)
+      expect(proxyRequest).not.toHaveBeenCalled()
+      expect(handleHostedSailorData).not.toHaveBeenCalled()
     }
   })
 
@@ -439,6 +518,14 @@ describe('local mode is byte-identical — no gate, no 403, same proxy target', 
     // Stage 6 Task 2: the projects gate and the spend refusal are hosted-only.
     ['/sailor/projects', 'GET'], ['/sailor/projects/abc', 'PUT'], ['/sailor/projects/abc', 'DELETE'],
     ['/sailor/projects/abc/versions', 'POST'], ['/sailor/spend/summary', 'GET'],
+    // Stage 6 Task 2b: every /sailor bucket — data, capability, refuse — raw-
+    // proxies unchanged in local mode.
+    ['/sailor/input_listing', 'GET'], ['/sailor/output_listing', 'GET'], ['/sailor/assets', 'GET'],
+    ['/sailor/asset_import', 'POST'], ['/sailor/assets/a-1', 'DELETE'], ['/sailor/input_file?filename=a.png', 'DELETE'],
+    ['/sailor/output_file?filename=a.png', 'DELETE'], ['/sailor/input_thumbnail?filename=a.png', 'GET'],
+    ['/sailor/asset_thumbnails?asset_id=a-1', 'GET'], ['/sailor/shader_effects', 'GET'], ['/sailor/font_subset', 'POST'],
+    ['/sailor/render_timeline', 'POST'], ['/sailor/lora/clear_dataset', 'POST'], ['/sailor/models/download', 'GET'],
+    ['/sailor/space_thumbnail/burst', 'POST'],
   ] as const
 
   it('proxies every path the hosted gates intercept', async () => {
