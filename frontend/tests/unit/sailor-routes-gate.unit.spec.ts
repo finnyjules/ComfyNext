@@ -163,8 +163,13 @@ function ev(path: string, method = 'GET', userId: string | null = 'u1') {
   return { path, method, context: userId ? { userId } : {}, node: { req: {}, res: {} } }
 }
 
-/** Drive the real handler; return {status, body} or the thrown code. */
-async function call(path: string, method = 'GET', userId: string | null = 'u1'): Promise<any> {
+/** Drive the real handler; return {status, body} or the thrown code. A `body`
+ * (object or string) is buffered onto the readRawBody mock the way h3 hands the
+ * gate the request bytes — the same bytes forwardSailor re-reads on forward. */
+async function call(path: string, method = 'GET', userId: string | null = 'u1', body?: unknown): Promise<any> {
+  rawBody.mockReset()
+  if (body === undefined) rawBody.mockResolvedValue(undefined)
+  else rawBody.mockResolvedValue(Buffer.from(typeof body === 'string' ? body : JSON.stringify(body)))
   try {
     return { body: await handleHostedSailorData(ev(path, method, userId) as any), status: lastStatus }
   }
@@ -324,17 +329,76 @@ describe('the timeline-asset library is per-user', () => {
   })
 
   it('POST /sailor/asset_import records ownership from the engine\'s returned asset.id', async () => {
+    uploads.set('input::clip.mp4', 'u1') // the caller owns the input file being imported
     upstream({ asset: { id: 'a-new', name: 'clip.mp4' }, created: true })
-    const r = await call('/sailor/asset_import', 'POST', 'u1')
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: 'clip.mp4' })
     expect(r.body.asset.id).toBe('a-new')
     expect(owners.get(okey(SAILOR_ASSET_KIND, 'a-new'))).toBe('u1')
   })
 
+  it('asset_import of a nested (subfolder) input the caller owns forwards + records', async () => {
+    uploads.set('input:sub:clip.mp4', 'u1')
+    upstream({ asset: { id: 'a-nested', name: 'clip.mp4' }, created: true })
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: 'sub/clip.mp4' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(owners.get(okey(SAILOR_ASSET_KIND, 'a-nested'))).toBe('u1')
+  })
+
   it('asset_import ownership is first-writer-wins on a duplicate path import', async () => {
-    owners.set(okey(SAILOR_ASSET_KIND, 'a-dup'), 'u2') // u2 imported it first
+    uploads.set('input::clip.mp4', 'u1') // u1 owns the input file
+    owners.set(okey(SAILOR_ASSET_KIND, 'a-dup'), 'u2') // but u2 imported it as an asset first
     upstream({ asset: { id: 'a-dup', name: 'clip.mp4' }, created: false })
-    await call('/sailor/asset_import', 'POST', 'u1')
+    await call('/sailor/asset_import', 'POST', 'u1', { path: 'clip.mp4' })
     expect(owners.get(okey(SAILOR_ASSET_KIND, 'a-dup')), 'must not transfer ownership').toBe('u2')
+  })
+
+  // --- the Critical: asset_import must not forward an arbitrary caller path ---
+  // The engine (comfy_extras/nodes_timeline.py) uses an ABSOLUTE `path` verbatim
+  // and joins a relative one onto input_dir with NO `..` rejection, then probes+
+  // reads the file and records an asset the CALLER owns pointing at it — which
+  // asset_thumbnails/asset_waveform then render back. So the import must name an
+  // input file the caller ALREADY owns; anything else never reaches the engine.
+  it('an ABSOLUTE path (/etc/hostname) is rejected 400, engine never forwarded, no ownership recorded', async () => {
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: '/etc/hostname' })
+    expect(r.status).toBe(400)
+    expect(fetchMock, 'engine must NEVER see an absolute path').not.toHaveBeenCalled()
+    expect([...owners.keys()], 'no forged asset ownership').toEqual([])
+  })
+
+  it('a `..` traversal path is rejected 400, engine never forwarded', async () => {
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: '../../other-tenant-file.mp4' })
+    expect(r.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect([...owners.keys()]).toEqual([])
+  })
+
+  it('a backslash-escaped path is rejected 400 (parser-disagreement class), engine never forwarded', async () => {
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: 'sub\\..\\escape.mp4' })
+    expect(r.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a well-formed path to a file the caller does NOT own → 404, engine never forwarded', async () => {
+    uploads.set('input::theirs.mp4', 'u2') // exists, but belongs to another tenant
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: 'theirs.mp4' })
+    expect(r.status).toBe(404)
+    expect(fetchMock, 'no existence-disclosure forward').not.toHaveBeenCalled()
+    expect([...owners.keys()]).toEqual([])
+  })
+
+  it('an unclaimed (pre-table) filename → 404, engine never forwarded', async () => {
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: 'orphan.mp4' })
+    expect(r.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a missing / non-string `path` → 400, engine never forwarded', async () => {
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { notPath: 'x' })
+    expect(r.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+    const r2 = await call('/sailor/asset_import', 'POST', 'u1', 'not json at all {')
+    expect(r2.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('DELETE /sailor/assets/{id} of another tenant\'s asset 404s, engine never touched', async () => {
@@ -441,6 +505,7 @@ describe('the data gate requires a signed-in tenant', () => {
  * a route added in any module — shader_effects lives in a fifth — is caught.
  */
 const COMFY_EXTRAS = fileURLToPath(new URL('../../../comfy_extras', import.meta.url))
+const CUSTOM_NODES = fileURLToPath(new URL('../../../custom_nodes', import.meta.url))
 
 /** `${VERB} ${pathTemplate}` → expected bucket. THE verified disposition table. */
 const EXPECTED: Record<string, string> = {
@@ -491,14 +556,45 @@ function concrete(template: string): string {
   return template.replace(/\{[^}]+\}/g, 'X')
 }
 
+/** Every `.py` under a root, recursing subdirs (a route can move into a package
+ * subfolder or a custom_nodes plugin), skipping compiled-cache dirs. */
+function pyFilesUnder(root: string): string[] {
+  const out: string[] = []
+  let entries: ReturnType<typeof readdirSync>
+  try {
+    entries = readdirSync(root, { withFileTypes: true })
+  }
+  catch {
+    return out // a root that does not exist on this checkout contributes nothing
+  }
+  for (const e of entries as any[]) {
+    const full = `${root}/${e.name}`
+    if (e.isDirectory()) {
+      if (e.name === '__pycache__' || e.name === 'node_modules' || e.name === '.git') continue
+      out.push(...pyFilesUnder(full))
+    }
+    else if (e.isFile() && e.name.endsWith('.py')) {
+      out.push(full)
+    }
+  }
+  return out
+}
+
 function grepSailorRoutes(): { verb: string, template: string }[] {
   const out: { verb: string, template: string }[] = []
-  const re = /routes\.(get|post|put|delete)\("(\/sailor[^"]*)"/g
-  for (const fn of readdirSync(COMFY_EXTRAS)) {
-    if (!fn.endsWith('.py')) continue
-    const src = readFileSync(`${COMFY_EXTRAS}/${fn}`, 'utf8')
+  // Single OR double quotes — aiohttp accepts either and Python style varies.
+  const re = /routes\.(get|post|put|delete)\(['"](\/sailor[^'"]*)['"]/g
+  const seen = new Set<string>()
+  for (const file of [...pyFilesUnder(COMFY_EXTRAS), ...pyFilesUnder(CUSTOM_NODES)]) {
+    const src = readFileSync(file, 'utf8')
     let m: RegExpExecArray | null
-    while ((m = re.exec(src)) !== null) out.push({ verb: m[1]!.toUpperCase(), template: m[2]! })
+    while ((m = re.exec(src)) !== null) {
+      const rec = { verb: m[1]!.toUpperCase(), template: m[2]! }
+      const key = `${rec.verb} ${rec.template}`
+      if (seen.has(key)) continue // a route defined once but scanned twice
+      seen.add(key)
+      out.push(rec)
+    }
   }
   return out
 }
@@ -507,7 +603,20 @@ describe('coverage guard: every registered /sailor route is classified', () => {
   const routes = grepSailorRoutes()
 
   it('finds the full route surface (sanity: the grep matched a realistic count)', () => {
-    expect(routes.length).toBeGreaterThanOrEqual(35)
+    expect(routes.length).toBeGreaterThanOrEqual(36)
+  })
+
+  it('the widened scan matches single OR double quotes and a synthetic unclassified route fails closed', () => {
+    // (a) The regex must catch a single-quoted registration, not just double.
+    const re = /routes\.(get|post|put|delete)\(['"](\/sailor[^'"]*)['"]/g
+    const single = `@routes.post('/sailor/brand_new_single')`
+    const double = `@routes.get("/sailor/brand_new_double")`
+    expect([...single.matchAll(re)].map(m => `${m[1]} ${m[2]}`)).toEqual(['post /sailor/brand_new_single'])
+    re.lastIndex = 0
+    expect([...double.matchAll(re)].map(m => `${m[1]} ${m[2]}`)).toEqual(['get /sailor/brand_new_double'])
+    // (b) Such a route, unclassified, buckets as unknown — the guard fails closed.
+    expect(classifySailor('/sailor/brand_new_single', 'POST').bucket).toBe('unknown')
+    expect(classifySailor('/sailor/brand_new_double', 'GET').bucket).toBe('unknown')
   })
 
   it('classifies every route into exactly one non-unknown bucket', () => {

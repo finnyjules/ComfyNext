@@ -815,6 +815,47 @@ export async function handleHostedSailorData(event: H3Event): Promise<unknown> {
       return { assets: list.filter(a => owned.has(String((a as { id?: unknown })?.id ?? ''))) }
     }
     case 'assetImport': {
+      // The engine (comfy_extras/nodes_timeline.py) reads `path` from the JSON
+      // body, uses an ABSOLUTE path verbatim and joins a relative one onto
+      // input_dir with NO `..`/normpath rejection, then probes+reads the file
+      // and mints an asset the CALLER owns pointing at it — which
+      // asset_thumbnails/asset_waveform then render back. Left ungated a tenant
+      // imports `/etc/hostname` or `../other-tenant-file`, becomes the owner of
+      // the forged asset, and reads arbitrary host files back through the
+      // ownership-checked media routes. So the import must name an input file
+      // the caller ALREADY owns; the engine is NEVER touched otherwise.
+      //
+      // Buffer the body ONCE and validate it before forwarding. readRawBody
+      // caches on the request, so the forwardSailor below re-forwards the very
+      // same bytes (no second network-observable read of a mutated stream).
+      const raw = await readRawBody(event, false)
+      let importPath: unknown
+      try {
+        importPath = raw ? (JSON.parse(raw.toString('utf8')) as { path?: unknown }).path : undefined
+      }
+      catch {
+        throw createError({ statusCode: 400, message: 'Asset import body must be JSON' })
+      }
+      if (typeof importPath !== 'string' || !importPath) {
+        throw createError({ statusCode: 400, message: "Asset import requires a 'path'" })
+      }
+      // The engine treats `path` as `os.path.join(input_dir, path)` — dirname is
+      // the subfolder, basename the file. Reject an absolute path, any `..`
+      // segment, or a backslash (the parser-disagreement class) up front — 400
+      // for a malformed/escaping path. unsafeUploadTarget owns that whole class.
+      const slash = importPath.lastIndexOf('/')
+      const subfolder = slash >= 0 ? importPath.slice(0, slash) : ''
+      const basename = slash >= 0 ? importPath.slice(slash + 1) : importPath
+      if (unsafeUploadTarget(subfolder, basename)) {
+        throw createError({ statusCode: 400, message: 'Asset import path is not addressable' })
+      }
+      // Well-formed but must be the caller's OWN input file. 404 (no existence
+      // disclosure) when it is not theirs — the same discipline as the other
+      // data routes. canonicalUploadKey names the identical key the upload gate
+      // recorded, so a top-level or a nested owned file both resolve here.
+      const importOwner = await uploadOwner(canonicalUploadKey('input', subfolder, basename))
+      if (importOwner !== userId) throw notFound()
+
       // A NEW asset has no owner to check — this write is how one is born.
       // Record what the engine ACTUALLY stored (its `asset.id`) on a 2xx; a
       // duplicate import returns the existing record, and recordOwner's
