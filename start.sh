@@ -20,19 +20,37 @@ if [ -d /data ]; then
     # the repo path to the volume via a symlink so all future writes land on
     # /data. On later boots /app/models/$d is already a symlink, so we skip the
     # seed and just re-point (ln -sfn is idempotent).
+    # Gated on the copy actually succeeding: under `set -euo pipefail`, a
+    # bare `|| true` would swallow a genuine mid-copy failure and the
+    # unconditional rm that followed would still destroy the baked source —
+    # symlinking a half-populated (or empty) volume dir and losing the
+    # curated content for good. If the copy fails, leave the baked dir in
+    # place unsymlinked rather than risk that.
     if [ -d "/app/models/$d" ] && [ ! -L "/app/models/$d" ]; then
-      cp -an "/app/models/$d/." "/data/models/$d/" 2>/dev/null || true
-      rm -rf "/app/models/$d"
+      if cp -an "/app/models/$d/." "/data/models/$d/"; then
+        rm -rf "/app/models/$d"
+        ln -sfn "/data/models/$d" "/app/models/$d"
+      else
+        echo "[start] WARN: seed copy failed for $d, leaving baked dir in place" >&2
+      fi
+    else
+      ln -sfn "/data/models/$d" "/app/models/$d"
     fi
-    ln -sfn "/data/models/$d" "/app/models/$d"
   done
-  # The training-jobs ledger is a single file — persist it the same way.
+  # The training-jobs ledger is a single file — persist it the same way,
+  # same success-gated seed as above.
   if [ -f /app/models/.training-jobs.json ] && [ ! -L /app/models/.training-jobs.json ]; then
-    cp -an /app/models/.training-jobs.json /data/models/.training-jobs.json 2>/dev/null || true
-    rm -f /app/models/.training-jobs.json
+    if cp -an /app/models/.training-jobs.json /data/models/.training-jobs.json; then
+      rm -f /app/models/.training-jobs.json
+      touch /data/models/.training-jobs.json
+      ln -sfn /data/models/.training-jobs.json /app/models/.training-jobs.json
+    else
+      echo "[start] WARN: seed copy failed for .training-jobs.json, leaving baked file in place" >&2
+    fi
+  else
+    touch /data/models/.training-jobs.json
+    ln -sfn /data/models/.training-jobs.json /app/models/.training-jobs.json
   fi
-  touch /data/models/.training-jobs.json
-  ln -sfn /data/models/.training-jobs.json /app/models/.training-jobs.json
 fi
 
 # 1) ComfyUI backend (CPU-only) on :8188.

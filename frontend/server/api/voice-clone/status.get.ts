@@ -133,10 +133,27 @@ export default defineEventHandler(async (event) => {
         // start and this poll) the owner is genuinely unknown: record NOTHING
         // rather than guess, leaving the voice curated/global. recordOwner is a
         // hosted-only no-op guard away — local mode writes zero registry rows.
+        //
+        // Kept inside the outer try (self-heals: recordOwner is an ON CONFLICT
+        // DO NOTHING upsert, so a transient DB error here just leaves the voice
+        // unowned/globally-visible until the next poll re-records it), but in
+        // its OWN try/catch so a recordOwner failure logs distinctly from a
+        // sidecar-persist failure below — by the time we're here the sidecar is
+        // already written and voiceId is already set, so this is not the same
+        // failure as persistError and shouldn't read like one.
         if (deployMode() === 'hosted') {
           const owner = voiceCloneOwner(pred.id)
-          if (owner) await recordOwner('voice', safe, owner)
-          else console.warn('[stage6] voice ownership not recorded — binding unknown (restart?)', { predictionId: pred.id, voiceId: safe })
+          if (owner) {
+            try {
+              await recordOwner('voice', safe, owner)
+            } catch (ownerErr: any) {
+              console.warn('[stage6] voice ownership record FAILED — voice is temporarily unowned/globally visible until the next poll re-records it', {
+                predictionId: pred.id, voiceId: safe, error: ownerErr?.message ?? String(ownerErr),
+              })
+            }
+          } else {
+            console.warn('[stage6] voice ownership not recorded — binding unknown (restart?)', { predictionId: pred.id, voiceId: safe })
+          }
         }
       } catch (err: any) {
         persistError = err?.message ?? String(err)

@@ -263,6 +263,29 @@ describe('hosted mutations — ownership-guarded, curated immutable', () => {
     expect(patched.trigger).toBe('noir')
   })
 
+  it('LoRA duplicate refuses another tenant\'s private source (404, no sidecar written, not claimed); curated and own sources are still duplicable', async () => {
+    // another user's private LoRA — source is untouched, no new sidecar lands,
+    // and the attempted new base is never claimed.
+    await loraSidecar('TheirSecret'); owners.set('lora:TheirSecret', 'u2')
+    const beforeSource = await fs.readFile(path.join(lorasDir, 'TheirSecret.json'), 'utf8')
+    expect(await statusOf(loraPost(ev({ body: { filename: 'TheirSecret.safetensors', name: 'Stolen' }, userId: 'u1' })))).toBe(404)
+    expect(await fs.readFile(path.join(lorasDir, 'TheirSecret.json'), 'utf8')).toBe(beforeSource)
+    await expect(fs.access(path.join(lorasDir, 'Stolen.json'))).rejects.toThrow()
+    expect(owners.has('lora:Stolen')).toBe(false)
+
+    // curated (unowned) source — duplicating is allowed
+    await loraSidecar('CuratedSrc')
+    const curatedDup = await loraPost(ev({ body: { filename: 'CuratedSrc.safetensors', name: 'From Curated' }, userId: 'u1' }))
+    expect(curatedDup.filename).toBe('From_Curated.safetensors')
+    expect(owners.get('lora:From_Curated')).toBe('u1')
+
+    // own source — duplicating is allowed
+    await loraSidecar('MineSrc'); owners.set('lora:MineSrc', 'u1')
+    const ownDup = await loraPost(ev({ body: { filename: 'MineSrc.safetensors', name: 'From Mine' }, userId: 'u1' }))
+    expect(ownDup.filename).toBe('From_Mine.safetensors')
+    expect(owners.get('lora:From_Mine')).toBe('u1')
+  })
+
   it('LoRA DELETE composes duplicate-only + ownership: own dup deletes, other\'s dup 404s, own real-weights refused', async () => {
     // own duplicate (weightless sidecar with duplicate_of) → deletable
     await loraSidecar('Mine_Dup', { duplicate_of: 'Source' }); owners.set('lora:Mine_Dup', 'u1')

@@ -20,6 +20,8 @@ import path from 'node:path'
 import { parseSidecar } from '~~/server/utils/loraPrompt'
 import { isSafeLoraFilename, loraBaseName, buildDuplicateSidecar } from '~~/server/utils/loraSidecars'
 import { claimNew } from '~~/server/utils/ownedJsonStore'
+import { deployMode } from '~~/server/utils/deployMode'
+import { ownerOf } from '~~/server/utils/resourceOwners'
 
 async function exists(p: string): Promise<boolean> {
   try { await fs.access(p); return true } catch { return false }
@@ -40,6 +42,21 @@ export default defineEventHandler(async (event) => {
 
   const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
   const sourceBase = filename.slice(0, -'.safetensors'.length)
+
+  // Ownership gate (hosted only, security): without this, anyone who knows
+  // another tenant's LoRA base name could duplicate their PRIVATE trained
+  // model into a runnable sidecar (replicate_model/replicate_url copied
+  // below) and generate with it. Only curated (unowned) or the caller's own
+  // source may be duplicated — a 404, not 403, so the response doesn't
+  // disclose whether the base name exists at all. Checked BEFORE the source
+  // is read; the source file itself is never touched by a refused caller.
+  if (deployMode() === 'hosted') {
+    const owner = await ownerOf('lora', sourceBase)
+    const userId = event.context?.userId ?? null
+    if (!(owner === null || owner === userId)) {
+      throw createError({ statusCode: 404, statusMessage: 'LoRA sidecar not found' })
+    }
+  }
 
   let source: Record<string, any>
   try {
