@@ -22,12 +22,13 @@
  * identical reason — and is left for a future task.
  */
 import type { VectorShape } from '~/lib/vector/svg'
-import { commandsToPathData, shapesToSVG, type SvgDocOptions } from '~/lib/vector/svg'
+import { commandsToPathData, shapesToSVG, transformCommands, type SvgDocOptions } from '~/lib/vector/svg'
 import { baseShapePath } from './shapes'
 import { arrange } from './arrange'
 import { composite } from './boolean'
 import { resolvePaint } from './paint'
 import type { GeoShapeConfig } from './config'
+import type { GeoStudioDoc, GeoLayer } from './studio'
 import { isFill, isImageFill, type Paint } from '~/lib/compositor/paint'
 import { paintToVectorPaint } from '~/lib/paint/toVector'
 // The COMPOSITOR canvas resolver — NOT geoshape/paint.ts's `resolvePaint` (the
@@ -162,31 +163,36 @@ export function fitScale(bounds: { w: number; h: number }, w: number, h: number,
 export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = {}): Promise<string> {
   const shapes = await renderShapes(cfg)
   const b = contentBounds(shapes)
-  // Convert each shape's authored `paint` (gradient/pattern) into a real
-  // `VectorPaint` the SVG writer can turn into a `<linearGradient>`/`<pattern>`
-  // — the solid-fallback `.fill` `composite` set is only a placeholder for
-  // this. `null` (image/shader, TIER 3 — see toVector.ts's header) means
-  // `paintToVectorPaint` has no vector form to offer without a raster; the
-  // block below supplies one.
-  //
-  // The paint is boxed to EACH SHAPE'S OWN bounds, not the whole-mark `b`: a
-  // gradient/ombre/pattern anchors to the object it fills, so every clone/piece
-  // shows the FULL ramp within itself. Boxing to `b` (the old behaviour) made
-  // one mark-wide ramp that each shape only sampled a slice of — correct for
-  // single mode (one shape ≈ the whole mark) but wrong for perClone/pieces.
+  await embedShapePaints(shapes)
+  return frameSvg(shapes, b, framePad(cfg), opts)
+}
+
+/**
+ * Convert each shape's authored `paint` (gradient/pattern) into a real
+ * `VectorPaint` the SVG writer can turn into a `<linearGradient>`/`<pattern>`
+ * — the solid-fallback `.fill` `composite` set is only a placeholder for this.
+ * `null` (image/shader, TIER 3 — see toVector.ts's header) means
+ * `paintToVectorPaint` has no vector form to offer without a raster; the block
+ * below supplies one. Mutates `shapes[].fill` in place. Shared by `toSvg` and
+ * `studioToSvg` so the single-mark and layered SVG paths embed paint identically.
+ *
+ * The paint is boxed to EACH SHAPE'S OWN bounds, not the whole-mark bounds: a
+ * gradient/ombre/pattern anchors to the object it fills, so every clone/piece
+ * shows the FULL ramp within itself.
+ */
+async function embedShapePaints(shapes: VectorShape[]): Promise<void> {
   for (const s of shapes as GeoVectorShape[]) {
     if (s.paint && typeof s.paint !== 'string') {
       const sb = contentBounds([s])
       const box = { x: sb.minX, y: sb.minY, width: sb.w, height: sb.h }
       let vp = paintToVectorPaint(s.paint, { units: 'userSpaceOnUse', box })
-      // TIER 3 embed (Task 4 Step 2): rasterize the paint over `box` on an
-      // offscreen canvas — same `resolvePaintCanvas` path `drawToCanvas`/
-      // `warmPaints` use, so the embedded pixels match the live preview —
-      // and ask again with the raster in hand, which the image/shader arms
-      // both turn into a `<pattern>`-with-`<image>` (see `rasterTile` in
-      // toVector.ts). DOM-only (creates a `<canvas>`): under SSR or a
-      // headless unit test (no `document`) this stays skipped and the shape
-      // keeps its solid-fallback `.fill`, exactly like before this task.
+      // TIER 3 embed: rasterize the paint over `box` on an offscreen canvas —
+      // same `resolvePaintCanvas` path `drawToCanvas`/`warmPaints` use, so the
+      // embedded pixels match the live preview — and ask again with the raster
+      // in hand, which the image/shader arms both turn into a
+      // `<pattern>`-with-`<image>` (see `rasterTile` in toVector.ts). DOM-only:
+      // under SSR or a headless unit test (no `document`) this stays skipped
+      // and the shape keeps its solid-fallback `.fill`.
       if (vp === null && typeof document !== 'undefined') {
         const raster = await rasterizePaint(s.paint, box.width, box.height)
         if (raster) vp = paintToVectorPaint(s.paint, { units: 'userSpaceOnUse', box, raster })
@@ -194,21 +200,89 @@ export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = 
       if (vp) s.fill = vp
     }
   }
-  const pad = framePad(cfg)
-  // `paddedExtent` + a mark-CENTRED viewBox (rather than `minX - pad`) so the
-  // frame stays correct when negative padding overscans: the box can shrink
-  // below the mark and crop it symmetrically without going non-positive. For
-  // non-negative padding this is identical to the old `minX - pad` box.
-  const w = paddedExtent(b.w, pad)
-  const h = paddedExtent(b.h, pad)
-  const cx = b.minX + b.w / 2
-  const cy = b.minY + b.h / 2
+}
+
+/**
+ * Wrap paint-embedded `shapes` into an SVG document framed by `bounds` grown by
+ * `pad`. Uses `paddedExtent` + a mark-CENTRED viewBox (rather than `minX - pad`)
+ * so the frame stays correct when negative padding overscans: the box can shrink
+ * below the mark and crop it symmetrically without going non-positive. For
+ * non-negative padding this is identical to the old `minX - pad` box. Shared by
+ * the single-mark and layered SVG paths.
+ */
+function frameSvg(
+  shapes: VectorShape[],
+  bounds: { minX: number; minY: number; w: number; h: number },
+  pad: number,
+  opts: Partial<SvgDocOptions> = {},
+): string {
+  const w = paddedExtent(bounds.w, pad)
+  const h = paddedExtent(bounds.h, pad)
+  const cx = bounds.minX + bounds.w / 2
+  const cy = bounds.minY + bounds.h / 2
   return shapesToSVG(shapes, {
     width: w,
     height: h,
     viewBox: [cx - w / 2, cy - h / 2, w, h],
     ...opts,
   })
+}
+
+/** Apply a layer's placement (offset/scale/rotate) to its already-composed,
+ *  document-space shapes. The mark is origin-centred (see `renderShapes`), so
+ *  scale/rotate turn about the mark's own centre; `flipY: false` keeps the
+ *  already-final orientation (no second y-flip). Identity offsets pass through
+ *  untouched (no per-point work, no new arrays). */
+function applyLayerOffset(shapes: VectorShape[], off: GeoLayer['offset']): VectorShape[] {
+  if (off.x === 0 && off.y === 0 && off.scale === 1 && off.rotate === 0) return shapes
+  return shapes.map((s) => ({
+    ...s,
+    commands: transformCommands(s.commands, { x: off.x, y: off.y, scale: off.scale, rotate: off.rotate, flipY: false }),
+  }))
+}
+
+/**
+ * A layered `GeoStudioDoc` -> one flat `VectorShape[]` in document space, the
+ * SAME shape list the preview, PNG bake, and SVG export all consume (so the
+ * three stay pixel-identical). Enabled layers render bottom→top via the
+ * existing single-mark `renderShapes`, each placed by its `offset`, then
+ * concatenated — later layers paint over earlier ones. A one-layer doc with a
+ * native offset is byte-identical to `renderShapes(layer.mark)`.
+ *
+ * NOTE: per-layer opacity/blend are NOT applied here — flat concatenation can't
+ * isolate a layer's internal overlaps, so honouring them needs group compositing
+ * (Phase 3). Cross-layer intersection faces (Phase 2) will be appended after the
+ * layers so they overpaint the overlaps.
+ */
+export async function renderStudio(doc: GeoStudioDoc): Promise<VectorShape[]> {
+  const out: VectorShape[] = []
+  for (const layer of doc.layers) {
+    if (!layer.enabled) continue
+    const shapes = await renderShapes(layer.mark)
+    out.push(...applyLayerOffset(shapes, layer.offset))
+  }
+  return out
+}
+
+/** The frame margin (document units) for a whole layered composite — `framePad`
+ *  driven by the stack `doc.padding`, with the largest enabled-layer stroke
+ *  half-width folded in so no outline clips at the edge (mirrors `framePad`'s
+ *  single-mark `strokeWidth/2` term). */
+export function studioFramePad(doc: GeoStudioDoc): number {
+  let maxStroke = 0
+  for (const l of doc.layers) if (l.enabled) maxStroke = Math.max(maxStroke, l.mark.strokeWidth)
+  return framePad({ padding: doc.padding, strokeWidth: maxStroke })
+}
+
+/** A layered `GeoStudioDoc` -> a standalone SVG document, framed by the stack
+ *  padding over the union bounds of all layers. Shares `embedShapePaints` +
+ *  `frameSvg` with `toSvg`, so the layered SVG and the single-mark SVG frame and
+ *  embed paint identically. */
+export async function studioToSvg(doc: GeoStudioDoc, opts: Partial<SvgDocOptions> = {}): Promise<string> {
+  const shapes = await renderStudio(doc)
+  const b = contentBounds(shapes)
+  await embedShapePaints(shapes)
+  return frameSvg(shapes, b, studioFramePad(doc), opts)
 }
 
 /** A fallback colour for a fill `resolvePaintCanvas` cannot resolve yet (image/
