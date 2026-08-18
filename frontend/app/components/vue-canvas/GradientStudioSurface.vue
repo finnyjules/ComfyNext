@@ -79,6 +79,12 @@ const baseBanded = computed(() => ['linear', 'radial', 'orbit', 'stack'].include
 const anyInnerRadius = computed(() => someLayerIs(['radial', 'orbit', 'radialRamp']))   // conic does NOT use innerRadius
 const anyCenter = computed(() => someLayerIs(['radial', 'orbit', 'radialRamp', 'conic']))
 const isLiquid = computed(() => activeLayout.value === 'liquid')
+// The flow.* highlight/shadow/gloss/ripple uniforms are GLOBAL and the shader only
+// applies them under `u_layout[0]` (layer 0's layout == liquid) — never per-layer. So
+// they must gate on whether the BASE layer is liquid, not the active one (same
+// layer-0-anchor as baseBanded/Relief). Depth/foldScale/veins/refract stay isLiquid:
+// those DO have a genuine per-layer effect inside computeLayer.
+const baseLiquid = computed(() => effectiveLayout(config.value, 0) === 'liquid')
 const isMesh = computed(() => activeLayout.value === 'mesh')
 const isCurve = computed(() => activeLayout.value === 'curve')
 // Gradient axis block — the three simple primitives share one "Gradient" section;
@@ -1166,22 +1172,29 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Depth</span><span class="text-white/40">{{ Math.round(config.flow!.depth) }}</span></label>
           <input v-model.number="config.flow!.depth" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.depth', config.flow!.depth)" />
         </BindableRow>
-        <BindableRow control-key="flow.highlights" label="Highlights" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.highlights')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Highlights</span><span class="text-white/40">{{ Math.round(config.flow!.highlights) }}</span></label>
-          <input v-model.number="config.flow!.highlights" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.highlights', config.flow!.highlights)" />
-        </BindableRow>
-        <BindableRow control-key="flow.shadows" label="Shadows" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.shadows')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Shadows</span><span class="text-white/40">{{ Math.round(config.flow!.shadows) }}</span></label>
-          <input v-model.number="config.flow!.shadows" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.shadows', config.flow!.shadows)" />
-        </BindableRow>
+        <!-- Highlights / Shadows / Gloss / Ripple are applied only under u_layout[0] (see
+             baseLiquid): they light the BASE liquid layer's emboss, not per-layer. Shown
+             inert when a non-base layer is liquid but layer 0 isn't. -->
+        <template v-if="baseLiquid">
+          <BindableRow control-key="flow.highlights" label="Highlights" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.highlights')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Highlights</span><span class="text-white/40">{{ Math.round(config.flow!.highlights) }}</span></label>
+            <input v-model.number="config.flow!.highlights" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.highlights', config.flow!.highlights)" />
+          </BindableRow>
+          <BindableRow control-key="flow.shadows" label="Shadows" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.shadows')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Shadows</span><span class="text-white/40">{{ Math.round(config.flow!.shadows) }}</span></label>
+            <input v-model.number="config.flow!.shadows" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.shadows', config.flow!.shadows)" />
+          </BindableRow>
+        </template>
         <BindableRow control-key="flow.foldScale" label="Fold scale" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.foldScale')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Fold scale</span><span class="text-white/40">{{ Math.round(config.flow!.foldScale) }}</span></label>
           <input v-model.number="config.flow!.foldScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.foldScale', config.flow!.foldScale)" />
         </BindableRow>
-        <BindableRow control-key="flow.gloss" label="Gloss" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.gloss')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Gloss</span><span class="text-white/40">{{ Math.round(flowGloss) || 'matte' }}</span></label>
-          <input v-model.number="flowGloss" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('flow.gloss', flowGloss)" />
-        </BindableRow>
+        <template v-if="baseLiquid">
+          <BindableRow control-key="flow.gloss" label="Gloss" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.gloss')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Gloss</span><span class="text-white/40">{{ Math.round(flowGloss) || 'matte' }}</span></label>
+            <input v-model.number="flowGloss" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('flow.gloss', flowGloss)" />
+          </BindableRow>
+        </template>
       </StudioSection>
 
       <!-- Liquid surface (turns the smoky warp into flowing fluid) -->
@@ -1195,10 +1208,12 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Vein scale</span><span class="text-white/40">{{ Math.round(flowVeinScale) }}</span></label>
           <input v-model.number="flowVeinScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.veinScale', flowVeinScale)" />
         </BindableRow>
-        <BindableRow control-key="flow.ripple" label="Ripple" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.ripple')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Ripple</span><span class="text-white/40">{{ Math.round(flowRipple) || 'off' }}</span></label>
-          <input v-model.number="flowRipple" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.ripple', flowRipple)" />
-        </BindableRow>
+        <template v-if="baseLiquid">
+          <BindableRow control-key="flow.ripple" label="Ripple" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.ripple')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Ripple</span><span class="text-white/40">{{ Math.round(flowRipple) || 'off' }}</span></label>
+            <input v-model.number="flowRipple" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.ripple', flowRipple)" />
+          </BindableRow>
+        </template>
         <BindableRow control-key="flow.refract" label="Refraction" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.refract')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Refraction</span><span class="text-white/40">{{ Math.round(flowRefract) || 'off' }}</span></label>
           <input v-model.number="flowRefract" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.refract', flowRefract)" />
@@ -1410,11 +1425,11 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           <PalettePicker mode="stops" :stop-count="layer.color.stops.length" :seed="layer.color.stops[0]?.color ?? '#4f8ad9'" @apply-stops="applyPaletteStops" />
         </div>
         <!-- Gradient direction (u_gradHoriz) and Mapping (u_mapping) are read ONLY by
-             the banded layouts (linear/radial/orbit/stack) in the shader; on the simple
-             primitives (ramp/radialRamp/conic), curve, and liquid they're no-ops, so gate
-             them to isBanded like the Shape section. Posterize steps + Hue drift below
-             stay !isMesh — the simple-primitives branch applies both. -->
-        <template v-if="isBanded">
+             linear/radial/orbit in the shader (the grad = gradHoriz?… and mapping<0.5?…
+             branches). STACK derives its axis from ring rotation (rotStep/pivot) and never
+             reads either uniform, so it's excluded here even though it's "banded". Simple
+             primitives / curve / liquid / mesh don't read them either. -->
+        <template v-if="isBanded && !isStack">
           <label class="mb-1 block text-xs text-white/60">Gradient direction</label>
           <div class="mb-2 grid grid-cols-2 gap-1">
             <button v-for="gd in GRADIENT_DIRS" :key="gd" class="rounded px-1 py-1 text-[11px] capitalize transition"
@@ -1433,6 +1448,12 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Steps</span><span class="text-white/40">{{ layer.color.steps || 'off' }}</span></label>
             <input v-model.number="layer.color.steps" type="range" min="0" max="24" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.steps', layer.color.steps)" />
           </BindableRow>
+        </template>
+        <!-- Hue drift (u_hueDrift) is read by the simple-primitive/curve branch (t±drift),
+             linear, and radial/orbit — but NOT by stack or liquid (their branches never
+             reference u_hueDrift). Posterize steps above IS read by every non-mesh branch,
+             so it stays !isMesh. -->
+        <template v-if="!isMesh && !isStack && !isLiquid">
           <BindableRow control-key="layer.color.hueDrift" label="Hue drift" kind="slider" :min="-180" :max="180" :step="1" :bound="boundColumnFor('layer.color.hueDrift')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue drift</span><span class="text-white/40">{{ Math.round(layer.color.hueDrift) }}°</span></label>
             <input v-model.number="layer.color.hueDrift" type="range" min="-180" max="180" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.hueDrift', layer.color.hueDrift)" />
@@ -1460,12 +1481,17 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
             </BindableRow>
           </template>
         </template>
-        <BindableRow control-key="layer.color.falloff" label="Falloff" kind="select" :options="['linear', 'ease', 'smooth']" :bound="boundColumnFor('layer.color.falloff')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 block text-xs text-white/60">Falloff</label>
-          <select :value="layer.color.falloff ?? 'linear'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onColor('falloff', ($event.target as HTMLSelectElement).value)">
-            <option value="linear">Linear</option><option value="ease">Ease</option><option value="smooth">Smooth</option>
-          </select>
-        </BindableRow>
+        <!-- Falloff shapes the ramp LUT (buildRampLut), sampled via sampleRamp/sampleAlpha.
+             Mesh colours come from meshColorAt (per-point literal colours) and never sample
+             the ramp, so Falloff is a no-op there. Every other layout samples the ramp. -->
+        <template v-if="!isMesh">
+          <BindableRow control-key="layer.color.falloff" label="Falloff" kind="select" :options="['linear', 'ease', 'smooth']" :bound="boundColumnFor('layer.color.falloff')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 block text-xs text-white/60">Falloff</label>
+            <select :value="layer.color.falloff ?? 'linear'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onColor('falloff', ($event.target as HTMLSelectElement).value)">
+              <option value="linear">Linear</option><option value="ease">Ease</option><option value="smooth">Smooth</option>
+            </select>
+          </BindableRow>
+        </template>
       </StudioSection>
 
       <!-- Motion -->
