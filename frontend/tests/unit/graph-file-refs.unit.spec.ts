@@ -27,6 +27,7 @@ import { MeterRefusalError } from '../../server/utils/requestMeter'
 function ctx(overrides: Partial<any> = {}) {
   return {
     uploadFlagged: new Set<string>(['LoadImage.image', 'LoadImageOutput.image']),
+    callerHash: 'aaaaaaaaaaaa',
     ownsInput: vi.fn(async (_name: string) => true),
     ownsOutput: vi.fn(async (_annotated: string) => true),
     ...overrides,
@@ -226,6 +227,72 @@ describe('validateGraphFileRefs — Task 7b newly-covered readers refuse foreign
       await expect(validateGraphFileRefs(node(ct, { [input]: 'foreign.bin' }), c), ct)
         .rejects.toMatchObject({ statusCode: 403 })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Task 7b (review Critical) — per-FOLDER readers. Three dataset nodes read an
+// attacker-named FOLDER from the shared tree and emit its whole contents. None
+// is an annotated per-file ref, so GRAPH_FILE_READERS never saw them; the new
+// GRAPH_FOLDER_READERS map vets the folder value against the caller's own
+// u_<hash> subtree BEFORE any hold.
+// ---------------------------------------------------------------------------
+
+describe('validateGraphFileRefs — Task 7b folder readers (per-FOLDER ownership)', () => {
+  const CALLER = 'aaaaaaaaaaaa'
+  const OTHER = 'bbbbbbbbbbbb'
+  const fctx = (o: Partial<any> = {}) => ctx({ callerHash: CALLER, ...o })
+
+  it('LoadImageDataSetFromFolder — REFUSES (403) another tenant\'s input subfolder', async () => {
+    await expect(validateGraphFileRefs(node('LoadImageDataSetFromFolder', { folder: `u_${OTHER}` }), fctx()))
+      .rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('LoadImageDataSetFromFolder — PASSES the caller\'s own u_<hash> subfolder (and a nested path under it)', async () => {
+    await expect(validateGraphFileRefs(node('LoadImageDataSetFromFolder', { folder: `u_${CALLER}` }), fctx()))
+      .resolves.toBeUndefined()
+    await expect(validateGraphFileRefs(node('LoadImageDataSetFromFolder', { folder: `u_${CALLER}/set1` }), fctx()))
+      .resolves.toBeUndefined()
+  })
+
+  it('LoadImageDataSetFromFolder — REFUSES a bare folder name (no legitimate use on the shared input tree)', async () => {
+    await expect(validateGraphFileRefs(node('LoadImageDataSetFromFolder', { folder: 'randomname' }), fctx()))
+      .rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('LoadImageDataSetFromFolder — fails closed on traversal / absolute / empty / wired / non-string values', async () => {
+    const bads: unknown[] = ['../x', `../u_${CALLER}`, `u_${CALLER}/../u_${OTHER}`, `u_${CALLER}/..`, '/abs/path', 'C:/x', '', '.', '..', undefined, null, 42, ['1', 0], { a: 1 }]
+    for (const bad of bads) {
+      await expect(validateGraphFileRefs(node('LoadImageDataSetFromFolder', { folder: bad }), fctx()), JSON.stringify(bad))
+        .rejects.toMatchObject({ statusCode: 403 })
+    }
+  })
+
+  it('LoadImageTextDataSetFromFolder — same input-folder rule (foreign refused, own passes)', async () => {
+    await expect(validateGraphFileRefs(node('LoadImageTextDataSetFromFolder', { folder: `u_${OTHER}` }), fctx()))
+      .rejects.toMatchObject({ statusCode: 403 })
+    await expect(validateGraphFileRefs(node('LoadImageTextDataSetFromFolder', { folder: `u_${CALLER}` }), fctx()))
+      .resolves.toBeUndefined()
+  })
+
+  it('LoadTrainingDataset.folder_name — REFUSES another tenant\'s output folder AND the bare default', async () => {
+    await expect(validateGraphFileRefs(node('LoadTrainingDataset', { folder_name: `u_${OTHER}` }), fctx()))
+      .rejects.toMatchObject({ statusCode: 403 })
+    // default "training_dataset" is not caller-scoped → refused (fail closed).
+    await expect(validateGraphFileRefs(node('LoadTrainingDataset', { folder_name: 'training_dataset' }), fctx()))
+      .rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('LoadTrainingDataset.folder_name — PASSES the caller\'s own u_<hash> output subtree', async () => {
+    await expect(validateGraphFileRefs(node('LoadTrainingDataset', { folder_name: `u_${CALLER}/training_dataset` }), fctx()))
+      .resolves.toBeUndefined()
+  })
+
+  it('folder ownership is a pure string check — it never touches the per-file ownsInput/ownsOutput DB probes', async () => {
+    const c = fctx()
+    await validateGraphFileRefs(node('LoadTrainingDataset', { folder_name: `u_${CALLER}` }), c)
+    expect(c.ownsInput).not.toHaveBeenCalled()
+    expect(c.ownsOutput).not.toHaveBeenCalled()
   })
 })
 

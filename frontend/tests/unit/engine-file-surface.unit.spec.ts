@@ -5,10 +5,15 @@
  * ON DRIFT, so a newly-added file-reading or file-writing node fails the suite
  * instead of silently bypassing the per-user ownership checks:
  *
- *  (A) every `folder_paths.get_annotated_filepath(` read site is accounted for
- *      — its file's node(s) are in GRAPH_FILE_READERS, or the file's reads are
- *      documented non-graph-node reads (an HTTP-route helper). A read added to
- *      a covered file bumps the per-file count and trips the guard.
+ *  (A) every directory-read PRIMITIVE site — get_annotated_filepath (per-file)
+ *      AND get_(input|output|temp)_directory (the per-FOLDER readers that a
+ *      get_annotated_filepath-only grep MISSED, the Task 7b review Critical) —
+ *      is accounted for: its file's node(s) are a per-file reader in
+ *      GRAPH_FILE_READERS, a per-folder reader in GRAPH_FOLDER_READERS, or the
+ *      remaining hits (schema-build dir-listings, mkdir/temp staging, output
+ *      writes already gated by guard B, HTTP-route helpers) are documented in a
+ *      per-file `note`. A read added to a covered file bumps the per-file count
+ *      and trips the guard.
  *  (B) every `folder_paths.get_output_directory(` write site's node is in
  *      OUTPUT_CLASS_TYPES (so its output is subfoldered under u_<hash>/) or on
  *      the explicit write-exempt list. Deliverable savers that delegate to a UI
@@ -22,7 +27,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { GRAPH_FILE_READERS } from '../../server/utils/engineFileSurface'
+import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS } from '../../server/utils/engineFileSurface'
 import { OUTPUT_CLASS_TYPES } from '../../server/utils/priceBook'
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url))
@@ -63,74 +68,182 @@ function liveCounts(re: RegExp): Record<string, number> {
 }
 
 // ---------------------------------------------------------------------------
-// (A) READ surface — folder_paths.get_annotated_filepath(
+// (A) READ surface — the FULL directory-read primitive set, not just
+// get_annotated_filepath. The pre-Task-7b guard greped ONLY
+// get_annotated_filepath, so the per-FOLDER readers (LoadImageDataSetFromFolder
+// etc., which reach the shared tree via get_input_directory /
+// get_output_directory) slipped through unmodeled — the review Critical. The
+// widened regex matches every real call site of get_annotated_filepath and
+// get_(input|output|temp)_directory (anchored to the `(` so a stray mention in
+// a comment can't spuriously trip drift), recursing comfy_extras/ subdirs +
+// custom_nodes/ + nodes.py.
 // ---------------------------------------------------------------------------
 
 const ANNOTATED_RE = /folder_paths\.get_annotated_filepath\(/g
+const WIDE_READ_RE = /folder_paths\.get_annotated_filepath\(|folder_paths\.(?:get_)?(?:input|output|temp)_directory\(/g
 
 /**
- * Every file with an annotated-read site, its count, and the class_type(s) that
- * read through it. `note` documents read sites that are NOT graph-node reads
- * (an HTTP-route helper) so their absence from GRAPH_FILE_READERS is deliberate.
+ * Per file: `count` = the widened directory-primitive hit total (drift guard),
+ * `annotated` = the get_annotated_filepath-only subset (kept precise so the
+ * original per-file read map still self-checks), `readers` = per-FILE graph
+ * readers (must be in GRAPH_FILE_READERS), `folderReaders` = per-FOLDER graph
+ * readers (must be in GRAPH_FOLDER_READERS), and `note` documents every hit that
+ * is NOT a graph file/folder read — REQUIRED whenever `count !== annotated`, i.e.
+ * whenever a file carries directory hits beyond its annotated per-file readers
+ * (schema-build listings, temp/mkdir staging, output writes already covered by
+ * guard B, or HTTP-route helpers).
  */
-const ANNOTATED_READ_FILES: Record<string, { count: number, nodes: string[], note?: string }> = {
-  'nodes.py': { count: 6, nodes: ['LoadLatent', 'LoadImage', 'LoadImageMask'] },
-  'comfy_extras/nodes_compositor.py': { count: 1, nodes: ['Compositor'] },
-  'comfy_extras/nodes_kinetic_type.py': { count: 1, nodes: ['KineticType'] },
-  'comfy_extras/nodes_pose_mannequin.py': { count: 1, nodes: ['PoseMannequin'] },
-  'comfy_extras/nodes_scene3d.py': { count: 1, nodes: ['Scene3DStudio'] },
-  'comfy_extras/nodes_text_mask.py': { count: 1, nodes: ['TextMask'] },
-  'comfy_extras/nodes_text_on_path.py': { count: 1, nodes: ['TextOnPath'] },
-  'comfy_extras/nodes_type.py': { count: 1, nodes: ['RenderType'] },
-  'comfy_extras/nodes_webcam.py': { count: 1, nodes: ['WebcamCapture'] },
-  'comfy_extras/nodes_image.py': { count: 2, nodes: ['Image'] },
-  'comfy_extras/nodes_painter.py': { count: 2, nodes: ['Painter'] },
-  'comfy_extras/nodes_video_pro.py': { count: 2, nodes: ['LUT', 'AudioWaveform'] },
-  'comfy_extras/nodes_video_effects.py': { count: 3, nodes: ['LoadVideoFrames', 'SaveVideoFrames'] },
-  'comfy_extras/nodes_video.py': { count: 4, nodes: ['LoadVideo', 'Video'] },
-  'comfy_extras/nodes_audio.py': { count: 5, nodes: ['Audio', 'LoadAudio', 'RecordAudio'] },
-  'comfy_extras/nodes_load_3d.py': { count: 5, nodes: ['Load3D'] },
+type ReadFileEntry = { count: number, annotated: number, readers: string[], folderReaders?: string[], note?: string }
+const READ_SURFACE_FILES: Record<string, ReadFileEntry> = {
+  'nodes.py': {
+    count: 12, annotated: 6, readers: ['LoadLatent', 'LoadImage', 'LoadImageMask'],
+    note: 'the 6 non-annotated hits are SaveLatent/SaveImage get_output_directory writes (guard B), a temp preview dir, and get_input_directory schema listings for the Load* combos — none a graph file read.',
+  },
+  'comfy_extras/nodes_compositor.py': {
+    count: 2, annotated: 1, readers: ['Compositor'],
+    note: 'plus one get_input_directory schema listing (INPUT_TYPES combo).',
+  },
+  'comfy_extras/nodes_kinetic_type.py': { count: 1, annotated: 1, readers: ['KineticType'] },
+  'comfy_extras/nodes_pose_mannequin.py': { count: 1, annotated: 1, readers: ['PoseMannequin'] },
+  'comfy_extras/nodes_scene3d.py': { count: 1, annotated: 1, readers: ['Scene3DStudio'] },
+  'comfy_extras/nodes_text_mask.py': { count: 1, annotated: 1, readers: ['TextMask'] },
+  'comfy_extras/nodes_text_on_path.py': { count: 1, annotated: 1, readers: ['TextOnPath'] },
+  'comfy_extras/nodes_type.py': { count: 1, annotated: 1, readers: ['RenderType'] },
+  'comfy_extras/nodes_webcam.py': { count: 1, annotated: 1, readers: ['WebcamCapture'] },
+  'comfy_extras/nodes_image.py': {
+    count: 5, annotated: 2, readers: ['Image'],
+    note: 'plus a temp output_dir, an export get_output_directory, and a get_input_directory schema listing for the Image node — setup/listing, not graph reads.',
+  },
+  'comfy_extras/nodes_painter.py': { count: 2, annotated: 2, readers: ['Painter'] },
+  'comfy_extras/nodes_video_pro.py': {
+    count: 4, annotated: 2, readers: ['LUT', 'AudioWaveform'],
+    note: 'plus two get_input_directory schema listings (LUT / AudioWaveform combos).',
+  },
+  'comfy_extras/nodes_video_effects.py': {
+    count: 6, annotated: 3, readers: ['LoadVideoFrames', 'SaveVideoFrames'],
+    note: 'plus two get_input_directory schema listings and one get_output_directory write (SaveVideoFrames, guard B).',
+  },
+  'comfy_extras/nodes_video.py': {
+    count: 11, annotated: 4, readers: ['LoadVideo', 'Video'],
+    note: 'plus get_output_directory writes (SaveWEBM/SaveVideo/Video, guard B), temp-dir staging, and get_input_directory schema listings.',
+  },
+  'comfy_extras/nodes_audio.py': {
+    count: 7, annotated: 5, readers: ['Audio', 'LoadAudio', 'RecordAudio'],
+    note: 'plus two get_input_directory schema listings (audio combos).',
+  },
+  'comfy_extras/nodes_load_3d.py': {
+    count: 8, annotated: 5, readers: ['Load3D'],
+    note: 'plus two get_input_directory schema listings (3d subdir) and one get_output_directory write (Preview3D, guard B / write-exempt).',
+  },
   'comfy_extras/nodes_timeline.py': {
-    count: 1, nodes: [],
-    note: 'encode_spacetype_video is an HTTP-route helper (POST /sailor/spacetype_encode), not a graph node. '
-      + 'The Timeline graph node reads image clips via os.path.join(input_dir, ...) — covered as an input-join reader below.',
+    count: 17, annotated: 1, readers: [],
+    note: 'encode_spacetype_video is an HTTP-route helper (POST /sailor/spacetype_encode), not a graph node. The Timeline GRAPH node reads image clips via os.path.join(get_input_directory(), path) — modeled in GRAPH_FILE_READERS as a timeline-clips JSON reader (NON_ANNOTATED_READERS). The remaining get_input_directory / get_output_directory hits are all aiohttp route handlers (/sailor/render_timeline*, /sailor/output_file, …) gated in engineGate.ts.',
+  },
+  // Task 7b Critical — the three per-FOLDER readers. NOT annotated per-file
+  // refs, so they never appear in the annotated subset; each reads a whole
+  // attacker-named folder from the shared tree and is now vetted via
+  // GRAPH_FOLDER_READERS.
+  'comfy_extras/nodes_dataset.py': {
+    count: 6, annotated: 0, readers: [],
+    folderReaders: ['LoadImageDataSetFromFolder', 'LoadImageTextDataSetFromFolder', 'LoadTrainingDataset'],
+    note: 'the three folder-reader inputs are the get_input_directory (x2, LoadImage*DataSetFromFolder) + get_output_directory (x1, LoadTrainingDataset) reads modeled in GRAPH_FOLDER_READERS; the other three get_output_directory hits are dataset WRITES (SaveImageDataSetToFolder / SaveImageTextDataSetToFolder / SaveTrainingDataset, guard B write-exempt).',
+  },
+  // Pure non-graph-read files (annotated 0) — writes covered by guard B, or
+  // helper / mkdir staging.
+  'comfy_extras/_live_preview.py': {
+    count: 4, annotated: 0, readers: [],
+    note: 'shared preview helper — temp/output/input dir setup + mkdir, no graph node.',
+  },
+  'comfy_extras/_lora_training.py': {
+    count: 1, annotated: 0, readers: [],
+    note: 'training helper reads get_input_directory for dataset staging — invoked by SaveTrainingDataset, not a registered graph node.',
+  },
+  'comfy_extras/nodes_hunyuan3d.py': {
+    count: 1, annotated: 0, readers: [],
+    note: 'get_output_directory write via get_save_image_path (SaveGLB, guard B).',
+  },
+  'comfy_extras/nodes_images.py': {
+    count: 1, annotated: 0, readers: [],
+    note: 'get_output_directory write via get_save_image_path (SaveSVGNode, guard B).',
+  },
+  'comfy_extras/nodes_lora_extract.py': {
+    count: 1, annotated: 0, readers: [],
+    note: 'get_output_directory write via get_save_image_path (LoraSave, guard B / write-exempt).',
+  },
+  'comfy_extras/nodes_model_merging.py': {
+    count: 4, annotated: 0, readers: [],
+    note: 'four get_output_directory writes (CheckpointSave / CLIPSave / VAESave / ModelSave, guard B).',
+  },
+  'comfy_extras/nodes_smart_layout.py': {
+    count: 1, annotated: 0, readers: [],
+    note: 'get_temp_directory staging for a preview — not a shared-tree read.',
+  },
+  'comfy_extras/nodes_train.py': {
+    count: 1, annotated: 0, readers: [],
+    note: 'get_output_directory write (SaveLoRA, guard B / write-exempt).',
   },
 }
 
 /**
  * Graph readers whose read site is NOT a get_annotated_filepath call in their
- * own file, so they never appear in ANNOTATED_READ_FILES: LoadImageOutput
+ * own file, so they never appear as an annotated reader: LoadImageOutput
  * inherits LoadImage.load_image, and Timeline reads image clips via
  * os.path.join(get_input_directory(), path) (nodes_timeline.py).
  */
 const NON_ANNOTATED_READERS = ['LoadImageOutput', 'Timeline']
 
 describe('coverage guard (A) — every engine file-READ site is accounted for', () => {
-  it('the live get_annotated_filepath per-file counts match the checked-in table (drift → fail)', () => {
+  it('the live get_annotated_filepath per-file counts match the annotated subset (drift → fail)', () => {
     expect(liveCounts(ANNOTATED_RE)).toEqual(
-      Object.fromEntries(Object.entries(ANNOTATED_READ_FILES).map(([f, v]) => [f, v.count])),
+      Object.fromEntries(
+        Object.entries(READ_SURFACE_FILES).filter(([, v]) => v.annotated > 0).map(([f, v]) => [f, v.annotated]),
+      ),
     )
   })
 
-  it('every node named in a read-file entry is in GRAPH_FILE_READERS', () => {
-    for (const [file, { nodes }] of Object.entries(ANNOTATED_READ_FILES)) {
-      for (const n of nodes) {
+  it('the live WIDENED directory-primitive per-file counts match the checked-in table (drift → fail)', () => {
+    expect(liveCounts(WIDE_READ_RE)).toEqual(
+      Object.fromEntries(Object.entries(READ_SURFACE_FILES).map(([f, v]) => [f, v.count])),
+    )
+  })
+
+  it('every per-FILE reader named in a read-file entry is in GRAPH_FILE_READERS', () => {
+    for (const [file, { readers }] of Object.entries(READ_SURFACE_FILES)) {
+      for (const n of readers) {
         expect(GRAPH_FILE_READERS[n], `${n} (from ${file}) must be in GRAPH_FILE_READERS`).toBeDefined()
+      }
+    }
+  })
+
+  it('every per-FOLDER reader named in a read-file entry is in GRAPH_FOLDER_READERS', () => {
+    for (const [file, { folderReaders }] of Object.entries(READ_SURFACE_FILES)) {
+      for (const n of folderReaders ?? []) {
+        expect(GRAPH_FOLDER_READERS[n], `${n} (from ${file}) must be in GRAPH_FOLDER_READERS`).toBeDefined()
       }
     }
   })
 
   it('every GRAPH_FILE_READERS class is backed by a real read site (no orphan map entry)', () => {
     const backed = new Set<string>(NON_ANNOTATED_READERS)
-    for (const { nodes } of Object.values(ANNOTATED_READ_FILES)) for (const n of nodes) backed.add(n)
+    for (const { readers } of Object.values(READ_SURFACE_FILES)) for (const n of readers) backed.add(n)
     for (const ct of Object.keys(GRAPH_FILE_READERS)) {
       expect(backed.has(ct), `${ct} is in GRAPH_FILE_READERS but has no documented read site`).toBe(true)
     }
   })
 
-  it('a read-file entry with no graph-node nodes carries a note explaining why', () => {
-    for (const [file, v] of Object.entries(ANNOTATED_READ_FILES)) {
-      if (v.nodes.length === 0) expect(v.note, `${file} has no reader nodes and must document why`).toBeTruthy()
+  it('every GRAPH_FOLDER_READERS class is backed by a documented folder-read site (no orphan map entry)', () => {
+    const backed = new Set<string>()
+    for (const { folderReaders } of Object.values(READ_SURFACE_FILES)) for (const n of folderReaders ?? []) backed.add(n)
+    for (const ct of Object.keys(GRAPH_FOLDER_READERS)) {
+      expect(backed.has(ct), `${ct} is in GRAPH_FOLDER_READERS but has no documented folder-read site`).toBe(true)
+    }
+  })
+
+  it('any file with directory hits beyond its annotated per-file readers carries a note explaining them', () => {
+    for (const [file, v] of Object.entries(READ_SURFACE_FILES)) {
+      if (v.count !== v.annotated) {
+        expect(v.note, `${file} has ${v.count - v.annotated} non-annotated directory hit(s) and must document them`).toBeTruthy()
+      }
     }
   })
 })

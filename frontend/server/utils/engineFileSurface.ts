@@ -14,10 +14,13 @@
  *
  * GRAPH_FILE_READERS is the authoritative map the graph validator walks to
  * decide which inputs carry a filename it must vet for ownership before a
- * graph runs. It is keyed by class_type (the engine `node_id`). The
- * coverage guard in engine-file-surface.unit.spec.ts greps the engine tree and
- * fails on drift, so a newly-added file-reading node fails the suite instead of
- * silently bypassing the check.
+ * graph runs. It is keyed by class_type (the engine `node_id`). Its companion
+ * GRAPH_FOLDER_READERS (below) models the per-FOLDER readers — nodes that read a
+ * whole attacker-named folder out of the shared tree (the Task 7b review
+ * Critical). The coverage guard in engine-file-surface.unit.spec.ts greps the
+ * engine tree for the FULL directory-read primitive set and fails on drift, so a
+ * newly-added file- or folder-reading node fails the suite instead of silently
+ * bypassing the check.
  *
  * LOCAL BYTE-IDENTICAL: nothing here runs in local mode — it is consulted only
  * from the hosted meterGraphSubmit / handleMeteredPrompt path.
@@ -103,6 +106,78 @@ export const GRAPH_FILE_READERS: Record<string, FileReaderSpec[]> = {
   // routing, so semantics is `input` and the literal value is vetted (an
   // absolute path or a foreign subfolder is refused).
   Timeline: [{ input: 'edit_state', shape: 'json', jsonPath: 'timeline-clips', semantics: 'input' }],
+}
+
+// ---------------------------------------------------------------------------
+// Per-FOLDER readers (Task 7b review Critical).
+//
+// GRAPH_FILE_READERS models nodes that read a named FILE. A separate class of
+// nodes reads a named FOLDER from the shared tree and emits its whole contents
+// as node outputs: LoadImageDataSetFromFolder / LoadImageTextDataSetFromFolder
+// load EVERY image in input/<folder>/, and LoadTrainingDataset torch.loads
+// every shard in output/<folder>/. The `folder`/`folder_name` value is
+// attacker-controlled (a hand-built graph is not constrained to the combo the
+// schema advertises), so `{folder:"u_<victimhash>"}` → SaveImage would launder
+// a cross-tenant read. get_annotated_filepath never appears on these paths, so
+// the per-file map and the object_info upload-flag walk both miss them.
+//
+// These carry FOLDER-level ownership, not per-file: the value must resolve to
+// the caller's OWN u_<hash> subtree or the run is refused (see graphFolderOwnedBy).
+// ---------------------------------------------------------------------------
+
+/** Which shared tree a folder input is read from. */
+export type FolderRefSemantics = 'input' | 'output'
+
+export interface FolderReaderSpec { input: string, semantics: FolderRefSemantics }
+
+/** class_type → folder-valued inputs the engine joins onto a shared tree and reads wholesale. */
+export const GRAPH_FOLDER_READERS: Record<string, FolderReaderSpec[]> = {
+  // comfy_extras/nodes_dataset.py — os.path.join(get_input_directory(), folder), lists every image.
+  LoadImageDataSetFromFolder: [{ input: 'folder', semantics: 'input' }],
+  LoadImageTextDataSetFromFolder: [{ input: 'folder', semantics: 'input' }],
+  // os.path.join(get_output_directory(), folder_name), torch.loads every shard_*.pkl.
+  LoadTrainingDataset: [{ input: 'folder_name', semantics: 'output' }],
+}
+
+/**
+ * Normalize a graph-supplied folder value to a contained relative path, or
+ * `null` when it is unusable/traversing: non-string (wired link, number,
+ * object), empty, absolute, drive-letter, or containing a `.`/`..`/empty
+ * segment. Backslashes fold to `/` first so `u_x\..\y` cannot slip past the
+ * segment check, and a trailing slash is tolerated. `null` MUST fail closed at
+ * the caller.
+ */
+export function normalizeGraphFolder(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const s = raw.replace(/\\/g, '/').trim().replace(/\/+$/, '')
+  if (s === '') return null
+  if (s.startsWith('/')) return null
+  if (/^[a-zA-Z]:/.test(s)) return null
+  const segs = s.split('/')
+  if (segs.some(seg => seg === '' || seg === '.' || seg === '..')) return null
+  return segs.join('/')
+}
+
+/**
+ * A graph folder reference is owned ONLY when it resolves to the caller's own
+ * per-user subtree: exactly `u_<callerHash>` or nested under `u_<callerHash>/`.
+ * Any other value — a bare name, another tenant's hash, `..`, absolute, or a
+ * wired/absent input — is refused (fail closed).
+ *
+ * Stage 6 writes per-user OUTPUT under output/u_<hash>/, so for output-semantics
+ * folders this equality IS the ownership proof (only the caller's own runs land
+ * in their u_<hash> tree). INPUT has no per-user subtree yet (uploads are flat +
+ * registry-tracked), so for input-semantics folders this refuses EVERY folder
+ * read that isn't the caller's own u_<hash> namespace — effectively refuse-all
+ * today, which is the correct fail-closed answer until per-user input
+ * subfolders exist.
+ */
+export function graphFolderOwnedBy(raw: unknown, callerHash: string): boolean {
+  if (!callerHash) return false
+  const norm = normalizeGraphFolder(raw)
+  if (norm === null) return false
+  const own = `u_${callerHash}`
+  return norm === own || norm.startsWith(`${own}/`)
 }
 
 /**

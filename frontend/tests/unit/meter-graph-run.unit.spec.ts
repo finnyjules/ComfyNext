@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { meterGraphSubmit, isPromptPath, holdWithRefusal } from '../../server/utils/meterGraphRun'
+import { meterGraphSubmit, isPromptPath, holdWithRefusal, validateGraphFileRefs } from '../../server/utils/meterGraphRun'
 import { MeterRefusalError } from '../../server/utils/requestMeter'
 import { UnpricedGraphError } from '../../server/utils/priceBook'
 
@@ -45,6 +45,27 @@ describe('meterGraphSubmit', () => {
     expect(d.hold).not.toHaveBeenCalled()
     expect(d.forward).not.toHaveBeenCalled()
     expect(d.registerRun).not.toHaveBeenCalled()
+    expect(d.startSettle).not.toHaveBeenCalled()
+  })
+
+  // Task 7b Critical: a per-FOLDER reader (LoadTrainingDataset) reaching another
+  // tenant's subfolder must be refused before any hold, through the REAL wired
+  // validateGraphFileRefs (not just a stub) — proving the folder map is on the
+  // hosted submission path with validation-before-hold ordering intact.
+  it('a folder-reader graph reaching another tenant\'s subfolder is refused (403) before any hold', async () => {
+    const foreign = { prompt: { '1': { class_type: 'LoadTrainingDataset', inputs: { folder_name: 'u_bbbbbbbbbbbb' } } } }
+    const d = deps({
+      validateFileRefs: (prompt: any) => validateGraphFileRefs(prompt, {
+        uploadFlagged: new Set<string>(),
+        callerHash: 'aaaaaaaaaaaa',
+        ownsInput: async () => true,
+        ownsOutput: async () => true,
+      }),
+    })
+    await expect(meterGraphSubmit('u1', foreign, d)).rejects.toMatchObject({ statusCode: 403 })
+    expect(d.priceGraph).not.toHaveBeenCalled()
+    expect(d.hold).not.toHaveBeenCalled()
+    expect(d.forward).not.toHaveBeenCalled()
     expect(d.startSettle).not.toHaveBeenCalled()
   })
 

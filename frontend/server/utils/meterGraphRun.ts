@@ -20,7 +20,7 @@ import { resolveWorkerTarget } from './workerRoute'
 import { getLiveLedger } from './ledgerLive'
 import { annotatedFilepath, collectUploadFlaggedInputs } from './engineGate'
 import { canonicalUploadKey, uploadOwner } from './inputUploads'
-import { GRAPH_FILE_READERS, extractFileRefs, type FileRefSemantics } from './engineFileSurface'
+import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS, extractFileRefs, graphFolderOwnedBy, type FileRefSemantics } from './engineFileSurface'
 
 export function isPromptPath(path: string): boolean {
   return path === '/prompt' || path.startsWith('/prompt?')
@@ -85,6 +85,12 @@ function sanitizeExistingPrefix(existing: string): string {
 export interface GraphFileRefCtx {
   /** `ClassType.inputName` pairs whose widget carries a shared-directory filename. */
   uploadFlagged: Set<string>
+  /**
+   * The caller's OWN per-user path segment (sha256(userId).slice(0,12)). Used
+   * by the per-FOLDER readers: a folder value is owned only when it resolves to
+   * `u_<callerHash>` (or a path nested under it). Pure — no DB round-trip.
+   */
+  callerHash: string
   /** Does the caller own this input file (annotation stripped)? */
   ownsInput(name: string): Promise<boolean>
   /** Does the caller own this output file (value may still carry `[output]`)? */
@@ -123,15 +129,18 @@ async function checkFileOwnership(ct: string, inputName: string, value: string, 
 /**
  * Refuse (403) a graph that references any file the caller does not own.
  *
- * Two sources define which inputs carry a shared-directory filename the engine
- * will READ: the checked-in GRAPH_FILE_READERS map (Stage 6 Task 7b — plain
- * strings, dict-valued inputs like Load3D.image, and JSON blobs like
- * Compositor.motion_params / the type nodes' params / Timeline.edit_state), and
- * the object_info-derived `uploadFlagged` set (any upload-flagged input the map
- * doesn't already cover, treated as a plain annotated filename string). Each
- * referenced name is ownership-checked per its semantics: `output` → the
- * output-ownership check, `input` → the literal input-ownership check, `either`
- * → routed by its ` [output]`/` [input]`/` [temp]` annotation.
+ * Three sources define what the engine will READ: the checked-in
+ * GRAPH_FILE_READERS map (Stage 6 Task 7b — plain strings, dict-valued inputs
+ * like Load3D.image, and JSON blobs like Compositor.motion_params / the type
+ * nodes' params / Timeline.edit_state), the GRAPH_FOLDER_READERS map (the
+ * per-FOLDER dataset readers — a whole attacker-named folder, not a single
+ * file), and the object_info-derived `uploadFlagged` set (any upload-flagged
+ * input the maps don't already cover, treated as a plain annotated filename
+ * string). Each referenced FILE name is ownership-checked per its semantics:
+ * `output` → the output-ownership check, `input` → the literal input-ownership
+ * check, `either` → routed by its ` [output]`/` [input]`/` [temp]` annotation.
+ * Each referenced FOLDER must resolve to the caller's OWN u_<hash> subtree
+ * (graphFolderOwnedBy) — nothing else has a legitimate use.
  *
  * Fail closed: a PRESENT value that is not in the shape we can read (a wired
  * link, a number, a non-object dict, unparseable JSON, an unexpected `rendered`
@@ -160,6 +169,19 @@ export async function validateGraphFileRefs(prompt: Record<string, any>, ctx: Gr
         throw new MeterRefusalError(`graph references a file through ${ct}.${spec.input} in an unexpected shape`, 403)
       }
       for (const name of names) await checkFileOwnership(ct, spec.input, name, spec.semantics, ctx)
+    }
+
+    // 1b) Per-FOLDER readers (Task 7b Critical). The engine joins this value
+    // onto the shared input/output tree and reads the WHOLE folder, so the
+    // value must resolve to the caller's OWN u_<hash> subtree or the run is
+    // refused. Fail closed on a wired/absent/traversing/foreign value — an
+    // absent folder still makes the engine read the tree root.
+    for (const spec of GRAPH_FOLDER_READERS[ct] ?? []) {
+      covered.add(spec.input)
+      const value = (inputs as Record<string, unknown>)[spec.input]
+      if (!graphFolderOwnedBy(value, ctx.callerHash)) {
+        throw new MeterRefusalError(`graph references a ${spec.semantics} folder you do not own (${ct}.${spec.input})`, 403)
+      }
     }
 
     // 2) Upload-flagged inputs the map does not already cover — a plain
@@ -208,7 +230,7 @@ export async function loadUploadFlaggedInputs(fetchCatalog: () => Promise<unknow
 export async function runGraphFileValidation(prompt: Record<string, any>, userId: string, target: string): Promise<void> {
   if (!prompt || typeof prompt !== 'object' || Array.isArray(prompt)) return
   const hasCandidate = Object.values(prompt).some((n: any) =>
-    (typeof n?.class_type === 'string' && GRAPH_FILE_READERS[n.class_type])
+    (typeof n?.class_type === 'string' && (GRAPH_FILE_READERS[n.class_type] || GRAPH_FOLDER_READERS[n.class_type]))
     || (n?.inputs && typeof n.inputs === 'object' && !Array.isArray(n.inputs)
       && Object.values(n.inputs).some(v => typeof v === 'string' && v !== '')))
   if (!hasCandidate) return
@@ -230,6 +252,7 @@ export async function runGraphFileValidation(prompt: Record<string, any>, userId
   let ownedOutputs: Set<string> | null = null
   await validateGraphFileRefs(prompt, {
     uploadFlagged,
+    callerHash: shortUserHash(userId),
     ownsInput: async (name) => {
       const { subfolder, filename } = splitRef(name)
       if (!filename) return false
