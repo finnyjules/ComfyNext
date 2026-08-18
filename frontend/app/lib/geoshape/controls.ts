@@ -146,7 +146,7 @@ export const GEO_CONTROLS: GeoControl[] = [
 
   // --- Style -------------------------------------------------------------------
   slider('padding', 'Padding', 0, 200, 1, 'Style', DEFAULT_CONFIG.padding),
-  slider('strokeWidth', 'Stroke width', 0, 60, 1, 'Style', DEFAULT_CONFIG.strokeWidth),
+  slider('strokeWidth', 'Stroke width', 0, 60, 1, 'Style', DEFAULT_CONFIG.strokeWidth, undefined, { when: (c) => c.stroke !== null }),
   slider('seed', 'Seed', 1, 999999, 1, 'Style', DEFAULT_CONFIG.seed,
     'The random seed behind Re-roll; use Re-roll to generate variations.'),
 

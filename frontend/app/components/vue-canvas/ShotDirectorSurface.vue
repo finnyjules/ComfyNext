@@ -902,7 +902,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
           <StudioSection title="Format">
             <div class="grid grid-cols-2 gap-x-3 gap-y-2.5">
               <!-- Aspect ratio -->
-              <div>
+              <div v-if="sheet.mode === 'reference'">
                 <label class="mb-1 block text-[11px] text-white/45">Aspect ratio</label>
                 <select
                   :value="sheet.format.aspectRatio"

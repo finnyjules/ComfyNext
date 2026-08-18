@@ -766,6 +766,7 @@ onBeforeUnmount(() => {
               />
 
               <StudioSlider
+                v-if="((roleFill(rk, i) as any).kind ?? 'linear') === 'linear'"
                 label="Angle"
                 :min="0"
                 :max="360"

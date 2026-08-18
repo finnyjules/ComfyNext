@@ -364,7 +364,7 @@ function humanizeSyncMode(m: string): string {
                 <option value="sync" class="bg-neutral-900">Sync</option>
               </select>
             </div>
-            <div>
+            <div v-if="resolvedEngine === 'fabric'">
               <label class="mb-1 block text-[11px] text-white/45">Resolution</label>
               <select
                 :value="sheet.resolution"
