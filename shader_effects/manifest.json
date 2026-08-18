@@ -388,7 +388,7 @@
           "max": 1.0,
           "default": 0.35,
           "step": 0.01,
-          "showWhen": { "uniform": "u_facetStyle", "equals": 3 }
+          "showWhen": [{ "uniform": "u_mode", "equals": 1 }, { "uniform": "u_facetStyle", "equals": 3 }]
         },
         {
           "uniform": "u_multiScale",
@@ -398,7 +398,7 @@
           "max": 1.0,
           "default": 0.3,
           "step": 0.01,
-          "showWhen": { "uniform": "u_facetStyle", "equals": 3 }
+          "showWhen": [{ "uniform": "u_mode", "equals": 1 }, { "uniform": "u_facetStyle", "equals": 3 }]
         },
         {
           "uniform": "u_facetRefract",

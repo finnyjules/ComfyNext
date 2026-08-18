@@ -36,7 +36,7 @@ export interface EffectParamDef {
   /** `gradient` only — hard cap on stops, matching the shader's array size. */
   maxStops?: number
   /** Hide this param unless another uniform's current (rounded) value matches. */
-  showWhen?: ShowWhen
+  showWhen?: ShowWhen | ShowWhen[]
 }
 
 export interface EffectTextureDef {

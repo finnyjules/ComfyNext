@@ -27,9 +27,10 @@ class EffectParam:
     step: float = 0.0
     options: list[dict] | None = None
     max_stops: int = 8
-    # Frontend-only visibility gate ({uniform, equals|in}); the server doesn't
-    # render UI, so it just carries the value through rather than rejecting it.
-    show_when: dict | None = None
+    # Frontend-only visibility gate — a single {uniform, equals} dict, or a LIST
+    # of them (AND). The server doesn't render UI, so it just carries the value
+    # through rather than rejecting it.
+    show_when: dict | list | None = None
 
 
 # Param types whose value is a colour rather than a number. These are NOT
