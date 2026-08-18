@@ -3009,6 +3009,13 @@ function handleOpenCompositor(e: Event) {
   const detail = (e as CustomEvent).detail
   if (detail?.nodeId) compositorOpenForId.value = String(detail.nodeId)
 }
+// Method, not an inline template handler — `window` is not in template expression scope
+// (same trap documented on closeSpaceTypeEditor). The dispatch tells every Frame card to
+// resume its live preview loop (paused while the fullscreen modal occluded it).
+function closeCompositorEditor() {
+  compositorOpenForId.value = null
+  window.dispatchEvent(new CustomEvent('sailor:closeCompositor'))
+}
 
 // Space Type editor modal state (frontend-only config node).
 const spaceTypeOpenForId = ref<string | null>(null)
@@ -7727,7 +7734,7 @@ defineExpose({
         :node-id="compositorOpenForId"
         :nodes="nodes as any[]"
         :edges="edges as any[]"
-        @close="compositorOpenForId = null"
+        @close="closeCompositorEditor"
       />
     </Teleport>
 

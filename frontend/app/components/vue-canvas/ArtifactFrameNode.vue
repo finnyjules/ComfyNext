@@ -534,9 +534,24 @@ function animateFrame(ts: number) {
   }
   animRaf = requestAnimationFrame(animateFrame)
 }
-function startAnim() { cancelAnimationFrame(animRaf); animStart = 0; animInFlight = false; if (needsClock.value) animRaf = requestAnimationFrame(animateFrame) }
+function startAnim() { cancelAnimationFrame(animRaf); animStart = 0; animInFlight = false; if (needsClock.value && gateOk()) animRaf = requestAnimationFrame(animateFrame) }
 function stopAnim() { cancelAnimationFrame(animRaf); animRaf = 0 }
-watch(needsClock, startAnim)
+// Pause the live loop whenever its frames can't be seen: the card scrolled out of the
+// viewport, the tab hidden, or a fullscreen Compositor modal covering the canvas. The
+// modal runs its OWN pull loop (CompositorModal's liveFrameTick), so an ungated card
+// doubles every full-res WebGL readback + stack composite for pixels nobody sees —
+// measured ~2× per-tick main-thread cost with one animated wired studio, which is what
+// pushed a 60fps wired scene over the 16.7ms frame budget (the "janky playback" bug).
+// Same gate pattern as SpaceTypeNode's applyGate. No nodeId filter on the modal events:
+// the modal is fullscreen, so it occludes every Frame card, not just its own.
+const gate = { visible: true, tabActive: true, editorOpen: false }
+function gateOk() { return gate.visible && gate.tabActive && !gate.editorOpen }
+function applyGate() {
+  const shouldRun = needsClock.value && gateOk()
+  if (shouldRun && !animRaf) startAnim()
+  else if (!shouldRun && animRaf) stopAnim()
+}
+watch(needsClock, applyGate)
 // Declared BEFORE the `{ immediate: true }` watch below — that watch's getter reads
 // wiredTreatments during setup, so a later `const` would throw a TDZ ReferenceError
 // (which cascaded into VueFlow and broke adding any node).
@@ -668,8 +683,30 @@ async function bakeOutput(): Promise<Blob | null> {
 // fetch on every miss, but a host with no per-frame loop still needs an explicit nudge to
 // re-render once it lands — this is that nudge, for exactly this host.
 const unsubFieldCatalog = onFieldCatalogReady(() => renderStack())
-onMounted(() => { registerStudioBaker(props.id, bakeOutput); startAnim() })
-onBeforeUnmount(() => { unregisterStudioBaker(props.id); stopAnim(); unsubFieldCatalog() })
+const rootEl = ref<HTMLElement | null>(null)
+let gateIo: IntersectionObserver | null = null
+let onGateVisibility: (() => void) | null = null
+let onCompositorOpen: (() => void) | null = null
+let onCompositorClose: (() => void) | null = null
+onMounted(() => {
+  registerStudioBaker(props.id, bakeOutput)
+  gateIo = new IntersectionObserver(([entry]) => { gate.visible = !!entry?.isIntersecting; applyGate() }, { threshold: 0.01 })
+  if (rootEl.value) gateIo.observe(rootEl.value)
+  onGateVisibility = () => { gate.tabActive = !document.hidden; applyGate() }
+  document.addEventListener('visibilitychange', onGateVisibility)
+  onCompositorOpen = () => { gate.editorOpen = true; applyGate() }
+  onCompositorClose = () => { gate.editorOpen = false; applyGate() }
+  window.addEventListener('sailor:openCompositor', onCompositorOpen)
+  window.addEventListener('sailor:closeCompositor', onCompositorClose)
+  applyGate()
+})
+onBeforeUnmount(() => {
+  unregisterStudioBaker(props.id); stopAnim(); unsubFieldCatalog()
+  gateIo?.disconnect(); gateIo = null
+  if (onGateVisibility) document.removeEventListener('visibilitychange', onGateVisibility)
+  if (onCompositorOpen) window.removeEventListener('sailor:openCompositor', onCompositorOpen)
+  if (onCompositorClose) window.removeEventListener('sailor:closeCompositor', onCompositorClose)
+})
 
 // Record the baked composite as a project asset so saved frames show up in the
 // Assets panel — same treatment as generator outputs. Best-effort: never blocks
@@ -729,7 +766,7 @@ async function downloadVideo() {
     const a = document.createElement('a'); a.href = obj; a.download = `frame-${props.id}.${encoded.ext}`
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(obj)
   } catch (err) { console.error('[Frame] video export failed:', err) }
-  finally { startAnim() }
+  finally { applyGate() }
 }
 
 async function downloadImage() {
@@ -864,6 +901,7 @@ onUnmounted(() => {
 
 <template>
   <div
+    ref="rootEl"
     class="artifact-frame-node relative select-none"
     :class="{ 'opacity-45 grayscale': isMuted, 'opacity-85': isBypassed }"
     :style="{ width: box.w + 'px', '--port-color': imageColor } as any"

@@ -75,10 +75,16 @@ let io: IntersectionObserver | null = null
 let onVisibility: (() => void) | null = null
 let onOpen: ((e: Event) => void) | null = null
 let onClose: (() => void) | null = null
-const gate = { visible: true, tabActive: true, editing: false }
+let onCompositorOpen: (() => void) | null = null
+let onCompositorClose: (() => void) | null = null
+// `occluded` is separate from `editing`: a fullscreen Compositor modal covers every
+// card (no nodeId filter), and closeSpaceType clearing `editing` must not wrongly
+// clear it. While the modal is open the wired consumer pulls from the HEADLESS
+// engine, so pausing this card preview loses nothing visible.
+const gate = { visible: true, tabActive: true, editing: false, occluded: false }
 
 function applyGate() {
-  const shouldRun = gate.visible && gate.tabActive && !gate.editing && !!engine && webglOk.value
+  const shouldRun = gate.visible && gate.tabActive && !gate.editing && !gate.occluded && !!engine && webglOk.value
   if (shouldRun && !raf) startPreview()
   else if (!shouldRun && raf) stopPreview()
 }
@@ -174,6 +180,10 @@ onMounted(async () => {
   onClose = () => { gate.editing = false; applyGate() }
   window.addEventListener('sailor:openSpaceType', onOpen as EventListener)
   window.addEventListener('sailor:closeSpaceType', onClose as EventListener)
+  onCompositorOpen = () => { gate.occluded = true; applyGate() }
+  onCompositorClose = () => { gate.occluded = false; applyGate() }
+  window.addEventListener('sailor:openCompositor', onCompositorOpen)
+  window.addEventListener('sailor:closeCompositor', onCompositorClose)
   applyGate()
 })
 
@@ -260,6 +270,8 @@ onBeforeUnmount(() => {
   if (onVisibility) document.removeEventListener('visibilitychange', onVisibility)
   if (onOpen) window.removeEventListener('sailor:openSpaceType', onOpen as EventListener)
   if (onClose) window.removeEventListener('sailor:closeSpaceType', onClose as EventListener)
+  if (onCompositorOpen) window.removeEventListener('sailor:openCompositor', onCompositorOpen)
+  if (onCompositorClose) window.removeEventListener('sailor:closeCompositor', onCompositorClose)
   unregisterStudioBaker(props.id)
   unregisterStudioFrameSource(props.id)
   engine?.dispose()
