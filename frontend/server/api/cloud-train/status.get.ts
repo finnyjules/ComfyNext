@@ -21,7 +21,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { linkTrainedCharacter } from '~~/server/utils/characterLink'
 import { deployMode } from '../../utils/deployMode'
-import { ownerOf } from '../../utils/resourceOwners'
+import { ownerOf, recordOwner } from '../../utils/resourceOwners'
 
 const exec = promisify(execCb)
 
@@ -176,12 +176,24 @@ export default defineEventHandler(async (event) => {
           localPath.replace(/\.safetensors$/, '.json'),
           JSON.stringify(sidecar, null, 2),
         )
+        // C1 — CLAIM the trained LoRA for the cloud-training owner (hosted
+        // only). The ownership gate at the top already proved
+        // event.context.userId === ownerOf('cloud-training', id), so the caller
+        // here IS the verified owner; recording anything else (or nothing) would
+        // leave the artifact curated/global. Keyed by the .safetensors base
+        // (outputName, already sanitized) — the id loras-local.get lists by.
+        // Best-effort: the weights are on disk, so a registry hiccup mustn't
+        // fail the poll. An unbound/legacy id never reaches here (gate 404s it).
+        if (deployMode() === 'hosted' && event.context.userId) {
+          try { await recordOwner('lora', outputName, event.context.userId) }
+          catch (err) { console.warn('[cloud-train/status] lora ownership record failed', { outputName, userId: event.context.userId, error: err }) }
+        }
         // Link the character registry so this identity shows up in the
         // Characters panel (ready, with a LoRA chip) without a manual step.
         // Best-effort: the weights + sidecar are already safely on disk, so a
         // registry hiccup here shouldn't surface as a failed training poll.
         if (kind === 'character') {
-          await linkTrainedCharacter({ displayName, weightsFilename: filename, trigger: triggerWord || null }).catch((err) => {
+          await linkTrainedCharacter({ displayName, weightsFilename: filename, trigger: triggerWord || null, ownerUserId: event.context.userId ?? null }).catch((err) => {
             console.warn('[cloud-train/status] character registry link failed', err)
           })
         }

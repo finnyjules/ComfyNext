@@ -51,6 +51,37 @@ if [ -d /data ]; then
     touch /data/models/.training-jobs.json
     ln -sfn /data/models/.training-jobs.json /app/models/.training-jobs.json
   fi
+
+  # I2 — the engine's input/ and output/ dirs live on the volume too. ComfyUI is
+  # launched below with --input-directory /data/input / --output-directory
+  # /data/output, but the Nitro writers resolve them at <repo-root>/{input,output}
+  # (path.resolve(cwd,'..',<name>) === /app/{input,output}). Without this symlink
+  # the two sides point at DIFFERENT dirs: moodboard/lipsync uploads written by
+  # Nitro land in /app/input where the engine never looks (and .dockerignore
+  # drops /input, so they're ephemeral), the character heal path can wipe
+  # refImages once /app/input appears, and the input-upload disk check can never
+  # resolve its engine root. Same seed-then-symlink, copy-gated discipline as
+  # models/ above (defensive: .dockerignore keeps these out of the image, so on a
+  # fresh container there's nothing to seed and we just create the symlink; the
+  # gated seed covers the case where a real dir already exists).
+  for d in input output; do
+    if [ -d "/app/$d" ] && [ ! -L "/app/$d" ]; then
+      if cp -an "/app/$d/." "/data/$d/"; then
+        rm -rf "/app/$d"
+        ln -sfn "/data/$d" "/app/$d"
+      else
+        echo "[start] WARN: seed copy failed for $d, leaving baked dir in place" >&2
+      fi
+    else
+      ln -sfn "/data/$d" "/app/$d"
+    fi
+  done
+
+  # I3 — the flat JSON/asset stores (brand kits, moodboards, templates, template
+  # fonts, .data secrets) relocate under SAILOR_DATA_DIR when it's set (see
+  # fly.toml [env] + dataDir.ts storeDir). storeDir() mkdir's each subdir on
+  # first use, but pre-create the root so a fresh volume is unambiguous.
+  mkdir -p /data/sailor
 fi
 
 # Stage 6 Task 8 — per-user settings + userdata. When SAILOR_ENGINE_MULTI_USER

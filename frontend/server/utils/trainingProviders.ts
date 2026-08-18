@@ -17,6 +17,7 @@ import type { ProviderResult, RunnerProvider } from './trainingRunner'
 import { linkTrainedCharacter } from './characterLink'
 import { MeterRefusalError, preflightMeterFor } from './requestMeter'
 import { deployMode } from './deployMode'
+import { recordOwner } from './resourceOwners'
 import { VOICE_CLONE_MODEL } from './priceBook'
 
 const exec = promisify(execCb)
@@ -178,12 +179,23 @@ async function pollLora(job: TrainingJob, token: string): Promise<ProviderResult
         trained_on: new Date().toISOString(),
       }
       await fs.writeFile(localPath.replace(/\.safetensors$/, '.json'), JSON.stringify(sidecar, null, 2))
+      // C1 — CLAIM the trained LoRA for the job's owner (hosted only). Without
+      // this the weights + sidecar land with no resource_owners row, so
+      // loras-local.get lists them to EVERY tenant as curated content and the
+      // creator can't mutate their own artifact. Keyed by the .safetensors base
+      // (sanitize(job.outputName)) — the exact id loras-local.get lists by. An
+      // unbound job (no userId) records nothing rather than guessing. Best-effort:
+      // the weights are already on disk, so a registry hiccup mustn't fail finalize.
+      if (deployMode() === 'hosted' && job.userId) {
+        try { await recordOwner('lora', sanitize(job.outputName), job.userId) }
+        catch (err) { console.warn('[training] lora ownership record failed', { outputName: job.outputName, userId: job.userId, error: err }) }
+      }
       // Link the character registry so this identity shows up in the
       // Characters panel (ready, with a LoRA chip) without a manual step.
       // Best-effort: the weights + sidecar are already safely on disk, so a
       // registry hiccup here shouldn't fail the poll/finalize.
       if (job.loraKind === 'character') {
-        await linkTrainedCharacter({ displayName: job.displayName, weightsFilename: filename, trigger: job.trigger ?? null }).catch((err) => {
+        await linkTrainedCharacter({ displayName: job.displayName, weightsFilename: filename, trigger: job.trigger ?? null, ownerUserId: job.userId ?? null }).catch((err) => {
           console.warn('[training] registry link failed', err)
         })
       }

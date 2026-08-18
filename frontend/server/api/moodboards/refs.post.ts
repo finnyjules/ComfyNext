@@ -27,7 +27,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { MOODBOARD_FOLDER_RE, MOODBOARD_ID_RE, MOODBOARD_MAX_REFS } from '../../../shared/taste/moodboard'
 import { moodboardInputDir, safeImageFile } from '../../utils/moodboardImages'
-import { canonicalUploadKey, recordUpload } from '../../utils/inputUploads'
+import { canonicalUploadKey, recordUpload, uploadOwner } from '../../utils/inputUploads'
 import { isHosted } from '../../utils/deployMode'
 
 export default defineEventHandler(async (event) => {
@@ -46,6 +46,22 @@ export default defineEventHandler(async (event) => {
   const hosted = isHosted()
   const userId = event.context.userId ?? null
   const sources = names.filter(safeImageFile).sort().slice(0, MOODBOARD_MAX_REFS)
+
+  // I1 — this route reads files OUT of `folder` and re-records the copies as the
+  // caller's owned inputs, so a cross-tenant read here launders ownership. Gate
+  // it in hosted with the SAME own-or-curated per-file read images.get.ts
+  // enforces (uploadOwner === caller or unowned/curated). A folder whose images
+  // belong to another tenant is refused wholesale — 404, no copy, no record, no
+  // existence disclosure — the moodboard-folder name (moodboard_<ms>) is
+  // guessable, so this is the actual containment. Curated folders (no upload
+  // rows) stay copyable; the caller's own folder passes.
+  if (hosted) {
+    for (const src of sources) {
+      const owner = await uploadOwner(canonicalUploadKey('input', folder, src))
+      if (owner !== null && owner !== userId) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    }
+  }
+
   const files: string[] = []
   for (const [i, src] of sources.entries()) {
     const ext = src.split('.').pop()!.toLowerCase()

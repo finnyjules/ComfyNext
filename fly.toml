@@ -15,6 +15,13 @@ primary_region = "sjc"   # San Jose — nearest to Neon (aws-us-west-2, Oregon).
 [env]
   HOST = "0.0.0.0"
   PORT = "3000"
+  # Stage 6 (I3) — relocate the flat JSON/asset stores (brand kits, moodboards,
+  # templates, template fonts, .data secrets) onto the Fly volume. Without this
+  # dataDir.ts's storeDir() falls back to the EPHEMERAL container disk and every
+  # one of those stores is lost on redeploy — the "durable on the volume" headline
+  # silently fails. start.sh pre-creates /data/sailor; storeDir() mkdir's each
+  # store subdir under it on first use. Unset locally → historical paths, byte-identical.
+  SAILOR_DATA_DIR = "/data/sailor"
   # NUXT_PUBLIC_COMFY_ORIGIN must NEVER be set on hosted deploys (Stage 5
   # invariant): the hosted client hard-forces engineOrigin to '' and reaches
   # the engine only through the authenticated same-origin proxy. Setting it

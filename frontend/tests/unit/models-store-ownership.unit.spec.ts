@@ -78,6 +78,7 @@ let charList: any, charPost: any, charPatch: any, charAbsorb: any
 let loraList: any, loraPost: any, loraPatch: any, loraDelete: any
 let coverGet: any, coverPost: any
 let voiceList: any, voicePreview: any, voiceStatus: any
+let cloudStatus: any
 
 beforeAll(async () => {
   charList = (await import('../../server/api/characters-local.get')).default
@@ -93,6 +94,7 @@ beforeAll(async () => {
   voiceList = (await import('../../server/api/voices-local.get')).default
   voicePreview = (await import('../../server/api/voice-preview-file.get')).default
   voiceStatus = (await import('../../server/api/voice-clone/status.get')).default
+  cloudStatus = (await import('../../server/api/cloud-train/status.get')).default
 })
 afterAll(() => { process.chdir(cwd) })
 
@@ -381,5 +383,57 @@ describe('voice-clone status — durable ownership from the binding', () => {
     expect(res.voiceId).toBe('R8_ORPHAN')
     await fs.access(path.join(voicesDir, 'R8_ORPHAN.json'))
     expect(owners.has('voice:R8_ORPHAN')).toBe(false)
+  })
+})
+
+// ==================================================================
+// C1 — cloud-train direct path: the successful weights write must CLAIM the
+// LoRA for the cloud-training owner (the caller the Task-3b gate already
+// verified). Ownership is keyed by the .safetensors base = sanitize(outputName),
+// the id loras-local.get lists by. Unknown owner (no cloud-training row) is
+// already refused at the gate before any write.
+describe('cloud-train status — direct-path finalize claims the trained LoRA', () => {
+  beforeEach(setHosted)
+
+  function succeededLoraFetch() {
+    return vi.fn(async (url: string) => {
+      if (String(url).includes('/v1/trainings/')) {
+        return {
+          ok: true, status: 200, statusText: 'OK',
+          json: async () => ({
+            id: String(url).split('/').pop(),
+            status: 'succeeded',
+            output: { weights: 'https://replicate.delivery/x/weights.safetensors', version: 'finnyjules/m:abc123' },
+          }),
+          text: async () => '',
+        }
+      }
+      // the weights download itself
+      return { ok: true, status: 200, statusText: 'OK', arrayBuffer: async () => new ArrayBuffer(4), text: async () => '' }
+    })
+  }
+
+  it('records lora ownership for the verified cloud-training owner on a successful download', async () => {
+    owners.set('cloud-training:train_mine', 'u_owner')
+    vi.stubGlobal('fetch', succeededLoraFetch())
+    const res = await cloudStatus(ev({ query: { id: 'train_mine', outputName: 'my_lora', family: 'flux' }, userId: 'u_owner' }))
+    expect(res.localFilename).toBe('my_lora.safetensors')
+    await fs.access(path.join(lorasDir, 'my_lora.safetensors'))
+    expect(owners.get('lora:my_lora')).toBe('u_owner')
+    vi.unstubAllGlobals()
+  })
+
+  it('a non-owner is refused at the gate — no weights written, no lora claimed', async () => {
+    owners.set('cloud-training:train_theirs', 'u_owner')
+    const fetchMock = succeededLoraFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    let code = 0
+    try { await cloudStatus(ev({ query: { id: 'train_theirs', outputName: 'stolen', family: 'flux' }, userId: 'u_other' })) }
+    catch (e: any) { code = e.statusCode }
+    expect(code).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+    await expect(fs.access(path.join(lorasDir, 'stolen.safetensors'))).rejects.toThrow()
+    expect(owners.has('lora:stolen')).toBe(false)
+    vi.unstubAllGlobals()
   })
 })

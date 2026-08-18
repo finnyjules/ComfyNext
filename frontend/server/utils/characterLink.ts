@@ -11,6 +11,22 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseCharacterRecord, slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
 import { emptyState } from '#shared/characters/types'
+import { deployMode } from '~~/server/utils/deployMode'
+import { recordOwner } from '~~/server/utils/resourceOwners'
+
+/**
+ * C1 — claim the character registry record for the training's owner (hosted
+ * only, keyed by slug the same way characters-local.get's listOwned is). An
+ * unknown owner (null userId, e.g. an unbound legacy job) records NOTHING
+ * rather than guessing — leaving the record curated is the fail-closed default,
+ * the same discipline the voice/LoRA finalize paths use. Best-effort: a
+ * recordOwner hiccup must not fail the finalize (the record is already on disk).
+ */
+async function claimCharacter(slug: string, ownerUserId: string | null | undefined): Promise<void> {
+  if (deployMode() !== 'hosted' || !ownerUserId) return
+  try { await recordOwner('character', slug, ownerUserId) }
+  catch (err) { console.warn('[characterLink] ownership record failed', { slug, error: err }) }
+}
 
 export interface LinkDecisionInput {
   loraName: string | null
@@ -74,8 +90,8 @@ async function findAvailableSlug(baseSlug: string, dir: string, maxAttempts: num
  * fail the finalize path, since the weights are already safely on disk by
  * the time this runs.
  */
-export async function linkTrainedCharacter(opts: { displayName: string, weightsFilename: string, trigger: string | null }): Promise<void> {
-  const { displayName, weightsFilename, trigger } = opts
+export async function linkTrainedCharacter(opts: { displayName: string, weightsFilename: string, trigger: string | null, ownerUserId?: string | null }): Promise<void> {
+  const { displayName, weightsFilename, trigger, ownerUserId } = opts
   const slug = slugifyCharacterName(displayName)
   if (!slug) return
   const dir = path.resolve(process.cwd(), '..', 'models', 'characters')
@@ -101,6 +117,7 @@ export async function linkTrainedCharacter(opts: { displayName: string, weightsF
     match!.trigger = trigger
     match!.updatedAt = now
     await fs.writeFile(path.join(dir, `${match!.slug}.json`), JSON.stringify(match, null, 2))
+    await claimCharacter(match!.slug, ownerUserId)
     return
   }
 
@@ -120,6 +137,7 @@ export async function linkTrainedCharacter(opts: { displayName: string, weightsF
       updatedAt: now,
     }
     await fs.writeFile(path.join(dir, `${newSlug}.json`), JSON.stringify(record, null, 2))
+    await claimCharacter(newSlug, ownerUserId)
     return
   }
 
@@ -136,4 +154,5 @@ export async function linkTrainedCharacter(opts: { displayName: string, weightsF
     updatedAt: now,
   }
   await fs.writeFile(path.join(dir, `${slug}.json`), JSON.stringify(record, null, 2))
+  await claimCharacter(slug, ownerUserId)
 }

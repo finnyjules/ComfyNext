@@ -17,7 +17,7 @@ import path from 'node:path'
 import { MOODBOARD_FOLDER_RE } from '../../../shared/taste/moodboard'
 import { moodboardInputDir, safeImageFile } from '../../utils/moodboardImages'
 import { readUploadForm } from '../../utils/multipart'
-import { canonicalUploadKey, recordUpload } from '../../utils/inputUploads'
+import { canonicalUploadKey, recordUpload, uploadOwner } from '../../utils/inputUploads'
 import { isHosted } from '../../utils/deployMode'
 
 export default defineEventHandler(async (event) => {
@@ -37,10 +37,26 @@ export default defineEventHandler(async (event) => {
   }
 
   const dir = path.join(moodboardInputDir(), folder)
-  await fs.mkdir(dir, { recursive: true })
 
   const hosted = isHosted()
   const userId = event.context.userId ?? null
+
+  // I1 — a caller-supplied EXISTING folder must not be another tenant's. Before
+  // creating/writing, gate an already-populated folder by the same own-or-curated
+  // per-file read images.get.ts enforces: if any image already in it belongs to
+  // another tenant, refuse (404) rather than write into their board. A brand-new
+  // mint folder (or an empty/curated one) passes — first writer owns it.
+  if (hosted) {
+    let existing: string[] = []
+    try { existing = await fs.readdir(dir) } catch { /* new folder — nothing to guard */ }
+    for (const name of existing.filter(safeImageFile)) {
+      const owner = await uploadOwner(canonicalUploadKey('input', folder, name))
+      if (owner !== null && owner !== userId) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    }
+  }
+
+  await fs.mkdir(dir, { recursive: true })
+
   const files: string[] = []
   for (const [i, part] of valid.entries()) {
     const name = `${String(i).padStart(2, '0')}_${part.base}`
