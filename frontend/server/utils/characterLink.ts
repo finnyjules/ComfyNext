@@ -12,7 +12,7 @@ import path from 'node:path'
 import { parseCharacterRecord, slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
 import { emptyState } from '#shared/characters/types'
 import { deployMode } from '~~/server/utils/deployMode'
-import { recordOwner } from '~~/server/utils/resourceOwners'
+import { ownerOf, recordOwner } from '~~/server/utils/resourceOwners'
 
 /**
  * C1 — claim the character registry record for the training's owner (hosted
@@ -109,7 +109,25 @@ export async function linkTrainedCharacter(opts: { displayName: string, weightsF
   }
 
   const now = new Date().toISOString()
-  const decision = linkDecision(match, weightsFilename)
+  let decision = linkDecision(match, weightsFilename)
+
+  // Cross-tenant hijack guard (hosted only). A claim-draft/update-same would
+  // OVERWRITE the matched <slug>.json on disk — the record characters-local.get
+  // renders and the LoRA dispatch reads. If that record is owned by a DIFFERENT
+  // user, overwriting it silently repoints victim V's character at caller A's
+  // LoRA (A's model ref) under V's wallet, even though the resource_owners row
+  // (first-owner-wins) still shows V. So: when the matched record is owned by
+  // someone other than the caller, DO NOT touch it — downgrade to collide-new,
+  // which de-collides the slug and creates a fresh record the caller owns.
+  // Un-owned (curated/legacy, owner null) and own-record cases proceed as today.
+  // LOCAL mode has no ownership (single-user) → skip the check entirely so
+  // behavior stays byte-identical, mirroring claimCharacter's deployMode gate.
+  if (match && (decision === 'claim-draft' || decision === 'update-same') && deployMode() === 'hosted') {
+    const owner = await ownerOf('character', match.slug)
+    if (owner !== null && owner !== ownerUserId) {
+      decision = 'collide-new'
+    }
+  }
 
   if (decision === 'claim-draft' || decision === 'update-same') {
     // Auto-link may claim drafts, never repoint a ready character
