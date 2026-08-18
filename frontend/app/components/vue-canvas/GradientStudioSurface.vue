@@ -19,6 +19,7 @@ import CurveHandleEditor from '~/components/vue-canvas/CurveHandleEditor.vue'
 import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
+import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
@@ -1004,27 +1005,35 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
         <!-- GLOBAL controls: show whenever ANY layer in the stack uses them (not just the
              active one), since they live on the whole gradient. -->
         <template v-if="anyBanded">
-          <BindableRow control-key="canvas.margin" label="Margin" kind="slider" :min="0" :max="0.45" :step="0.01" :bound="boundColumnFor('canvas.margin')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Margin</span><span class="text-white/40">{{ config.canvas.margin.toFixed(2) }}</span></label>
-            <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.margin', config.canvas.margin)" />
-          </BindableRow>
+          <StudioSlider label="Margin" :min="0" :max="0.45" :step="0.01"
+            :model-value="config.canvas.margin"
+            :bound="boundColumnFor('canvas.margin')"
+            @update:model-value="(v: number) => { config.canvas.margin = v; onEdit('canvas.margin', v) }"
+            @promote="promote({ key: 'canvas.margin', label: 'Margin', kind: 'slider', min: 0, max: 0.45, step: 0.01 }, config.canvas.margin)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'canvas.margin', label: 'Margin', kind: 'slider', min: 0, max: 0.45, step: 0.01 })" />
         </template>
         <!-- Inner radius: radial/orbit/radialRamp only (conic never reads it). Center: those + conic. -->
         <template v-if="anyInnerRadius">
-          <BindableRow control-key="canvas.innerRadius" label="Inner radius" kind="slider" :min="0" :max="0.9" :step="0.01" :bound="boundColumnFor('canvas.innerRadius')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Inner radius</span><span class="text-white/40">{{ config.canvas.innerRadius.toFixed(2) }}</span></label>
-            <input v-model.number="config.canvas.innerRadius" type="range" min="0" max="0.9" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.innerRadius', config.canvas.innerRadius)" />
-          </BindableRow>
+          <StudioSlider label="Inner radius" :min="0" :max="0.9" :step="0.01"
+            :model-value="config.canvas.innerRadius"
+            :bound="boundColumnFor('canvas.innerRadius')"
+            @update:model-value="(v: number) => { config.canvas.innerRadius = v; onEdit('canvas.innerRadius', v) }"
+            @promote="promote({ key: 'canvas.innerRadius', label: 'Inner radius', kind: 'slider', min: 0, max: 0.9, step: 0.01 }, config.canvas.innerRadius)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'canvas.innerRadius', label: 'Inner radius', kind: 'slider', min: 0, max: 0.9, step: 0.01 })" />
         </template>
         <template v-if="anyCenter">
-          <BindableRow control-key="canvas.center.x" label="Center X" kind="slider" :min="-0.5" :max="0.5" :step="0.01" :bound="boundColumnFor('canvas.center.x')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Center X</span><span class="text-white/40">{{ centerX.toFixed(2) }}</span></label>
-            <input v-model.number="centerX" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.center.x', centerX)" />
-          </BindableRow>
-          <BindableRow control-key="canvas.center.y" label="Center Y" kind="slider" :min="-0.5" :max="0.5" :step="0.01" :bound="boundColumnFor('canvas.center.y')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Center Y</span><span class="text-white/40">{{ centerY.toFixed(2) }}</span></label>
-            <input v-model.number="centerY" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.center.y', centerY)" />
-          </BindableRow>
+          <StudioSlider label="Center X" :min="-0.5" :max="0.5" :step="0.01"
+            :model-value="centerX"
+            :bound="boundColumnFor('canvas.center.x')"
+            @update:model-value="(v: number) => { centerX = v; onEdit('canvas.center.x', v) }"
+            @promote="promote({ key: 'canvas.center.x', label: 'Center X', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 }, centerX)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'canvas.center.x', label: 'Center X', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 })" />
+          <StudioSlider label="Center Y" :min="-0.5" :max="0.5" :step="0.01"
+            :model-value="centerY"
+            :bound="boundColumnFor('canvas.center.y')"
+            @update:model-value="(v: number) => { centerY = v; onEdit('canvas.center.y', v) }"
+            @promote="promote({ key: 'canvas.center.y', label: 'Center Y', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 }, centerY)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'canvas.center.y', label: 'Center Y', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 })" />
         </template>
         <label class="mb-1 block text-xs text-white/60">Background</label>
         <BindableRow control-key="canvas.background" label="Background" kind="color" :bound="boundColumnFor('canvas.background')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
@@ -1032,21 +1041,27 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
         </BindableRow>
       </StudioSection>
 
-      <!-- Gradient axis — the simple primitives (Linear / Radial / Conic) each carry
-           a per-layer axis (angle / radius+shape / sweep+closeLoop) that the other
-           six layouts don't have a slot for. -->
-      <StudioSection v-show="onDesign && isSimpleRamp" title="Gradient" :open="true">
+      <!-- Color -->
+      <StudioSection v-show="onDesign" title="Color" :badge="isMesh ? 'mesh palette' : (layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`)">
+        <!-- Gradient axis — the simple primitives (Linear / Radial / Conic) each carry
+             a per-layer axis (angle / radius+shape / sweep+closeLoop) that the other
+             six layouts don't have a slot for. Folded in here (was its own "Gradient"
+             section) so the ramp's geometry sits right above the ramp's colour. -->
         <template v-if="isRampAngle">
-          <BindableRow control-key="layer.ramp.angle" label="Angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('layer.ramp.angle')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Angle</span><span class="text-white/40">{{ Math.round(layer.ramp?.angle ?? 90) }}°</span></label>
-            <input :value="layer.ramp?.angle ?? 90" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onRamp('angle', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
+          <StudioSlider label="Angle" :min="0" :max="360" :step="1" :default="90"
+            :model-value="layer.ramp?.angle ?? 90"
+            :bound="boundColumnFor('layer.ramp.angle')"
+            @update:model-value="(v: number) => onRamp('angle', v)"
+            @promote="promote({ key: 'layer.ramp.angle', label: 'Angle', kind: 'slider', min: 0, max: 360, step: 1 }, layer.ramp?.angle ?? 90)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.ramp.angle', label: 'Angle', kind: 'slider', min: 0, max: 360, step: 1 })" />
         </template>
         <template v-if="isRampRadial">
-          <BindableRow control-key="layer.ramp.radius" label="Radius" kind="slider" :min="0.05" :max="2" :step="0.01" :bound="boundColumnFor('layer.ramp.radius')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Radius</span><span class="text-white/40">{{ (layer.ramp?.radius ?? 1).toFixed(2) }}</span></label>
-            <input :value="layer.ramp?.radius ?? 1" type="range" min="0.05" max="2" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onRamp('radius', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
+          <StudioSlider label="Radius" :min="0.05" :max="2" :step="0.01" :default="1"
+            :model-value="layer.ramp?.radius ?? 1"
+            :bound="boundColumnFor('layer.ramp.radius')"
+            @update:model-value="(v: number) => onRamp('radius', v)"
+            @promote="promote({ key: 'layer.ramp.radius', label: 'Radius', kind: 'slider', min: 0.05, max: 2, step: 0.01 }, layer.ramp?.radius ?? 1)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.ramp.radius', label: 'Radius', kind: 'slider', min: 0.05, max: 2, step: 0.01 })" />
           <BindableRow control-key="layer.ramp.shape" label="Radial shape" kind="select" :options="['circle', 'ellipse']" :bound="boundColumnFor('layer.ramp.shape')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 block text-xs text-white/60">Shape</label>
             <select :value="layer.ramp?.shape ?? 'circle'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onRamp('shape', ($event.target as HTMLSelectElement).value)">
@@ -1055,360 +1070,17 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           </BindableRow>
         </template>
         <template v-if="isConic">
-          <BindableRow control-key="layer.ramp.sweep" label="Sweep" kind="slider" :min="20" :max="360" :step="1" :bound="boundColumnFor('layer.ramp.sweep')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Sweep</span><span class="text-white/40">{{ Math.round(layer.ramp?.sweep ?? 360) }}°</span></label>
-            <input :value="layer.ramp?.sweep ?? 360" type="range" min="20" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onRamp('sweep', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
+          <StudioSlider label="Sweep" :min="20" :max="360" :step="1" :default="360"
+            :model-value="layer.ramp?.sweep ?? 360"
+            :bound="boundColumnFor('layer.ramp.sweep')"
+            @update:model-value="(v: number) => onRamp('sweep', v)"
+            @promote="promote({ key: 'layer.ramp.sweep', label: 'Sweep', kind: 'slider', min: 20, max: 360, step: 1 }, layer.ramp?.sweep ?? 360)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.ramp.sweep', label: 'Sweep', kind: 'slider', min: 20, max: 360, step: 1 })" />
           <label class="mb-2 flex items-center gap-2 text-xs text-white/60">
             <input type="checkbox" class="h-3.5 w-3.5 accent-white/70" :checked="layer.ramp?.closeLoop ?? false" @change="onRamp('closeLoop', ($event.target as HTMLInputElement).checked)" />
             <span>Close loop</span>
           </label>
         </template>
-      </StudioSection>
-
-      <!-- Curve — the `curve` layout's parametric bezier axis. Start/End/Curvature
-           are also draggable directly on the preview (CurveHandleEditor, mounted
-           over the canvas above) — the sliders here are the precise/bindable twin
-           of those same dials, matching the layer.curve.* ControlSpecs (controls.ts). -->
-      <StudioSection v-show="onDesign && isCurve" title="Curve" :open="true">
-        <BindableRow control-key="layer.curve.mode" label="Mode" kind="select" :options="['along', 'outward']" :bound="boundColumnFor('layer.curve.mode')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 block text-xs text-white/60">Mode</label>
-          <select :value="layer.curve?.mode ?? CURVE_DEFAULTS.mode" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onCurve('layer.curve.mode', ($event.target as HTMLSelectElement).value)">
-            <option value="along">Along</option><option value="outward">Outward</option>
-          </select>
-        </BindableRow>
-        <BindableRow control-key="layer.curve.shape" label="Shape" kind="select" :options="['line', 'arc', 's-curve', 'wave', 'loop']" :bound="boundColumnFor('layer.curve.shape')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 block text-xs text-white/60">Shape</label>
-          <select :value="layer.curve?.shape ?? CURVE_DEFAULTS.shape" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onCurve('layer.curve.shape', ($event.target as HTMLSelectElement).value)">
-            <option value="line">Line</option><option value="arc">Arc</option><option value="s-curve">S-curve</option><option value="wave">Wave</option><option value="loop">Loop</option>
-          </select>
-        </BindableRow>
-        <BindableRow control-key="layer.curve.start.x" label="Start X" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.start.x')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Start X</span><span class="text-white/40">{{ (layer.curve?.start.x ?? CURVE_DEFAULTS.start.x).toFixed(2) }}</span></label>
-          <input :value="layer.curve?.start.x ?? CURVE_DEFAULTS.start.x" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.start.x', ($event.target as HTMLInputElement).valueAsNumber)" />
-        </BindableRow>
-        <BindableRow control-key="layer.curve.start.y" label="Start Y" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.start.y')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Start Y</span><span class="text-white/40">{{ (layer.curve?.start.y ?? CURVE_DEFAULTS.start.y).toFixed(2) }}</span></label>
-          <input :value="layer.curve?.start.y ?? CURVE_DEFAULTS.start.y" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.start.y', ($event.target as HTMLInputElement).valueAsNumber)" />
-        </BindableRow>
-        <BindableRow control-key="layer.curve.end.x" label="End X" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.end.x')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>End X</span><span class="text-white/40">{{ (layer.curve?.end.x ?? CURVE_DEFAULTS.end.x).toFixed(2) }}</span></label>
-          <input :value="layer.curve?.end.x ?? CURVE_DEFAULTS.end.x" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.end.x', ($event.target as HTMLInputElement).valueAsNumber)" />
-        </BindableRow>
-        <BindableRow control-key="layer.curve.end.y" label="End Y" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.end.y')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>End Y</span><span class="text-white/40">{{ (layer.curve?.end.y ?? CURVE_DEFAULTS.end.y).toFixed(2) }}</span></label>
-          <input :value="layer.curve?.end.y ?? CURVE_DEFAULTS.end.y" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.end.y', ($event.target as HTMLInputElement).valueAsNumber)" />
-        </BindableRow>
-        <template v-if="(layer.curve?.shape ?? CURVE_DEFAULTS.shape) !== 'line'">
-          <BindableRow control-key="layer.curve.curvature" label="Curvature" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.curvature')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curvature</span><span class="text-white/40">{{ (layer.curve?.curvature ?? CURVE_DEFAULTS.curvature).toFixed(2) }}</span></label>
-            <input :value="layer.curve?.curvature ?? CURVE_DEFAULTS.curvature" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.curvature', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
-          <BindableRow control-key="layer.curve.bend" label="Bend" kind="slider" :min="-1" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.bend')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Bend</span><span class="text-white/40">{{ (layer.curve?.bend ?? CURVE_DEFAULTS.bend).toFixed(2) }}</span></label>
-            <input :value="layer.curve?.bend ?? CURVE_DEFAULTS.bend" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.bend', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
-        </template>
-        <template v-if="(layer.curve?.shape ?? CURVE_DEFAULTS.shape) === 'wave'">
-          <BindableRow control-key="layer.curve.waves" label="Waves" kind="slider" :min="1" :max="8" :step="1" :bound="boundColumnFor('layer.curve.waves')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Waves</span><span class="text-white/40">{{ layer.curve?.waves ?? CURVE_DEFAULTS.waves }}</span></label>
-            <input :value="layer.curve?.waves ?? CURVE_DEFAULTS.waves" type="range" min="1" max="8" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.waves', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
-          <BindableRow control-key="layer.curve.phase" label="Phase" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.phase')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Phase</span><span class="text-white/40">{{ (layer.curve?.phase ?? CURVE_DEFAULTS.phase).toFixed(2) }}</span></label>
-            <input :value="layer.curve?.phase ?? CURVE_DEFAULTS.phase" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.phase', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
-        </template>
-        <template v-if="(layer.curve?.mode ?? CURVE_DEFAULTS.mode) === 'outward'">
-          <BindableRow control-key="layer.curve.width" label="Width" kind="slider" :min="0.02" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.width')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Width</span><span class="text-white/40">{{ (layer.curve?.width ?? CURVE_DEFAULTS.width).toFixed(2) }}</span></label>
-            <input :value="layer.curve?.width ?? CURVE_DEFAULTS.width" type="range" min="0.02" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.width', ($event.target as HTMLInputElement).valueAsNumber)" />
-          </BindableRow>
-        </template>
-      </StudioSection>
-
-      <!-- Flow (domain warp — distorts every layout; the heart of the liquid look) -->
-      <StudioSection v-show="onDesign" title="Flow" badge="all layouts" :open="isLiquid || isMesh">
-        <p class="mb-2 text-[11px] leading-snug text-white/40">Warps the gradient into liquid swirls. At 0 intensity the gradient is undistorted.</p>
-        <BindableRow control-key="flow.angle" label="Flow angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('flow.angle')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Angle</span><span class="text-white/40">{{ Math.round(config.flow!.angle) }}°</span></label>
-          <input v-model.number="config.flow!.angle" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.angle', config.flow!.angle)" />
-        </BindableRow>
-        <BindableRow control-key="flow.noiseScale" label="Noise scale" kind="slider" :min="0.5" :max="8" :step="0.1" :bound="boundColumnFor('flow.noiseScale')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Noise scale</span><span class="text-white/40">{{ config.flow!.noiseScale.toFixed(1) }}</span></label>
-          <input v-model.number="config.flow!.noiseScale" type="range" min="0.5" max="8" step="0.1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.noiseScale', config.flow!.noiseScale)" />
-        </BindableRow>
-        <BindableRow control-key="flow.intensity" label="Noise intensity" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.intensity')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Noise intensity</span><span class="text-white/40">{{ Math.round(config.flow!.intensity) }}</span></label>
-          <input v-model.number="config.flow!.intensity" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.intensity', config.flow!.intensity)" />
-        </BindableRow>
-        <BindableRow control-key="flow.distortion" label="Curve distortion" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.distortion')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curve distortion</span><span class="text-white/40">{{ Math.round(config.flow!.distortion) }}</span></label>
-          <input v-model.number="config.flow!.distortion" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.distortion', config.flow!.distortion)" />
-        </BindableRow>
-        <BindableRow control-key="flow.detail" label="Detail" kind="slider" :min="1" :max="6" :step="1" :bound="boundColumnFor('flow.detail')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Detail</span><span class="text-white/40">{{ Math.round(config.flow!.detail) }}</span></label>
-          <input v-model.number="config.flow!.detail" type="range" min="1" max="6" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.detail', config.flow!.detail)" />
-        </BindableRow>
-        <BindableRow control-key="flow.swirl" label="Swirl" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.swirl')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Swirl</span><span class="text-white/40">{{ Math.round(flowSwirl) || 'off' }}</span></label>
-          <input v-model.number="flowSwirl" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.swirl', flowSwirl)" />
-        </BindableRow>
-        <BindableRow control-key="flow.speed" label="Flow speed" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.speed')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Flow speed</span><span class="text-white/40">{{ Math.round(flowSpeed) || 'off' }}</span></label>
-          <input v-model.number="flowSpeed" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('flow.speed', flowSpeed)" />
-        </BindableRow>
-        <p class="mt-1 text-[10px] leading-snug text-white/30">Living drift — the warp flows over the loop. Export as video to capture the motion.</p>
-      </StudioSection>
-
-      <!-- Depth & Light (liquid fold shading only) -->
-      <StudioSection v-show="onDesign" v-if="isLiquid" title="Depth & light" badge="liquid">
-        <label class="mb-1 block text-xs text-white/60">Presets</label>
-        <div class="mb-3 grid grid-cols-3 gap-1">
-          <button v-for="p in LIQUID_PRESETS" :key="p" class="rounded bg-white/[0.04] px-1 py-1 text-[11px] capitalize text-white/60 transition hover:bg-white/10 hover:text-white"
-                  @click="applyLiquidPreset(p)">{{ p }}</button>
-        </div>
-        <BindableRow control-key="flow.depth" label="Depth" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.depth')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Depth</span><span class="text-white/40">{{ Math.round(config.flow!.depth) }}</span></label>
-          <input v-model.number="config.flow!.depth" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.depth', config.flow!.depth)" />
-        </BindableRow>
-        <!-- Highlights / Shadows / Gloss / Ripple are applied only under u_layout[0] (see
-             baseLiquid): they light the BASE liquid layer's emboss, not per-layer. Shown
-             inert when a non-base layer is liquid but layer 0 isn't. -->
-        <template v-if="baseLiquid">
-          <BindableRow control-key="flow.highlights" label="Highlights" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.highlights')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Highlights</span><span class="text-white/40">{{ Math.round(config.flow!.highlights) }}</span></label>
-            <input v-model.number="config.flow!.highlights" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.highlights', config.flow!.highlights)" />
-          </BindableRow>
-          <BindableRow control-key="flow.shadows" label="Shadows" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.shadows')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Shadows</span><span class="text-white/40">{{ Math.round(config.flow!.shadows) }}</span></label>
-            <input v-model.number="config.flow!.shadows" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.shadows', config.flow!.shadows)" />
-          </BindableRow>
-        </template>
-        <BindableRow control-key="flow.foldScale" label="Fold scale" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.foldScale')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Fold scale</span><span class="text-white/40">{{ Math.round(config.flow!.foldScale) }}</span></label>
-          <input v-model.number="config.flow!.foldScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.foldScale', config.flow!.foldScale)" />
-        </BindableRow>
-        <template v-if="baseLiquid">
-          <BindableRow control-key="flow.gloss" label="Gloss" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.gloss')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Gloss</span><span class="text-white/40">{{ Math.round(flowGloss) || 'matte' }}</span></label>
-            <input v-model.number="flowGloss" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('flow.gloss', flowGloss)" />
-          </BindableRow>
-        </template>
-      </StudioSection>
-
-      <!-- Liquid surface (turns the smoky warp into flowing fluid) -->
-      <StudioSection v-show="onDesign" v-if="isLiquid" title="Liquid surface" badge="liquid" :open="true">
-        <p class="mb-2 text-[11px] leading-snug text-white/40">Push the smoky warp toward real fluid — marbled veins, a wet rippling skin, glassy refraction, and viscosity.</p>
-        <BindableRow control-key="flow.veins" label="Veins" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.veins')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Veins</span><span class="text-white/40">{{ Math.round(flowVeins) || 'smooth' }}</span></label>
-          <input v-model.number="flowVeins" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.veins', flowVeins)" />
-        </BindableRow>
-        <BindableRow control-key="flow.veinScale" label="Vein scale" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.veinScale')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Vein scale</span><span class="text-white/40">{{ Math.round(flowVeinScale) }}</span></label>
-          <input v-model.number="flowVeinScale" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.veinScale', flowVeinScale)" />
-        </BindableRow>
-        <template v-if="baseLiquid">
-          <BindableRow control-key="flow.ripple" label="Ripple" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.ripple')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Ripple</span><span class="text-white/40">{{ Math.round(flowRipple) || 'off' }}</span></label>
-            <input v-model.number="flowRipple" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.ripple', flowRipple)" />
-          </BindableRow>
-        </template>
-        <BindableRow control-key="flow.refract" label="Refraction" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.refract')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Refraction</span><span class="text-white/40">{{ Math.round(flowRefract) || 'off' }}</span></label>
-          <input v-model.number="flowRefract" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('flow.refract', flowRefract)" />
-        </BindableRow>
-        <BindableRow control-key="flow.viscosity" label="Viscosity" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.viscosity')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Viscosity</span><span class="text-white/40">{{ Math.round(flowViscosity) || 'thin' }}</span></label>
-          <input v-model.number="flowViscosity" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('flow.viscosity', flowViscosity)" />
-        </BindableRow>
-      </StudioSection>
-
-      <!-- Mesh (soft point-mesh gradient) -->
-      <StudioSection v-show="onDesign" v-if="isMesh" title="Mesh" badge="layer 1" :open="true">
-        <p class="mb-2 text-[11px] leading-snug text-white/40">Drag the dots on the preview to move points. Colours come from the palette below — scatter re-samples them.</p>
-        <div class="mb-2 space-y-1">
-          <div v-for="(pt, i) in mesh.points" :key="i" class="flex items-center gap-1.5">
-            <BindableRow :control-key="`layer.mesh.points.${i}.color`" :label="`Colour ${i + 1}`" kind="color" :bound="boundColumnFor(`layer.mesh.points.${i}.color`)" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-              <StudioColor v-model="pt.color" @update:model-value="(v: string) => onEdit(`layer.mesh.points.${i}.color`, v)" />
-            </BindableRow>
-            <span class="min-w-0 flex-1 truncate text-[11px] text-white/40">Point {{ i + 1 }} · {{ Math.round(pt.x * 100) }},{{ Math.round(pt.y * 100) }}</span>
-            <button v-if="mesh.points.length > 2" class="shrink-0 text-white/30 hover:text-white/70" @click="removeMeshPoint(i)"><Trash2 class="h-3 w-3" /></button>
-          </div>
-          <div class="mt-1 flex gap-1.5">
-            <button v-if="mesh.points.length < MESH_MAX_POINTS" class="flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="addMeshPoint"><Plus class="h-3 w-3" /> Add point</button>
-            <button class="flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="scatterMesh"><Dices class="h-3 w-3" /> Scatter</button>
-          </div>
-        </div>
-        <BindableRow control-key="layer.mesh.softness" label="Softness" kind="slider" :min="10" :max="100" :step="1" :bound="boundColumnFor('layer.mesh.softness')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Softness</span><span class="text-white/40">{{ Math.round(mesh.softness) }}</span></label>
-          <input v-model.number="mesh.softness" type="range" min="10" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.mesh.softness', mesh.softness)" />
-        </BindableRow>
-        <BindableRow control-key="layer.mesh.contrast" label="Contrast" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('layer.mesh.contrast')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Contrast</span><span class="text-white/40">{{ Math.round(mesh.contrast) || 'smooth' }}</span></label>
-          <input v-model.number="mesh.contrast" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.mesh.contrast', mesh.contrast)" />
-        </BindableRow>
-        <BindableRow control-key="layer.mesh.blur" label="Blur" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('layer.mesh.blur')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Blur</span><span class="text-white/40">{{ Math.round(meshBlur) || 'off' }}</span></label>
-          <input v-model.number="meshBlur" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.mesh.blur', meshBlur)" />
-        </BindableRow>
-        <BindableRow control-key="layer.mesh.drift" label="Drift" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('layer.mesh.drift')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Drift</span><span class="text-white/40">{{ Math.round(mesh.drift) || 'still' }}</span></label>
-          <input v-model.number="mesh.drift" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('layer.mesh.drift', mesh.drift)" />
-        </BindableRow>
-      </StudioSection>
-
-      <!-- Relief. Only shades the band/ring HEIGHT field (linear/radial/orbit/stack);
-           liquid uses flow.depth and mesh has no relief, so this whole section is
-           hidden for those layouts. Grain moved to the shared post stack's own Grain
-           section (Task 8) — see the schema-driven post panel further down. -->
-      <StudioSection v-show="onDesign && baseBanded" title="Relief" :open="false">
-        <BindableRow control-key="relief.relief" label="Relief" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('relief.relief')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
-          <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.relief', config.relief.relief)" />
-        </BindableRow>
-        <BindableRow control-key="relief.light.azimuth" label="Light angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('relief.light.azimuth')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light angle</span><span class="text-white/40">{{ Math.round(lightAz) }}°</span></label>
-          <input v-model.number="lightAz" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.light.azimuth', lightAz)" />
-        </BindableRow>
-        <BindableRow control-key="relief.light.elevation" label="Light height" kind="slider" :min="0" :max="90" :step="1" :bound="boundColumnFor('relief.light.elevation')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light height</span><span class="text-white/40">{{ Math.round(lightEl) }}°</span></label>
-          <input v-model.number="lightEl" type="range" min="0" max="90" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('relief.light.elevation', lightEl)" />
-        </BindableRow>
-      </StudioSection>
-
-      <!-- Focus / soft-focus DoF -->
-      <StudioSection v-show="onDesign" v-if="config.focus" title="Focus" badge="both layers" :open="false">
-        <BindableRow control-key="focus.blur" label="Blur" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('focus.blur')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Blur</span><span class="text-white/40">{{ config.focus.blur }}</span></label>
-          <input v-model.number="config.focus.blur" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('focus.blur', config.focus.blur)" />
-        </BindableRow>
-        <BindableRow control-key="focus.shape" label="Focus region" kind="select" :options="['off', 'radial', 'linear']" :bound="boundColumnFor('focus.shape')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 block text-xs text-white/60">Focus region</label>
-          <select v-model="config.focus.shape" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs capitalize" @change="onEdit('focus.shape', config.focus.shape)">
-            <option value="off">Off — blur everything</option>
-            <option value="radial">Radial — sharp spot</option>
-            <option value="linear">Linear — tilt-shift band</option>
-          </select>
-        </BindableRow>
-        <template v-if="config.focus.shape !== 'off'">
-          <BindableRow control-key="focus.radius" label="Focus size" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('focus.radius')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Focus size</span><span class="text-white/40">{{ config.focus.radius.toFixed(2) }}</span></label>
-            <input v-model.number="config.focus.radius" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('focus.radius', config.focus.radius)" />
-          </BindableRow>
-          <BindableRow control-key="focus.softness" label="Focus falloff" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('focus.softness')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Falloff</span><span class="text-white/40">{{ config.focus.softness }}</span></label>
-            <input v-model.number="config.focus.softness" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('focus.softness', config.focus.softness)" />
-          </BindableRow>
-          <BindableRow control-key="focus.x" label="Focus X" kind="slider" :min="-0.5" :max="0.5" :step="0.01" :bound="boundColumnFor('focus.x')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Focus X</span><span class="text-white/40">{{ config.focus.x.toFixed(2) }}</span></label>
-            <input v-model.number="config.focus.x" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('focus.x', config.focus.x)" />
-          </BindableRow>
-          <BindableRow control-key="focus.y" label="Focus Y" kind="slider" :min="-0.5" :max="0.5" :step="0.01" :bound="boundColumnFor('focus.y')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Focus Y</span><span class="text-white/40">{{ config.focus.y.toFixed(2) }}</span></label>
-            <input v-model.number="config.focus.y" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range w-full" :class="config.focus.shape === 'linear' ? 'mb-2' : ''" @input="onEdit('focus.y', config.focus.y)" />
-          </BindableRow>
-          <template v-if="config.focus.shape === 'linear'">
-            <BindableRow control-key="focus.angle" label="Band angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('focus.angle')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-              <label class="mb-1 flex justify-between text-xs text-white/60"><span>Band angle</span><span class="text-white/40">{{ config.focus.angle }}°</span></label>
-              <input v-model.number="config.focus.angle" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('focus.angle', config.focus.angle)" />
-            </BindableRow>
-          </template>
-        </template>
-      </StudioSection>
-
-      <!-- Layer (blend/opacity for the active non-base layer; add/remove/reorder/select
-           now live in the aside StudioLayerStack) -->
-      <StudioSection v-show="onDesign" title="Layer" :open="false">
-        <template v-if="activeLayer > 0">
-          <BindableRow control-key="layer.blend" label="Blend" kind="select" :options="[...BLEND_MODES]" :bound="boundColumnFor('layer.blend')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 block text-xs text-white/60">Blend</label>
-            <select v-model="layer.blend" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs capitalize" @change="onEdit('layer.blend', layer.blend)">
-              <option v-for="b in BLEND_MODES" :key="b" :value="b">{{ b }}</option>
-            </select>
-          </BindableRow>
-          <BindableRow control-key="layer.opacity" label="Opacity" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.opacity')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Opacity</span><span class="text-white/40">{{ layer.opacity.toFixed(2) }}</span></label>
-            <input v-model.number="layer.opacity" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" @input="onEdit('layer.opacity', layer.opacity)" />
-          </BindableRow>
-        </template>
-      </StudioSection>
-
-      <!-- Shape -->
-      <StudioSection v-show="onDesign" v-if="isBanded" title="Shape" :badge="layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`">
-        <div v-if="!isStack" class="mb-2 grid grid-cols-4 gap-1">
-          <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
-                  :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                  @click="setShape(s)">{{ s }}</button>
-        </div>
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>{{ isStack ? 'Ring count' : 'Count' }}</span><span class="text-white/40">{{ Math.round(layer.shape.count) }}</span></label>
-        <input v-model.number="layer.shape.count" type="range" min="2" :max="isStack ? 40 : 64" step="1" v-studio-reset class="studio-range mb-2 w-full" />
-        <template v-if="isStack">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Rotation / ring</span><span class="text-white/40">{{ Math.round(layer.shape.rotStep ?? 8) }}°</span></label>
-          <input v-model.number="layer.shape.rotStep" type="range" min="0" max="45" step="1" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Pivot</span><span class="text-white/40">{{ (layer.shape.pivot ?? 0.1).toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.pivot" type="range" min="0" max="0.6" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Disc size</span><span class="text-white/40">{{ (layer.shape.ringScale ?? 1).toFixed(2) }}×</span></label>
-          <input v-model.number="layer.shape.ringScale" type="range" min="1" max="2.2" step="0.02" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-1 block text-xs text-white/60">Ring shape</label>
-          <div class="grid grid-cols-3 gap-1">
-            <button v-for="rs in RING_SHAPES" :key="rs" class="rounded px-1 py-1 text-[11px] capitalize transition"
-                    :class="(layer.shape.ringShape ?? 'circle') === rs ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                    @click="layer.shape.ringShape = rs">{{ rs }}</button>
-          </div>
-        </template>
-        <template v-if="!isStack">
-        <template v-if="layer.shape.type === 'wave' || layer.shape.type === 'bands'">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Peaks</span><span class="text-white/40">{{ Math.round(layer.shape.peaks) }}</span></label>
-          <input v-model.number="layer.shape.peaks" type="range" min="1" max="12" step="1" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Wave phase</span><span class="text-white/40">{{ layer.shape.phase.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.phase" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        </template>
-        <template v-else-if="layer.shape.type === 'noise'">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Detail</span><span class="text-white/40">{{ Math.round(layer.shape.detail) }}</span></label>
-          <input v-model.number="layer.shape.detail" type="range" min="1" max="8" step="1" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Scrub</span><span class="text-white/40">{{ layer.shape.scrub.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.scrub" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        </template>
-        <template v-else>
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Valley position</span><span class="text-white/40">{{ layer.shape.valley.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.valley" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        </template>
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Min depth</span><span class="text-white/40">{{ layer.shape.minDepth.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.minDepth" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curve exponent</span><span class="text-white/40">{{ layer.shape.curveExp.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.curveExp" type="range" min="0.2" max="3" step="0.05" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>{{ layer.shape.type === 'bands' ? 'Randomness' : 'Jitter' }}</span><span class="text-white/40">{{ layer.shape.jitter.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.jitter" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Gap</span><span class="text-white/40">{{ layer.shape.gap.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.gap" type="range" min="0" max="0.8" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        <label class="mb-1 flex justify-between text-xs text-white/60"><span>Rounding</span><span class="text-white/40">{{ layer.shape.rounding.toFixed(2) }}</span></label>
-        <input v-model.number="layer.shape.rounding" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        <template v-if="isRadial">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Sweep</span><span class="text-white/40">{{ Math.round(layer.shape.sweep) }}°</span></label>
-          <input v-model.number="layer.shape.sweep" type="range" min="20" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" />
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Scrub / rotate</span><span class="text-white/40">{{ layer.shape.scrub.toFixed(2) }}</span></label>
-          <input v-model.number="layer.shape.scrub" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" />
-        </template>
-        <template v-else>
-          <label class="mb-1 block text-xs text-white/60">Direction</label>
-          <div class="mb-2 grid grid-cols-4 gap-1">
-            <button v-for="d in DIRECTIONS" :key="d" class="rounded py-1 text-xs transition"
-                    :class="layer.shape.direction === d ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                    @click="layer.shape.direction = d">{{ { up: '↑', right: '→', down: '↓', left: '←' }[d] }}</button>
-          </div>
-        </template>
-        <label class="mb-1 block text-xs text-white/60">Mirror</label>
-        <div class="grid grid-cols-4 gap-1">
-          <button v-for="mk in MIRROR_KINDS" :key="mk" class="rounded px-1 py-1 text-[11px] capitalize transition"
-                  :class="layer.shape.mirror === mk ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                  @click="layer.shape.mirror = mk">{{ mk === 'horizontal' ? 'Horiz' : mk === 'vertical' ? 'Vert' : mk }}</button>
-        </div>
-        </template>
-      </StudioSection>
-
-      <!-- Color -->
-      <StudioSection v-show="onDesign" title="Color" :badge="isMesh ? 'mesh palette' : (layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`)">
         <p v-if="isMesh" class="mb-2 text-[11px] leading-snug text-white/40">The palette mesh points are sampled from when you scatter or randomize colours.</p>
         <div class="mb-2 space-y-1">
           <div v-for="(stop, i) in layer.color.stops" :key="i" class="flex items-center gap-1.5">
@@ -1444,25 +1116,31 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           </div>
         </template>
         <template v-if="!isMesh">
-          <BindableRow control-key="layer.color.steps" label="Posterize steps" kind="slider" :min="0" :max="24" :step="1" :bound="boundColumnFor('layer.color.steps')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Steps</span><span class="text-white/40">{{ layer.color.steps || 'off' }}</span></label>
-            <input v-model.number="layer.color.steps" type="range" min="0" max="24" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.steps', layer.color.steps)" />
-          </BindableRow>
+          <StudioSlider label="Posterize steps" :min="0" :max="24" :step="1" :default="0"
+            :model-value="layer.color.steps"
+            :bound="boundColumnFor('layer.color.steps')"
+            @update:model-value="(v: number) => { layer.color.steps = v; onEdit('layer.color.steps', v) }"
+            @promote="promote({ key: 'layer.color.steps', label: 'Posterize steps', kind: 'slider', min: 0, max: 24, step: 1 }, layer.color.steps)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.color.steps', label: 'Posterize steps', kind: 'slider', min: 0, max: 24, step: 1 })" />
         </template>
         <!-- Hue drift (u_hueDrift) is read by the simple-primitive/curve branch (t±drift),
              linear, and radial/orbit — but NOT by stack or liquid (their branches never
              reference u_hueDrift). Posterize steps above IS read by every non-mesh branch,
              so it stays !isMesh. -->
         <template v-if="!isMesh && !isStack && !isLiquid">
-          <BindableRow control-key="layer.color.hueDrift" label="Hue drift" kind="slider" :min="-180" :max="180" :step="1" :bound="boundColumnFor('layer.color.hueDrift')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue drift</span><span class="text-white/40">{{ Math.round(layer.color.hueDrift) }}°</span></label>
-            <input v-model.number="layer.color.hueDrift" type="range" min="-180" max="180" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.hueDrift', layer.color.hueDrift)" />
-          </BindableRow>
+          <StudioSlider label="Hue drift" :min="-180" :max="180" :step="1" :default="0"
+            :model-value="layer.color.hueDrift"
+            :bound="boundColumnFor('layer.color.hueDrift')"
+            @update:model-value="(v: number) => { layer.color.hueDrift = v; onEdit('layer.color.hueDrift', v) }"
+            @promote="promote({ key: 'layer.color.hueDrift', label: 'Hue drift', kind: 'slider', min: -180, max: 180, step: 1 }, layer.color.hueDrift)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.color.hueDrift', label: 'Hue drift', kind: 'slider', min: -180, max: 180, step: 1 })" />
         </template>
-        <BindableRow control-key="layer.color.hueRotate" label="Hue rotate" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('layer.color.hueRotate')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue rotate</span><span class="text-white/40">{{ Math.round(layer.color.hueRotate) }}°</span></label>
-          <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.hueRotate', layer.color.hueRotate)" />
-        </BindableRow>
+        <StudioSlider label="Hue rotate" :min="0" :max="360" :step="1" :default="0"
+          :model-value="layer.color.hueRotate"
+          :bound="boundColumnFor('layer.color.hueRotate')"
+          @update:model-value="(v: number) => { layer.color.hueRotate = v; onEdit('layer.color.hueRotate', v) }"
+          @promote="promote({ key: 'layer.color.hueRotate', label: 'Hue rotate', kind: 'slider', min: 0, max: 360, step: 1 }, layer.color.hueRotate)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.color.hueRotate', label: 'Hue rotate', kind: 'slider', min: 0, max: 360, step: 1 })" />
         <!-- Repeat — the three simple primitives and curve read u_repeat in the shader; on
              the other legacy layouts (linear/radial/orbit/stack/liquid/mesh) it's a no-op,
              so gate it behind isSimpleRamp || isCurve. Falloff stays universal below: it's baked
@@ -1475,10 +1153,12 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
             </select>
           </BindableRow>
           <template v-if="(layer.color.repeat ?? 'once') === 'tile'">
-            <BindableRow control-key="layer.color.repeatCount" label="Repeat count" kind="slider" :min="2" :max="16" :step="1" :bound="boundColumnFor('layer.color.repeatCount')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-              <label class="mb-1 flex justify-between text-xs text-white/60"><span>Repeat count</span><span class="text-white/40">{{ layer.color.repeatCount ?? 4 }}</span></label>
-              <input :value="layer.color.repeatCount ?? 4" type="range" min="2" max="16" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onColor('repeatCount', ($event.target as HTMLInputElement).valueAsNumber)" />
-            </BindableRow>
+            <StudioSlider label="Repeat count" :min="2" :max="16" :step="1" :default="4"
+              :model-value="layer.color.repeatCount ?? 4"
+              :bound="boundColumnFor('layer.color.repeatCount')"
+              @update:model-value="(v: number) => onColor('repeatCount', v)"
+              @promote="promote({ key: 'layer.color.repeatCount', label: 'Repeat count', kind: 'slider', min: 2, max: 16, step: 1 }, layer.color.repeatCount ?? 4)"
+              @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.color.repeatCount', label: 'Repeat count', kind: 'slider', min: 2, max: 16, step: 1 })" />
           </template>
         </template>
         <!-- Falloff shapes the ramp LUT (buildRampLut), sampled via sampleRamp/sampleAlpha.
@@ -1491,6 +1171,443 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
               <option value="linear">Linear</option><option value="ease">Ease</option><option value="smooth">Smooth</option>
             </select>
           </BindableRow>
+        </template>
+      </StudioSection>
+
+      <!-- Curve — the `curve` layout's parametric bezier axis. Start/End/Curvature
+           are also draggable directly on the preview (CurveHandleEditor, mounted
+           over the canvas above) — the sliders here are the precise/bindable twin
+           of those same dials, matching the layer.curve.* ControlSpecs (controls.ts). -->
+      <StudioSection v-show="onDesign && isCurve" title="Curve" :open="true">
+        <BindableRow control-key="layer.curve.mode" label="Mode" kind="select" :options="['along', 'outward']" :bound="boundColumnFor('layer.curve.mode')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 block text-xs text-white/60">Mode</label>
+          <select :value="layer.curve?.mode ?? CURVE_DEFAULTS.mode" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onCurve('layer.curve.mode', ($event.target as HTMLSelectElement).value)">
+            <option value="along">Along</option><option value="outward">Outward</option>
+          </select>
+        </BindableRow>
+        <BindableRow control-key="layer.curve.shape" label="Shape" kind="select" :options="['line', 'arc', 's-curve', 'wave', 'loop']" :bound="boundColumnFor('layer.curve.shape')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 block text-xs text-white/60">Shape</label>
+          <select :value="layer.curve?.shape ?? CURVE_DEFAULTS.shape" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onCurve('layer.curve.shape', ($event.target as HTMLSelectElement).value)">
+            <option value="line">Line</option><option value="arc">Arc</option><option value="s-curve">S-curve</option><option value="wave">Wave</option><option value="loop">Loop</option>
+          </select>
+        </BindableRow>
+        <StudioSlider label="Start X" :min="0" :max="1" :step="0.01" :default="CURVE_DEFAULTS.start.x"
+          :model-value="layer.curve?.start.x ?? CURVE_DEFAULTS.start.x"
+          :bound="boundColumnFor('layer.curve.start.x')"
+          @update:model-value="(v: number) => onCurve('layer.curve.start.x', v)"
+          @promote="promote({ key: 'layer.curve.start.x', label: 'Start X', kind: 'slider', min: 0, max: 1, step: 0.01 }, layer.curve?.start.x ?? CURVE_DEFAULTS.start.x)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.start.x', label: 'Start X', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+        <StudioSlider label="Start Y" :min="0" :max="1" :step="0.01" :default="CURVE_DEFAULTS.start.y"
+          :model-value="layer.curve?.start.y ?? CURVE_DEFAULTS.start.y"
+          :bound="boundColumnFor('layer.curve.start.y')"
+          @update:model-value="(v: number) => onCurve('layer.curve.start.y', v)"
+          @promote="promote({ key: 'layer.curve.start.y', label: 'Start Y', kind: 'slider', min: 0, max: 1, step: 0.01 }, layer.curve?.start.y ?? CURVE_DEFAULTS.start.y)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.start.y', label: 'Start Y', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+        <StudioSlider label="End X" :min="0" :max="1" :step="0.01" :default="CURVE_DEFAULTS.end.x"
+          :model-value="layer.curve?.end.x ?? CURVE_DEFAULTS.end.x"
+          :bound="boundColumnFor('layer.curve.end.x')"
+          @update:model-value="(v: number) => onCurve('layer.curve.end.x', v)"
+          @promote="promote({ key: 'layer.curve.end.x', label: 'End X', kind: 'slider', min: 0, max: 1, step: 0.01 }, layer.curve?.end.x ?? CURVE_DEFAULTS.end.x)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.end.x', label: 'End X', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+        <StudioSlider label="End Y" :min="0" :max="1" :step="0.01" :default="CURVE_DEFAULTS.end.y"
+          :model-value="layer.curve?.end.y ?? CURVE_DEFAULTS.end.y"
+          :bound="boundColumnFor('layer.curve.end.y')"
+          @update:model-value="(v: number) => onCurve('layer.curve.end.y', v)"
+          @promote="promote({ key: 'layer.curve.end.y', label: 'End Y', kind: 'slider', min: 0, max: 1, step: 0.01 }, layer.curve?.end.y ?? CURVE_DEFAULTS.end.y)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.end.y', label: 'End Y', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+        <template v-if="(layer.curve?.shape ?? CURVE_DEFAULTS.shape) !== 'line'">
+          <StudioSlider label="Curvature" :min="0" :max="1" :step="0.01" :default="CURVE_DEFAULTS.curvature"
+            :model-value="layer.curve?.curvature ?? CURVE_DEFAULTS.curvature"
+            :bound="boundColumnFor('layer.curve.curvature')"
+            @update:model-value="(v: number) => onCurve('layer.curve.curvature', v)"
+            @promote="promote({ key: 'layer.curve.curvature', label: 'Curvature', kind: 'slider', min: 0, max: 1, step: 0.01 }, layer.curve?.curvature ?? CURVE_DEFAULTS.curvature)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.curvature', label: 'Curvature', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+          <StudioSlider label="Bend" :min="-1" :max="1" :step="0.01" :default="CURVE_DEFAULTS.bend"
+            :model-value="layer.curve?.bend ?? CURVE_DEFAULTS.bend"
+            :bound="boundColumnFor('layer.curve.bend')"
+            @update:model-value="(v: number) => onCurve('layer.curve.bend', v)"
+            @promote="promote({ key: 'layer.curve.bend', label: 'Bend', kind: 'slider', min: -1, max: 1, step: 0.01 }, layer.curve?.bend ?? CURVE_DEFAULTS.bend)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.bend', label: 'Bend', kind: 'slider', min: -1, max: 1, step: 0.01 })" />
+        </template>
+        <template v-if="(layer.curve?.shape ?? CURVE_DEFAULTS.shape) === 'wave'">
+          <StudioSlider label="Waves" :min="1" :max="8" :step="1" :default="CURVE_DEFAULTS.waves"
+            :model-value="layer.curve?.waves ?? CURVE_DEFAULTS.waves"
+            :bound="boundColumnFor('layer.curve.waves')"
+            @update:model-value="(v: number) => onCurve('layer.curve.waves', v)"
+            @promote="promote({ key: 'layer.curve.waves', label: 'Waves', kind: 'slider', min: 1, max: 8, step: 1 }, layer.curve?.waves ?? CURVE_DEFAULTS.waves)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.waves', label: 'Waves', kind: 'slider', min: 1, max: 8, step: 1 })" />
+          <StudioSlider label="Phase" :min="0" :max="1" :step="0.01" :default="CURVE_DEFAULTS.phase"
+            :model-value="layer.curve?.phase ?? CURVE_DEFAULTS.phase"
+            :bound="boundColumnFor('layer.curve.phase')"
+            @update:model-value="(v: number) => onCurve('layer.curve.phase', v)"
+            @promote="promote({ key: 'layer.curve.phase', label: 'Phase', kind: 'slider', min: 0, max: 1, step: 0.01 }, layer.curve?.phase ?? CURVE_DEFAULTS.phase)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.phase', label: 'Phase', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+        </template>
+        <template v-if="(layer.curve?.mode ?? CURVE_DEFAULTS.mode) === 'outward'">
+          <StudioSlider label="Width" :min="0.02" :max="1" :step="0.01" :default="CURVE_DEFAULTS.width"
+            :model-value="layer.curve?.width ?? CURVE_DEFAULTS.width"
+            :bound="boundColumnFor('layer.curve.width')"
+            @update:model-value="(v: number) => onCurve('layer.curve.width', v)"
+            @promote="promote({ key: 'layer.curve.width', label: 'Width', kind: 'slider', min: 0.02, max: 1, step: 0.01 }, layer.curve?.width ?? CURVE_DEFAULTS.width)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.curve.width', label: 'Width', kind: 'slider', min: 0.02, max: 1, step: 0.01 })" />
+        </template>
+      </StudioSection>
+
+      <!-- Flow (domain warp — distorts every layout; the heart of the liquid look) -->
+      <StudioSection v-show="onDesign" title="Flow" badge="all layouts" :open="isLiquid || isMesh">
+        <p class="mb-2 text-[11px] leading-snug text-white/40">Warps the gradient into liquid swirls. At 0 intensity the gradient is undistorted.</p>
+        <StudioSlider label="Flow angle" :min="0" :max="360" :step="1"
+          :model-value="config.flow!.angle"
+          :bound="boundColumnFor('flow.angle')"
+          @update:model-value="(v: number) => { config.flow!.angle = v; onEdit('flow.angle', v) }"
+          @promote="promote({ key: 'flow.angle', label: 'Flow angle', kind: 'slider', min: 0, max: 360, step: 1 }, config.flow!.angle)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.angle', label: 'Flow angle', kind: 'slider', min: 0, max: 360, step: 1 })" />
+        <StudioSlider label="Noise scale" :min="0.5" :max="8" :step="0.1"
+          :model-value="config.flow!.noiseScale"
+          :bound="boundColumnFor('flow.noiseScale')"
+          @update:model-value="(v: number) => { config.flow!.noiseScale = v; onEdit('flow.noiseScale', v) }"
+          @promote="promote({ key: 'flow.noiseScale', label: 'Noise scale', kind: 'slider', min: 0.5, max: 8, step: 0.1 }, config.flow!.noiseScale)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.noiseScale', label: 'Noise scale', kind: 'slider', min: 0.5, max: 8, step: 0.1 })" />
+        <StudioSlider label="Noise intensity" :min="0" :max="100" :step="1"
+          :model-value="config.flow!.intensity"
+          :bound="boundColumnFor('flow.intensity')"
+          @update:model-value="(v: number) => { config.flow!.intensity = v; onEdit('flow.intensity', v) }"
+          @promote="promote({ key: 'flow.intensity', label: 'Noise intensity', kind: 'slider', min: 0, max: 100, step: 1 }, config.flow!.intensity)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.intensity', label: 'Noise intensity', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <StudioSlider label="Curve distortion" :min="0" :max="100" :step="1"
+          :model-value="config.flow!.distortion"
+          :bound="boundColumnFor('flow.distortion')"
+          @update:model-value="(v: number) => { config.flow!.distortion = v; onEdit('flow.distortion', v) }"
+          @promote="promote({ key: 'flow.distortion', label: 'Curve distortion', kind: 'slider', min: 0, max: 100, step: 1 }, config.flow!.distortion)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.distortion', label: 'Curve distortion', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <StudioSlider label="Detail" :min="1" :max="6" :step="1"
+          :model-value="config.flow!.detail"
+          :bound="boundColumnFor('flow.detail')"
+          @update:model-value="(v: number) => { config.flow!.detail = v; onEdit('flow.detail', v) }"
+          @promote="promote({ key: 'flow.detail', label: 'Detail', kind: 'slider', min: 1, max: 6, step: 1 }, config.flow!.detail)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.detail', label: 'Detail', kind: 'slider', min: 1, max: 6, step: 1 })" />
+        <StudioSlider label="Swirl" :min="0" :max="100" :step="1"
+          :model-value="flowSwirl"
+          :bound="boundColumnFor('flow.swirl')"
+          @update:model-value="(v: number) => { flowSwirl = v; onEdit('flow.swirl', v) }"
+          @promote="promote({ key: 'flow.swirl', label: 'Swirl', kind: 'slider', min: 0, max: 100, step: 1 }, flowSwirl)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.swirl', label: 'Swirl', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <StudioSlider label="Flow speed" :min="0" :max="100" :step="1"
+          :model-value="flowSpeed"
+          :bound="boundColumnFor('flow.speed')"
+          @update:model-value="(v: number) => { flowSpeed = v; onEdit('flow.speed', v) }"
+          @promote="promote({ key: 'flow.speed', label: 'Flow speed', kind: 'slider', min: 0, max: 100, step: 1 }, flowSpeed)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.speed', label: 'Flow speed', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <p class="mt-1 text-[10px] leading-snug text-white/30">Living drift — the warp flows over the loop. Export as video to capture the motion.</p>
+      </StudioSection>
+
+      <!-- Depth & Light (liquid fold shading only) -->
+      <StudioSection v-show="onDesign" v-if="isLiquid" title="Depth & light" badge="liquid">
+        <label class="mb-1 block text-xs text-white/60">Presets</label>
+        <div class="mb-3 grid grid-cols-3 gap-1">
+          <button v-for="p in LIQUID_PRESETS" :key="p" class="rounded bg-white/[0.04] px-1 py-1 text-[11px] capitalize text-white/60 transition hover:bg-white/10 hover:text-white"
+                  @click="applyLiquidPreset(p)">{{ p }}</button>
+        </div>
+        <StudioSlider label="Depth" :min="0" :max="100" :step="1"
+          :model-value="config.flow!.depth"
+          :bound="boundColumnFor('flow.depth')"
+          @update:model-value="(v: number) => { config.flow!.depth = v; onEdit('flow.depth', v) }"
+          @promote="promote({ key: 'flow.depth', label: 'Depth', kind: 'slider', min: 0, max: 100, step: 1 }, config.flow!.depth)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.depth', label: 'Depth', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <!-- Highlights / Shadows / Gloss / Ripple are applied only under u_layout[0] (see
+             baseLiquid): they light the BASE liquid layer's emboss, not per-layer. Shown
+             inert when a non-base layer is liquid but layer 0 isn't. -->
+        <template v-if="baseLiquid">
+          <StudioSlider label="Highlights" :min="0" :max="100" :step="1"
+            :model-value="config.flow!.highlights"
+            :bound="boundColumnFor('flow.highlights')"
+            @update:model-value="(v: number) => { config.flow!.highlights = v; onEdit('flow.highlights', v) }"
+            @promote="promote({ key: 'flow.highlights', label: 'Highlights', kind: 'slider', min: 0, max: 100, step: 1 }, config.flow!.highlights)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.highlights', label: 'Highlights', kind: 'slider', min: 0, max: 100, step: 1 })" />
+          <StudioSlider label="Shadows" :min="0" :max="100" :step="1"
+            :model-value="config.flow!.shadows"
+            :bound="boundColumnFor('flow.shadows')"
+            @update:model-value="(v: number) => { config.flow!.shadows = v; onEdit('flow.shadows', v) }"
+            @promote="promote({ key: 'flow.shadows', label: 'Shadows', kind: 'slider', min: 0, max: 100, step: 1 }, config.flow!.shadows)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.shadows', label: 'Shadows', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        </template>
+        <StudioSlider label="Fold scale" :min="0" :max="100" :step="1"
+          :model-value="config.flow!.foldScale"
+          :bound="boundColumnFor('flow.foldScale')"
+          @update:model-value="(v: number) => { config.flow!.foldScale = v; onEdit('flow.foldScale', v) }"
+          @promote="promote({ key: 'flow.foldScale', label: 'Fold scale', kind: 'slider', min: 0, max: 100, step: 1 }, config.flow!.foldScale)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.foldScale', label: 'Fold scale', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <template v-if="baseLiquid">
+          <StudioSlider label="Gloss" :min="0" :max="100" :step="1"
+            :model-value="flowGloss"
+            :bound="boundColumnFor('flow.gloss')"
+            @update:model-value="(v: number) => { flowGloss = v; onEdit('flow.gloss', v) }"
+            @promote="promote({ key: 'flow.gloss', label: 'Gloss', kind: 'slider', min: 0, max: 100, step: 1 }, flowGloss)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.gloss', label: 'Gloss', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        </template>
+      </StudioSection>
+
+      <!-- Liquid surface (turns the smoky warp into flowing fluid) -->
+      <StudioSection v-show="onDesign" v-if="isLiquid" title="Liquid surface" badge="liquid" :open="true">
+        <p class="mb-2 text-[11px] leading-snug text-white/40">Push the smoky warp toward real fluid — marbled veins, a wet rippling skin, glassy refraction, and viscosity.</p>
+        <StudioSlider label="Veins" :min="0" :max="100" :step="1"
+          :model-value="flowVeins"
+          :bound="boundColumnFor('flow.veins')"
+          @update:model-value="(v: number) => { flowVeins = v; onEdit('flow.veins', v) }"
+          @promote="promote({ key: 'flow.veins', label: 'Veins', kind: 'slider', min: 0, max: 100, step: 1 }, flowVeins)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.veins', label: 'Veins', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <StudioSlider label="Vein scale" :min="0" :max="100" :step="1"
+          :model-value="flowVeinScale"
+          :bound="boundColumnFor('flow.veinScale')"
+          @update:model-value="(v: number) => { flowVeinScale = v; onEdit('flow.veinScale', v) }"
+          @promote="promote({ key: 'flow.veinScale', label: 'Vein scale', kind: 'slider', min: 0, max: 100, step: 1 }, flowVeinScale)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.veinScale', label: 'Vein scale', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <template v-if="baseLiquid">
+          <StudioSlider label="Ripple" :min="0" :max="100" :step="1"
+            :model-value="flowRipple"
+            :bound="boundColumnFor('flow.ripple')"
+            @update:model-value="(v: number) => { flowRipple = v; onEdit('flow.ripple', v) }"
+            @promote="promote({ key: 'flow.ripple', label: 'Ripple', kind: 'slider', min: 0, max: 100, step: 1 }, flowRipple)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.ripple', label: 'Ripple', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        </template>
+        <StudioSlider label="Refraction" :min="0" :max="100" :step="1"
+          :model-value="flowRefract"
+          :bound="boundColumnFor('flow.refract')"
+          @update:model-value="(v: number) => { flowRefract = v; onEdit('flow.refract', v) }"
+          @promote="promote({ key: 'flow.refract', label: 'Refraction', kind: 'slider', min: 0, max: 100, step: 1 }, flowRefract)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.refract', label: 'Refraction', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <StudioSlider label="Viscosity" :min="0" :max="100" :step="1"
+          :model-value="flowViscosity"
+          :bound="boundColumnFor('flow.viscosity')"
+          @update:model-value="(v: number) => { flowViscosity = v; onEdit('flow.viscosity', v) }"
+          @promote="promote({ key: 'flow.viscosity', label: 'Viscosity', kind: 'slider', min: 0, max: 100, step: 1 }, flowViscosity)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'flow.viscosity', label: 'Viscosity', kind: 'slider', min: 0, max: 100, step: 1 })" />
+      </StudioSection>
+
+      <!-- Mesh (soft point-mesh gradient) -->
+      <StudioSection v-show="onDesign" v-if="isMesh" title="Mesh" badge="layer 1" :open="true">
+        <p class="mb-2 text-[11px] leading-snug text-white/40">Drag the dots on the preview to move points. Colours come from the palette below — scatter re-samples them.</p>
+        <div class="mb-2 space-y-1">
+          <div v-for="(pt, i) in mesh.points" :key="i" class="flex items-center gap-1.5">
+            <BindableRow :control-key="`layer.mesh.points.${i}.color`" :label="`Colour ${i + 1}`" kind="color" :bound="boundColumnFor(`layer.mesh.points.${i}.color`)" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+              <StudioColor v-model="pt.color" @update:model-value="(v: string) => onEdit(`layer.mesh.points.${i}.color`, v)" />
+            </BindableRow>
+            <span class="min-w-0 flex-1 truncate text-[11px] text-white/40">Point {{ i + 1 }} · {{ Math.round(pt.x * 100) }},{{ Math.round(pt.y * 100) }}</span>
+            <button v-if="mesh.points.length > 2" class="shrink-0 text-white/30 hover:text-white/70" @click="removeMeshPoint(i)"><Trash2 class="h-3 w-3" /></button>
+          </div>
+          <div class="mt-1 flex gap-1.5">
+            <button v-if="mesh.points.length < MESH_MAX_POINTS" class="flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="addMeshPoint"><Plus class="h-3 w-3" /> Add point</button>
+            <button class="flex items-center gap-1 rounded bg-white/[0.06] px-2 py-1 text-[11px] text-white/60 hover:text-white" @click="scatterMesh"><Dices class="h-3 w-3" /> Scatter</button>
+          </div>
+        </div>
+        <StudioSlider label="Softness" :min="10" :max="100" :step="1"
+          :model-value="mesh.softness"
+          :bound="boundColumnFor('layer.mesh.softness')"
+          @update:model-value="(v: number) => { mesh.softness = v; onEdit('layer.mesh.softness', v) }"
+          @promote="promote({ key: 'layer.mesh.softness', label: 'Softness', kind: 'slider', min: 10, max: 100, step: 1 }, mesh.softness)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.mesh.softness', label: 'Softness', kind: 'slider', min: 10, max: 100, step: 1 })" />
+        <StudioSlider label="Contrast" :min="0" :max="100" :step="1"
+          :model-value="mesh.contrast"
+          :bound="boundColumnFor('layer.mesh.contrast')"
+          @update:model-value="(v: number) => { mesh.contrast = v; onEdit('layer.mesh.contrast', v) }"
+          @promote="promote({ key: 'layer.mesh.contrast', label: 'Contrast', kind: 'slider', min: 0, max: 100, step: 1 }, mesh.contrast)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.mesh.contrast', label: 'Contrast', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <StudioSlider label="Blur" :min="0" :max="100" :step="1"
+          :model-value="meshBlur"
+          :bound="boundColumnFor('layer.mesh.blur')"
+          @update:model-value="(v: number) => { meshBlur = v; onEdit('layer.mesh.blur', v) }"
+          @promote="promote({ key: 'layer.mesh.blur', label: 'Blur', kind: 'slider', min: 0, max: 100, step: 1 }, meshBlur)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.mesh.blur', label: 'Blur', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <StudioSlider label="Drift" :min="0" :max="100" :step="1"
+          :model-value="mesh.drift"
+          :bound="boundColumnFor('layer.mesh.drift')"
+          @update:model-value="(v: number) => { mesh.drift = v; onEdit('layer.mesh.drift', v) }"
+          @promote="promote({ key: 'layer.mesh.drift', label: 'Drift', kind: 'slider', min: 0, max: 100, step: 1 }, mesh.drift)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.mesh.drift', label: 'Drift', kind: 'slider', min: 0, max: 100, step: 1 })" />
+      </StudioSection>
+
+      <!-- Relief. Only shades the band/ring HEIGHT field (linear/radial/orbit/stack);
+           liquid uses flow.depth and mesh has no relief, so this whole section is
+           hidden for those layouts. Grain moved to the shared post stack's own Grain
+           section (Task 8) — see the schema-driven post panel further down. -->
+      <StudioSection v-show="onDesign && baseBanded" title="Relief" :open="false">
+        <StudioSlider label="Relief" :min="0" :max="1" :step="0.01"
+          :model-value="config.relief.relief"
+          :bound="boundColumnFor('relief.relief')"
+          @update:model-value="(v: number) => { config.relief.relief = v; onEdit('relief.relief', v) }"
+          @promote="promote({ key: 'relief.relief', label: 'Relief', kind: 'slider', min: 0, max: 1, step: 0.01 }, config.relief.relief)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'relief.relief', label: 'Relief', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+        <StudioSlider label="Light angle" :min="0" :max="360" :step="1"
+          :model-value="lightAz"
+          :bound="boundColumnFor('relief.light.azimuth')"
+          @update:model-value="(v: number) => { lightAz = v; onEdit('relief.light.azimuth', v) }"
+          @promote="promote({ key: 'relief.light.azimuth', label: 'Light angle', kind: 'slider', min: 0, max: 360, step: 1 }, lightAz)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'relief.light.azimuth', label: 'Light angle', kind: 'slider', min: 0, max: 360, step: 1 })" />
+        <StudioSlider label="Light height" :min="0" :max="90" :step="1"
+          :model-value="lightEl"
+          :bound="boundColumnFor('relief.light.elevation')"
+          @update:model-value="(v: number) => { lightEl = v; onEdit('relief.light.elevation', v) }"
+          @promote="promote({ key: 'relief.light.elevation', label: 'Light height', kind: 'slider', min: 0, max: 90, step: 1 }, lightEl)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'relief.light.elevation', label: 'Light height', kind: 'slider', min: 0, max: 90, step: 1 })" />
+      </StudioSection>
+
+      <!-- Focus / soft-focus DoF -->
+      <StudioSection v-show="onDesign" v-if="config.focus" title="Focus" badge="both layers" :open="false">
+        <StudioSlider label="Blur" :min="0" :max="100" :step="1"
+          :model-value="config.focus.blur"
+          :bound="boundColumnFor('focus.blur')"
+          @update:model-value="(v: number) => { config.focus.blur = v; onEdit('focus.blur', v) }"
+          @promote="promote({ key: 'focus.blur', label: 'Blur', kind: 'slider', min: 0, max: 100, step: 1 }, config.focus.blur)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'focus.blur', label: 'Blur', kind: 'slider', min: 0, max: 100, step: 1 })" />
+        <BindableRow control-key="focus.shape" label="Focus region" kind="select" :options="['off', 'radial', 'linear']" :bound="boundColumnFor('focus.shape')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 block text-xs text-white/60">Focus region</label>
+          <select v-model="config.focus.shape" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs capitalize" @change="onEdit('focus.shape', config.focus.shape)">
+            <option value="off">Off — blur everything</option>
+            <option value="radial">Radial — sharp spot</option>
+            <option value="linear">Linear — tilt-shift band</option>
+          </select>
+        </BindableRow>
+        <template v-if="config.focus.shape !== 'off'">
+          <StudioSlider label="Focus size" :min="0" :max="1" :step="0.01"
+            :model-value="config.focus.radius"
+            :bound="boundColumnFor('focus.radius')"
+            @update:model-value="(v: number) => { config.focus.radius = v; onEdit('focus.radius', v) }"
+            @promote="promote({ key: 'focus.radius', label: 'Focus size', kind: 'slider', min: 0, max: 1, step: 0.01 }, config.focus.radius)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'focus.radius', label: 'Focus size', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+          <StudioSlider label="Focus falloff" :min="0" :max="100" :step="1"
+            :model-value="config.focus.softness"
+            :bound="boundColumnFor('focus.softness')"
+            @update:model-value="(v: number) => { config.focus.softness = v; onEdit('focus.softness', v) }"
+            @promote="promote({ key: 'focus.softness', label: 'Focus falloff', kind: 'slider', min: 0, max: 100, step: 1 }, config.focus.softness)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'focus.softness', label: 'Focus falloff', kind: 'slider', min: 0, max: 100, step: 1 })" />
+          <StudioSlider label="Focus X" :min="-0.5" :max="0.5" :step="0.01"
+            :model-value="config.focus.x"
+            :bound="boundColumnFor('focus.x')"
+            @update:model-value="(v: number) => { config.focus.x = v; onEdit('focus.x', v) }"
+            @promote="promote({ key: 'focus.x', label: 'Focus X', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 }, config.focus.x)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'focus.x', label: 'Focus X', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 })" />
+          <StudioSlider label="Focus Y" :min="-0.5" :max="0.5" :step="0.01"
+            :model-value="config.focus.y"
+            :bound="boundColumnFor('focus.y')"
+            @update:model-value="(v: number) => { config.focus.y = v; onEdit('focus.y', v) }"
+            @promote="promote({ key: 'focus.y', label: 'Focus Y', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 }, config.focus.y)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'focus.y', label: 'Focus Y', kind: 'slider', min: -0.5, max: 0.5, step: 0.01 })" />
+          <template v-if="config.focus.shape === 'linear'">
+            <StudioSlider label="Band angle" :min="0" :max="360" :step="1"
+              :model-value="config.focus.angle"
+              :bound="boundColumnFor('focus.angle')"
+              @update:model-value="(v: number) => { config.focus.angle = v; onEdit('focus.angle', v) }"
+              @promote="promote({ key: 'focus.angle', label: 'Band angle', kind: 'slider', min: 0, max: 360, step: 1 }, config.focus.angle)"
+              @menu="(e: MouseEvent) => openVarMenu(e, { key: 'focus.angle', label: 'Band angle', kind: 'slider', min: 0, max: 360, step: 1 })" />
+          </template>
+        </template>
+      </StudioSection>
+
+      <!-- Layer (blend/opacity for the active non-base layer; add/remove/reorder/select
+           now live in the aside StudioLayerStack) -->
+      <StudioSection v-show="onDesign" title="Layer" :open="false">
+        <template v-if="activeLayer > 0">
+          <BindableRow control-key="layer.blend" label="Blend" kind="select" :options="[...BLEND_MODES]" :bound="boundColumnFor('layer.blend')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 block text-xs text-white/60">Blend</label>
+            <select v-model="layer.blend" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs capitalize" @change="onEdit('layer.blend', layer.blend)">
+              <option v-for="b in BLEND_MODES" :key="b" :value="b">{{ b }}</option>
+            </select>
+          </BindableRow>
+          <StudioSlider label="Opacity" :min="0" :max="1" :step="0.01"
+            :model-value="layer.opacity"
+            :bound="boundColumnFor('layer.opacity')"
+            @update:model-value="(v: number) => { layer.opacity = v; onEdit('layer.opacity', v) }"
+            @promote="promote({ key: 'layer.opacity', label: 'Opacity', kind: 'slider', min: 0, max: 1, step: 0.01 }, layer.opacity)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'layer.opacity', label: 'Opacity', kind: 'slider', min: 0, max: 1, step: 0.01 })" />
+        </template>
+      </StudioSection>
+
+      <!-- Shape -->
+      <StudioSection v-show="onDesign" v-if="isBanded" title="Shape" :badge="layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`">
+        <div v-if="!isStack" class="mb-2 grid grid-cols-4 gap-1">
+          <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                  :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                  @click="setShape(s)">{{ s }}</button>
+        </div>
+        <StudioSlider :label="isStack ? 'Ring count' : 'Count'" :min="2" :max="isStack ? 40 : 64" :step="1" :bindable="false"
+          :model-value="layer.shape.count"
+          @update:model-value="(v: number) => { layer.shape.count = v }" />
+        <template v-if="isStack">
+          <StudioSlider label="Rotation / ring" :min="0" :max="45" :step="1" :default="8" :bindable="false"
+            :model-value="layer.shape.rotStep ?? 8"
+            @update:model-value="(v: number) => { layer.shape.rotStep = v }" />
+          <StudioSlider label="Pivot" :min="0" :max="0.6" :step="0.01" :default="0.1" :bindable="false"
+            :model-value="layer.shape.pivot ?? 0.1"
+            @update:model-value="(v: number) => { layer.shape.pivot = v }" />
+          <StudioSlider label="Disc size" :min="1" :max="2.2" :step="0.02" :default="1" :bindable="false"
+            :model-value="layer.shape.ringScale ?? 1"
+            @update:model-value="(v: number) => { layer.shape.ringScale = v }" />
+          <label class="mb-1 block text-xs text-white/60">Ring shape</label>
+          <div class="grid grid-cols-3 gap-1">
+            <button v-for="rs in RING_SHAPES" :key="rs" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                    :class="(layer.shape.ringShape ?? 'circle') === rs ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                    @click="layer.shape.ringShape = rs">{{ rs }}</button>
+          </div>
+        </template>
+        <template v-if="!isStack">
+        <template v-if="layer.shape.type === 'wave' || layer.shape.type === 'bands'">
+          <StudioSlider label="Peaks" :min="1" :max="12" :step="1" :bindable="false"
+            :model-value="layer.shape.peaks"
+            @update:model-value="(v: number) => { layer.shape.peaks = v }" />
+          <StudioSlider label="Wave phase" :min="0" :max="1" :step="0.01" :bindable="false"
+            :model-value="layer.shape.phase"
+            @update:model-value="(v: number) => { layer.shape.phase = v }" />
+        </template>
+        <template v-else-if="layer.shape.type === 'noise'">
+          <StudioSlider label="Detail" :min="1" :max="8" :step="1" :bindable="false"
+            :model-value="layer.shape.detail"
+            @update:model-value="(v: number) => { layer.shape.detail = v }" />
+          <StudioSlider label="Scrub" :min="0" :max="1" :step="0.01" :bindable="false"
+            :model-value="layer.shape.scrub"
+            @update:model-value="(v: number) => { layer.shape.scrub = v }" />
+        </template>
+        <template v-else>
+          <StudioSlider label="Valley position" :min="0" :max="1" :step="0.01" :bindable="false"
+            :model-value="layer.shape.valley"
+            @update:model-value="(v: number) => { layer.shape.valley = v }" />
+        </template>
+        <StudioSlider label="Min depth" :min="0" :max="1" :step="0.01" :bindable="false"
+          :model-value="layer.shape.minDepth"
+          @update:model-value="(v: number) => { layer.shape.minDepth = v }" />
+        <StudioSlider label="Curve exponent" :min="0.2" :max="3" :step="0.05" :bindable="false"
+          :model-value="layer.shape.curveExp"
+          @update:model-value="(v: number) => { layer.shape.curveExp = v }" />
+        <StudioSlider :label="layer.shape.type === 'bands' ? 'Randomness' : 'Jitter'" :min="0" :max="1" :step="0.01" :bindable="false"
+          :model-value="layer.shape.jitter"
+          @update:model-value="(v: number) => { layer.shape.jitter = v }" />
+        <StudioSlider label="Gap" :min="0" :max="0.8" :step="0.01" :bindable="false"
+          :model-value="layer.shape.gap"
+          @update:model-value="(v: number) => { layer.shape.gap = v }" />
+        <StudioSlider label="Rounding" :min="0" :max="1" :step="0.01" :bindable="false"
+          :model-value="layer.shape.rounding"
+          @update:model-value="(v: number) => { layer.shape.rounding = v }" />
+        <template v-if="isRadial">
+          <StudioSlider label="Sweep" :min="20" :max="360" :step="1" :bindable="false"
+            :model-value="layer.shape.sweep"
+            @update:model-value="(v: number) => { layer.shape.sweep = v }" />
+          <StudioSlider label="Scrub / rotate" :min="0" :max="1" :step="0.01" :bindable="false"
+            :model-value="layer.shape.scrub"
+            @update:model-value="(v: number) => { layer.shape.scrub = v }" />
+        </template>
+        <template v-else>
+          <label class="mb-1 block text-xs text-white/60">Direction</label>
+          <div class="mb-2 grid grid-cols-4 gap-1">
+            <button v-for="d in DIRECTIONS" :key="d" class="rounded py-1 text-xs transition"
+                    :class="layer.shape.direction === d ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                    @click="layer.shape.direction = d">{{ { up: '↑', right: '→', down: '↓', left: '←' }[d] }}</button>
+          </div>
+        </template>
+        <label class="mb-1 block text-xs text-white/60">Mirror</label>
+        <div class="grid grid-cols-4 gap-1">
+          <button v-for="mk in MIRROR_KINDS" :key="mk" class="rounded px-1 py-1 text-[11px] capitalize transition"
+                  :class="layer.shape.mirror === mk ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+                  @click="layer.shape.mirror = mk">{{ mk === 'horizontal' ? 'Horiz' : mk === 'vertical' ? 'Vert' : mk }}</button>
+        </div>
         </template>
       </StudioSection>
 
@@ -1524,8 +1641,9 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
         </div>
         <div class="mt-2 grid grid-cols-2 gap-2">
           <div>
-            <label class="mb-1 flex justify-between text-[11px] text-white/60"><span>Duration</span><span class="text-white/40">{{ config.motion.duration }}s</span></label>
-            <input v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" v-studio-reset class="studio-range w-full" />
+            <StudioSlider label="Duration" :min="1" :max="12" :step="0.5" :bindable="false"
+              :model-value="config.motion.duration"
+              @update:model-value="(v: number) => { config.motion.duration = v }" />
           </div>
           <div>
             <label class="mb-1 block text-[11px] text-white/60">FPS</label>
