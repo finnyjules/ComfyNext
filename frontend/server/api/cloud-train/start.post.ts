@@ -160,7 +160,28 @@ export default defineEventHandler(async (event) => {
     // preflight above already requires a bound meter context in hosted mode
     // — never record a bogus/ownerless row.
     if (deployMode() === 'hosted' && event.context.userId) {
-      await recordOwner('cloud-training', training.id, event.context.userId)
+      try {
+        await recordOwner('cloud-training', training.id, event.context.userId)
+      }
+      catch (e) {
+        // The Replicate training is already created and the wallet already
+        // debited (settle above) — a transient Neon/ledger blip here must
+        // NOT turn into a 500 that loses the training id (money spent,
+        // resource orphaned with no way to ever find it again). Log loudly
+        // with everything needed for a manual backfill (INSERT INTO
+        // resource_owners(kind, id, user_id) VALUES ('cloud-training',
+        // trainingId, userId)) and let the handler return the id below —
+        // same "write already happened, fail closed but don't lose the
+        // external side effect" precedent as engineGate.ts's recordOwner
+        // guards. The caller temporarily can't poll (status.get.ts 404s an
+        // unowned id) until the row is backfilled, but they at least have
+        // the id instead of a bare 500.
+        console.error('[cloud-train] OWNER RECORD FAILED after training create+debit — training orphaned', {
+          trainingId: training.id,
+          userId: event.context.userId,
+          error: e,
+        })
+      }
     }
     return {
       id: training.id,

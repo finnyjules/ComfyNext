@@ -199,6 +199,34 @@ describe('POST /api/cloud-train/start — hosted ownership recording', () => {
     expect(result.id).toBe('train_local')
     expect(fakeOwnersDb.query).not.toHaveBeenCalled()
   })
+
+  it('recordOwner throwing (transient Neon/ledger blip) does NOT 500 — the training was already created and the wallet already debited, so the handler still returns the training id instead of losing it', async () => {
+    setHosted()
+    const ledger = makeFakeLedger()
+    __setLedgerForTests(ledger as any)
+    bindMeterContext({ userId: 'u_owner' })
+    vi.stubGlobal('fetch', makeReplicateStartMock('train_db_blip'))
+    fakeOwnersDb.query.mockImplementation(async () => {
+      throw new Error('connection terminated unexpectedly')
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const result = await startHandler(startEvent('u_owner'))
+
+    expect(result.id).toBe('train_db_blip')
+    // The failed write must not be silently swallowed — it's logged loudly
+    // with everything needed for a manual backfill.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('OWNER RECORD FAILED'),
+      expect.objectContaining({ trainingId: 'train_db_blip', userId: 'u_owner' }),
+    )
+    // The debit/settle that already happened before recordOwner must stand —
+    // a recordOwner failure must NOT fall into the outer catch and release
+    // the hold back (that would double-lose: no owner row AND no charge).
+    expect(ledger.settleHold).toHaveBeenCalled()
+    expect(ledger.releaseHold).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
 })
 
 // -------------------------------------------------------------- status.get
