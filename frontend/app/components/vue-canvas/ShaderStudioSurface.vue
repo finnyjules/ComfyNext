@@ -70,6 +70,20 @@ const embedding = ref(false)
 // fine Size values — at 880 a dense ASCII grid mushed out. Export still upscales
 // to the user's chosen resolution separately.
 const PREVIEW_MAX_W = 1600
+// Generative effects (aurora, plasma, mesh_gradient, …) synthesize their output
+// from scratch — they never sample the source image — so they don't need one to
+// render. shaderFx.render still requires *a* base texture argument even though
+// generative shaders ignore its pixels, so a tiny neutral canvas stands in (mirrors
+// ShaderEffectNode's `baseImage.value ?? placeholder` fallback). Output size has
+// no source to derive from either, so it defaults to a square, matching
+// ShaderEffectNode's default resolution (768) at its default 1:1 aspect.
+const GENERATIVE_DIM = 768
+const GENERATIVE_BASE = (() => {
+  const c = document.createElement('canvas')
+  c.width = 8; c.height = 8
+  c.getContext('2d')!.fillRect(0, 0, 8, 8)
+  return c
+})()
 
 // Active effect — selected via the aside StudioLayerStack. The Stylized Effects
 // section (picker/params/blend/opacity) and the agent tuner are both scoped to
@@ -79,6 +93,9 @@ const activeEffect = ref(0)
 const activeEffectCfg = computed<StudioEffect>(() => config.value.effects[activeEffect.value] ?? config.value.effects[0]!)
 const effectDef = computed<EffectDef | null>(
   () => catalog.value?.effects.find(e => e.id === activeEffectCfg.value?.id) ?? null)
+// Generative effects synthesize their own output and don't require a source
+// image — see ShaderEffectNode's `isGenerative`, which this mirrors.
+const isGenerative = computed(() => !!effectDef.value?.generative)
 // The inspector reads the resolved VALUES (a number, a hex string, or a stop
 // list) — not `resolveUniforms`, whose colour/gradient output is already expanded
 // into vec3s and indexed arrays for GL and has no control to bind to.
@@ -208,11 +225,13 @@ async function renderFrame(t01: number) {
   const el = canvas.value
   if (!el) return
   const src = resolved.value
-  if (!src) return
-  const { w, h } = outputDims(src.width, src.height, PREVIEW_MAX_W)
+  if (!src && !isGenerative.value) return
+  const { w, h } = src
+    ? outputDims(src.width, src.height, PREVIEW_MAX_W)
+    : { w: GENERATIVE_DIM, h: GENERATIVE_DIM }
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try {
-    const base = await src.getFrame(t01, w, h)
+    const base = src ? await src.getFrame(t01, w, h) : GENERATIVE_BASE
     // A bake (generateImage/generateVideo) may have started while this frame was
     // suspended at the await above — bail before touching the shared shaderFx
     // canvas so a resumed preview frame can't corrupt the export's toBlob read.
@@ -782,7 +801,7 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
           class="nopan nodrag absolute size-3 -ml-1.5 -mt-1.5 cursor-move rounded-full border-2 border-white bg-black/30"
           :style="{ left: `${config.post.blur.focusX * 100}%`, top: `${config.post.blur.focusY * 100}%` }"
           @pointerdown="onFocusDown" @pointermove="onFocusMove" @pointerup="onFocusUp" />
-        <span v-if="!resolved" class="absolute text-xs text-white/40">Add a source image to begin</span>
+        <span v-if="!resolved && !isGenerative" class="absolute text-xs text-white/40">Add a source image to begin</span>
       </div>
     </template>
 
