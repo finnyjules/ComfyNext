@@ -21,6 +21,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseSidecar } from '~~/server/utils/loraPrompt'
 import { isSafeLoraFilename } from '~~/server/utils/loraSidecars'
+import { guardMutation, releaseRecord } from '~~/server/utils/ownedJsonStore'
 
 async function exists(p: string): Promise<boolean> {
   try { await fs.access(p); return true } catch { return false }
@@ -36,6 +37,14 @@ export default defineEventHandler(async (event) => {
 
   const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
   const base = filename.slice(0, -'.safetensors'.length)
+
+  // Ownership gate (hosted only), composed with the two existing guards below.
+  // Runs FIRST so another user's duplicate — or a curated/unowned LoRA — 404s
+  // before the weights-on-disk / duplicate_of checks can leak a 409. A LoRA the
+  // caller owns passes here and is still subject to those rules (own real-weights
+  // LoRAs stay unreachable; only own duplicated styles delete).
+  const present = (await exists(path.join(lorasDir, filename))) || (await exists(path.join(lorasDir, `${base}.json`)))
+  await guardMutation({ kind: 'lora', dir: lorasDir }, event.context?.userId ?? null, base, present)
 
   if (await exists(path.join(lorasDir, filename))) {
     throw createError({
@@ -59,6 +68,8 @@ export default defineEventHandler(async (event) => {
   }
 
   await fs.unlink(sidecarPath)
+  // Drop the ownership row so the base name can never resurface as an orphan claim.
+  await releaseRecord({ kind: 'lora', dir: lorasDir }, base)
 
   // Covers are optional and named by extension — clear whichever exists.
   for (const ext of ['webp', 'png', 'jpg']) {

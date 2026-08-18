@@ -5,6 +5,7 @@ import {
   type CharacterRecord, type CharacterState,
 } from '~~/server/utils/characterRegistry'
 import { applyStatePatch, type StatePatchBody } from '~~/server/utils/characterStatePatch'
+import { guardMutation, releaseRecord } from '~~/server/utils/ownedJsonStore'
 import type { BodySliderId } from '#shared/characters/types'
 
 export default defineEventHandler(async (event) => {
@@ -26,9 +27,14 @@ export default defineEventHandler(async (event) => {
   catch { throw createError({ statusCode: 404, message: `No character '${slug}'` }) }
   if (!record) throw createError({ statusCode: 404, message: `No character '${slug}'` })
 
+  // Ownership gate (hosted only): the record exists here, so a non-owner (or a
+  // curated/unowned record) is refused with a 404 — no existence disclosure.
+  await guardMutation({ kind: 'character', dir }, event.context?.userId ?? null, slug, true)
+
   if (body.remove === true) {
     // Ref files stay in the input dir — other shots may still point at them.
     await fs.unlink(file)
+    await releaseRecord({ kind: 'character', dir }, slug)
     return { ok: true }
   }
   if (typeof body.name === 'string' && body.name.trim()) record.name = body.name.trim()

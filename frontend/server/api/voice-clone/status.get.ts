@@ -16,7 +16,8 @@ import path from 'node:path'
 import { CLONE_MODEL } from './start.post'
 import { currentMeterContext, releaseRecordedHold, settleModel, settleRecordedHold } from '../../utils/requestMeter'
 import { deployMode } from '../../utils/deployMode'
-import { decideVoiceCloneSettle } from '../../utils/voiceCloneOwners'
+import { decideVoiceCloneSettle, voiceCloneOwner } from '../../utils/voiceCloneOwners'
+import { recordOwner } from '../../utils/resourceOwners'
 
 /** MiniMax voice ids are word-ish; keep only path-safe chars for the filename. */
 function safeId(id: string): string | null {
@@ -123,6 +124,20 @@ export default defineEventHandler(async (event) => {
         }
         await fs.writeFile(jsonPath, JSON.stringify(sidecar, null, 2))
         voiceId = safe
+
+        // DURABLE VOICE OWNERSHIP (Stage 6 Task 5 — this is where it lands, the
+        // seam voiceCloneOwners.ts's doc comment pointed at). The voice's owner
+        // is the user start.post.ts bound to this prediction id, NOT whoever is
+        // polling now — so we read it from the in-memory binding, never the
+        // poller's context. If the binding is gone (process restarted between
+        // start and this poll) the owner is genuinely unknown: record NOTHING
+        // rather than guess, leaving the voice curated/global. recordOwner is a
+        // hosted-only no-op guard away — local mode writes zero registry rows.
+        if (deployMode() === 'hosted') {
+          const owner = voiceCloneOwner(pred.id)
+          if (owner) await recordOwner('voice', safe, owner)
+          else console.warn('[stage6] voice ownership not recorded — binding unknown (restart?)', { predictionId: pred.id, voiceId: safe })
+        }
       } catch (err: any) {
         persistError = err?.message ?? String(err)
       }

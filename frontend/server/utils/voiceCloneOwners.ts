@@ -11,8 +11,13 @@
  * status.get.ts) rather than guessed at: an unowned prediction is treated
  * as "cannot verify who to charge", and the safe failure direction here is
  * under-charging (the job is still delivered), never charging the wrong
- * user. Durable, per-user-scoped ownership storage lands with Stage 5's
- * per-user data model.
+ * user. Durable, per-user-scoped ownership of the resulting VOICE lands in
+ * Stage 6 Task 5: status.get.ts, on the succeeded branch, reads this
+ * binding's userId and writes a `resource_owners` row (kind 'voice') keyed
+ * by the voice_id — so the voice gallery scopes per-user across restarts.
+ * When this binding is already lost, the voice is left ownerless (curated)
+ * rather than mis-attributed; this Map's own volatility is exactly why the
+ * durable row is keyed by the binding at write time, not reconstructed later.
  *
  * Deliberately NOT addressed here: result-DISCLOSURE authorization. Any
  * caller who knows a prediction id can still read its status/output via

@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
+import { claimNew } from '~~/server/utils/ownedJsonStore'
 import { emptyState } from '#shared/characters/types'
 
 export default defineEventHandler(async (event) => {
@@ -22,5 +23,7 @@ export default defineEventHandler(async (event) => {
     loraName: null, trigger: null, bodyShape: null, notes: '', createdAt: now, updatedAt: now,
   }
   await fs.writeFile(file, JSON.stringify(record, null, 2))
+  // Claim ownership (hosted only) so this character lists/mutates for its creator.
+  await claimNew({ kind: 'character', dir }, event.context?.userId ?? null, slug)
   return record
 })

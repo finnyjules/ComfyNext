@@ -8,9 +8,10 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseSidecar } from '~~/server/utils/loraPrompt'
 import { parseCharacterRecord, slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
+import { claimNew } from '~~/server/utils/ownedJsonStore'
 import { emptyState } from '#shared/characters/types'
 
-export default defineEventHandler(async () => {
+export default defineEventHandler(async (event) => {
   const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
   const charactersDir = path.resolve(process.cwd(), '..', 'models', 'characters')
 
@@ -78,6 +79,8 @@ export default defineEventHandler(async () => {
       updatedAt: now,
     }
     await fs.writeFile(path.join(charactersDir, `${bySlug}.json`), JSON.stringify(record, null, 2))
+    // Claim ownership (hosted only) for the freshly-materialized character.
+    await claimNew({ kind: 'character', dir: charactersDir }, event.context?.userId ?? null, bySlug)
     existingRecords.push(record) // guard duplicate candidates within this same run
     created.push(bySlug)
   }

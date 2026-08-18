@@ -15,6 +15,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { assertRateLimit } from '../lib/rateLimit'
 import { preflightMeter } from '../utils/requestMeter'
+import { guardMutation } from '../utils/ownedJsonStore'
 
 function safeBase(name: string): string | null {
   const base = (name || '').replace(/\.safetensors$/i, '')
@@ -43,6 +44,11 @@ export default defineEventHandler(async (event) => {
   if (!modelRef) {
     throw createError({ statusCode: 400, message: 'This LoRA has no trained Replicate model to run.' })
   }
+
+  // Ownership gate (hosted only) BEFORE the paid Replicate run: writing a cover
+  // is a mutation of the LoRA, so a non-owner — or a curated/unowned LoRA — is
+  // refused with a 404 and never billed a generation.
+  await guardMutation({ kind: 'lora', dir: lorasDir }, event.context?.userId ?? null, base, true)
 
   const profile = sidecarAesthetic(meta)
   const trigger = String(meta.trigger ?? '').trim()

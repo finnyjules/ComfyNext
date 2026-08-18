@@ -18,6 +18,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseSidecar, sidecarAesthetic } from '~~/server/utils/loraPrompt'
 import { isSafeLoraFilename } from '~~/server/utils/loraSidecars'
+import { guardMutation } from '~~/server/utils/ownedJsonStore'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
@@ -50,6 +51,10 @@ export default defineEventHandler(async (event) => {
   if (!present.some(Boolean)) {
     throw createError({ statusCode: 404, statusMessage: 'LoRA not found' })
   }
+
+  // Ownership gate (hosted only): the LoRA exists here, so a non-owner — or a
+  // curated/unowned LoRA (e.g. the seeded library) — is refused with a 404.
+  await guardMutation({ kind: 'lora', dir: lorasDir }, event.context?.userId ?? null, base, true)
 
   // Merge onto the existing sidecar (or start fresh if there isn't one).
   let meta: Record<string, any> = {}

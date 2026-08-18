@@ -3,8 +3,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { healRefImages, parseCharacterRecord } from '~~/server/utils/characterRegistry'
+import { listOwned } from '~~/server/utils/ownedJsonStore'
 
-export default defineEventHandler(async () => {
+export default defineEventHandler(async (event) => {
   const dir = path.resolve(process.cwd(), '..', 'models', 'characters')
   const inputDir = path.resolve(process.cwd(), '..', 'input')
   let files: string[]
@@ -36,6 +37,13 @@ export default defineEventHandler(async () => {
     }
     characters.push(record)
   }
-  characters.sort((a, b) => a.name.localeCompare(b.name))
-  return { characters }
+  // Hosted → caller-owned + curated (unowned) records only; local → everything.
+  // Ownership is keyed by slug (the filename stem).
+  const visible = await listOwned(
+    { kind: 'character', dir },
+    event.context?.userId ?? null,
+    async () => characters.map(r => ({ id: r.slug, record: r })),
+  )
+  visible.sort((a, b) => a.name.localeCompare(b.name))
+  return { characters: visible }
 })

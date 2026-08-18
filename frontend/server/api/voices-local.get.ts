@@ -9,8 +9,9 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { listOwned } from '../utils/ownedJsonStore'
 
-export default defineEventHandler(async () => {
+export default defineEventHandler(async (event) => {
   const voicesDir = path.resolve(process.cwd(), '..', 'models', 'voices')
 
   let files: string[] = []
@@ -54,6 +55,13 @@ export default defineEventHandler(async () => {
     })
   }
 
-  out.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
-  return { voices: out }
+  // Hosted → caller-owned + curated (unowned) only; local → everything.
+  // Ownership is keyed by voice_id (the sidecar filename stem).
+  const voices = await listOwned(
+    { kind: 'voice', dir: voicesDir },
+    event.context?.userId ?? null,
+    async () => out.map(o => ({ id: o.id, record: o })),
+  )
+  voices.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+  return { voices }
 })

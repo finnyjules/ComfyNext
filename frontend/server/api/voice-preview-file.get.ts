@@ -8,6 +8,8 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { isHosted } from '../utils/deployMode'
+import { ownerOf } from '../utils/resourceOwners'
 
 /** Reject anything with path-traversal characters. */
 function safeId(id: string): string | null {
@@ -17,6 +19,15 @@ function safeId(id: string): string | null {
 export default defineEventHandler(async (event) => {
   const id = safeId(String(getQuery(event).id ?? ''))
   if (!id) throw createError({ statusCode: 400, message: 'Invalid voice id' })
+
+  // Hosted read-guard: a preview clip is readable iff the voice is curated/unowned
+  // or owned by the caller — another user's clip 404s (no existence disclosure).
+  if (isHosted()) {
+    const owner = await ownerOf('voice', id)
+    if (!(owner === null || owner === (event.context?.userId ?? null))) {
+      throw createError({ statusCode: 404, message: 'No preview clip' })
+    }
+  }
 
   const voicesDir = path.resolve(process.cwd(), '..', 'models', 'voices')
   try {

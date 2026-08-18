@@ -19,6 +19,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseSidecar } from '~~/server/utils/loraPrompt'
 import { isSafeLoraFilename, loraBaseName, buildDuplicateSidecar } from '~~/server/utils/loraSidecars'
+import { claimNew } from '~~/server/utils/ownedJsonStore'
 
 async function exists(p: string): Promise<boolean> {
   try { await fs.access(p); return true } catch { return false }
@@ -67,6 +68,8 @@ export default defineEventHandler(async (event) => {
 
   const dup = buildDuplicateSidecar(source, newName)
   await fs.writeFile(path.join(lorasDir, `${newBase}.json`), JSON.stringify(dup, null, 2), 'utf8')
+  // The duplicate is a brand-new record — claim it (hosted only) for its creator.
+  await claimNew({ kind: 'lora', dir: lorasDir }, event.context?.userId ?? null, newBase)
 
   // The gallery keys entries by "<base>.safetensors" whether or not weights are
   // on disk (see GET), so hand back that identity.

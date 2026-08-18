@@ -11,8 +11,10 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { parseSidecar, sidecarAesthetic } from '../utils/loraPrompt'
+import { listOwned } from '../utils/ownedJsonStore'
 
-export default defineEventHandler(async () => {
+export default defineEventHandler(async (event) => {
   const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
 
   let files: string[] = []
@@ -101,6 +103,14 @@ export default defineEventHandler(async () => {
     })
   }
 
-  out.sort((a, b) => String(b.trainedOn || '').localeCompare(String(a.trainedOn || '')))
-  return { loras: out }
+  // Hosted → caller-owned + curated (unowned, incl. the operator-seeded library
+  // whose real weights sit on disk with no owner row) only; local → everything.
+  // Ownership is keyed by the LoRA base name (the filename stem).
+  const loras = await listOwned(
+    { kind: 'lora', dir: lorasDir },
+    event.context?.userId ?? null,
+    async () => out.map(o => ({ id: o.filename.slice(0, -'.safetensors'.length), record: o })),
+  )
+  loras.sort((a, b) => String(b.trainedOn || '').localeCompare(String(a.trainedOn || '')))
+  return { loras }
 })

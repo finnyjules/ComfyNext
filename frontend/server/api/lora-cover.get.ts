@@ -8,6 +8,8 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { isHosted } from '../utils/deployMode'
+import { ownerOf } from '../utils/resourceOwners'
 
 /** Strip the extension and reject anything with path-traversal characters. */
 function safeBase(name: string): string | null {
@@ -18,6 +20,15 @@ function safeBase(name: string): string | null {
 export default defineEventHandler(async (event) => {
   const base = safeBase(String(getQuery(event).name ?? ''))
   if (!base) throw createError({ statusCode: 400, message: 'Invalid LoRA name' })
+
+  // Hosted read-guard: a cover is readable iff the LoRA is curated/unowned or
+  // owned by the caller — another user's cover 404s (no existence disclosure).
+  if (isHosted()) {
+    const owner = await ownerOf('lora', base)
+    if (!(owner === null || owner === (event.context?.userId ?? null))) {
+      throw createError({ statusCode: 404, message: 'No cover yet' })
+    }
+  }
 
   const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
   for (const ext of ['webp', 'png', 'jpg'] as const) {
