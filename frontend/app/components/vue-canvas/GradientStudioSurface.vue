@@ -1409,7 +1409,12 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
         <div class="mb-3 border-t border-white/[0.06] pt-2">
           <PalettePicker mode="stops" :stop-count="layer.color.stops.length" :seed="layer.color.stops[0]?.color ?? '#4f8ad9'" @apply-stops="applyPaletteStops" />
         </div>
-        <template v-if="!isMesh">
+        <!-- Gradient direction (u_gradHoriz) and Mapping (u_mapping) are read ONLY by
+             the banded layouts (linear/radial/orbit/stack) in the shader; on the simple
+             primitives (ramp/radialRamp/conic), curve, and liquid they're no-ops, so gate
+             them to isBanded like the Shape section. Posterize steps + Hue drift below
+             stay !isMesh — the simple-primitives branch applies both. -->
+        <template v-if="isBanded">
           <label class="mb-1 block text-xs text-white/60">Gradient direction</label>
           <div class="mb-2 grid grid-cols-2 gap-1">
             <button v-for="gd in GRADIENT_DIRS" :key="gd" class="rounded px-1 py-1 text-[11px] capitalize transition"
@@ -1422,6 +1427,8 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
                     :class="layer.color.mapping === mp ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                     @click="layer.color.mapping = mp">{{ mp }}</button>
           </div>
+        </template>
+        <template v-if="!isMesh">
           <BindableRow control-key="layer.color.steps" label="Posterize steps" kind="slider" :min="0" :max="24" :step="1" :bound="boundColumnFor('layer.color.steps')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Steps</span><span class="text-white/40">{{ layer.color.steps || 'off' }}</span></label>
             <input v-model.number="layer.color.steps" type="range" min="0" max="24" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.steps', layer.color.steps)" />
