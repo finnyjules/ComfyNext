@@ -45,8 +45,35 @@ export const RESTYLE_LORA_CREDITS = 18    // ~$0.09 observed median — 2× mark
 // per-user filename_prefix on exactly this family — one source of truth for
 // "what writes a deliverable" shared by the pricer and the output-subfolder
 // injection.
+//
+// Stage 6 Task 7b completed the set: Task 7 covered only 5 classes, so every
+// OTHER save node (Image / Video / Audio / SaveWEBM / SaveGLB / SaveSVGNode /
+// the animated + model-merge savers + …) wrote to the SHARED output root and
+// skipped per-user subfoldering. Every member here rewrites its output path
+// through a `filename_prefix` input, which injectOutputSubfolder prepends the
+// caller's `u_<hash>/` segment onto. Save nodes that write via a DIFFERENT
+// field (SaveLoRA's `prefix`, the dataset savers' `folder_name`) or a fixed/
+// uuid name (Preview3D) are on the write-exempt list in
+// engine-file-surface.unit.spec.ts and tracked as a subfolder-injection
+// follow-up, not silently included here. The coverage guard there fails on
+// drift so a new save node cannot bypass this set unnoticed.
 export const OUTPUT_CLASS_TYPES = new Set([
+  // — Task 7 originals —
   'SaveImage', 'PreviewImage', 'SaveVideo', 'VHS_VideoCombine', 'SaveAudio',
+  // — nodes.py —
+  'SaveLatent',
+  // — nodes_image.py / nodes_images.py —
+  'Image', 'SaveSVGNode', 'SaveAnimatedWEBP', 'SaveAnimatedPNG',
+  // — nodes_video.py / nodes_video_effects.py —
+  'SaveWEBM', 'Video', 'SaveVideoFrames',
+  // — nodes_audio.py —
+  'SaveAudioMP3', 'SaveAudioOpus', 'Audio',
+  // — nodes_hunyuan3d.py —
+  'SaveGLB',
+  // — nodes_lora_extract.py —
+  'LoraSave',
+  // — nodes_model_merging.py —
+  'CheckpointSave', 'CLIPSave', 'VAESave', 'ModelSave',
 ])
 
 /**

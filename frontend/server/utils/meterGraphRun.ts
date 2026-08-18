@@ -20,6 +20,7 @@ import { resolveWorkerTarget } from './workerRoute'
 import { getLiveLedger } from './ledgerLive'
 import { annotatedFilepath, collectUploadFlaggedInputs } from './engineGate'
 import { canonicalUploadKey, uploadOwner } from './inputUploads'
+import { GRAPH_FILE_READERS, extractFileRefs, type FileRefSemantics } from './engineFileSurface'
 
 export function isPromptPath(path: string): boolean {
   return path === '/prompt' || path.startsWith('/prompt?')
@@ -81,9 +82,6 @@ function sanitizeExistingPrefix(existing: string): string {
   return base || 'ComfyUI'
 }
 
-/** The remote-routed pair object_info never flags — added by hand. See engineGate.collectUploadFlaggedInputs. */
-const LOAD_IMAGE_OUTPUT_PAIR = 'LoadImageOutput.image'
-
 export interface GraphFileRefCtx {
   /** `ClassType.inputName` pairs whose widget carries a shared-directory filename. */
   uploadFlagged: Set<string>
@@ -93,18 +91,53 @@ export interface GraphFileRefCtx {
   ownsOutput(annotated: string): Promise<boolean>
 }
 
+/** Ownership check for one resolved filename per its input's semantics. */
+async function checkFileOwnership(ct: string, inputName: string, value: string, semantics: FileRefSemantics, ctx: GraphFileRefCtx): Promise<void> {
+  if (semantics === 'output') {
+    if (!(await ctx.ownsOutput(value))) {
+      throw new MeterRefusalError(`graph references an output file you do not own (${ct}.${inputName})`, 403)
+    }
+    return
+  }
+  if (semantics === 'input') {
+    // The engine reads this value literally from the input tree with NO
+    // annotation routing (Timeline joins it onto input_dir as-is), so the
+    // literal value is vetted — an absolute path or a foreign subfolder fails.
+    if (!(await ctx.ownsInput(value))) {
+      throw new MeterRefusalError(`graph references an input file you do not own (${ct}.${inputName})`, 403)
+    }
+    return
+  }
+  // either — route by the trailing ` [output]`/` [input]`/` [temp]` annotation.
+  const { name, type } = annotatedFilepath(value)
+  if (type === 'output') {
+    if (!(await ctx.ownsOutput(value))) {
+      throw new MeterRefusalError(`graph references an output file you do not own (${ct}.${inputName})`, 403)
+    }
+  }
+  else if (!(await ctx.ownsInput(name))) {
+    throw new MeterRefusalError(`graph references an input file you do not own (${ct}.${inputName})`, 403)
+  }
+}
+
 /**
  * Refuse (403) a graph that references any file the caller does not own.
  *
- * For every upload-flagged input (the object_info-derived set PLUS the
- * hardcoded LoadImageOutput.image), the value is a filename the engine will
- * READ from a shared directory. LoadImageOutput.image always reads from the
- * output tree; every other flagged input routes by its ` [output]`/` [input]`/
- * ` [temp]` annotation (annotatedFilepath) — `[output]` → the output-ownership
- * check, everything else → input-ownership. Fail closed: a present flagged
- * value that is not a plain filename string (a wired link, an object, a number)
- * is refused — we cannot vet what we cannot read. Absent/empty values reference
- * no file and are skipped, so zero-file and partial graphs are untouched.
+ * Two sources define which inputs carry a shared-directory filename the engine
+ * will READ: the checked-in GRAPH_FILE_READERS map (Stage 6 Task 7b — plain
+ * strings, dict-valued inputs like Load3D.image, and JSON blobs like
+ * Compositor.motion_params / the type nodes' params / Timeline.edit_state), and
+ * the object_info-derived `uploadFlagged` set (any upload-flagged input the map
+ * doesn't already cover, treated as a plain annotated filename string). Each
+ * referenced name is ownership-checked per its semantics: `output` → the
+ * output-ownership check, `input` → the literal input-ownership check, `either`
+ * → routed by its ` [output]`/` [input]`/` [temp]` annotation.
+ *
+ * Fail closed: a PRESENT value that is not in the shape we can read (a wired
+ * link, a number, a non-object dict, unparseable JSON, an unexpected `rendered`
+ * shape) is refused — we cannot vet what we cannot read. Absent/empty values
+ * reference no file and are skipped, so zero-file and partial graphs are
+ * untouched.
  *
  * Pure over `ctx`: it takes NO ledger/DB action, so the caller can run it
  * BEFORE any credit hold and a refusal costs nothing.
@@ -116,35 +149,31 @@ export async function validateGraphFileRefs(prompt: Record<string, any>, ctx: Gr
     if (typeof ct !== 'string') continue
     const inputs = (node as any)?.inputs
     if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) continue
+
+    // 1) Explicit file-reader specs (the authoritative map).
+    const specs = GRAPH_FILE_READERS[ct] ?? []
+    const covered = new Set<string>()
+    for (const spec of specs) {
+      covered.add(spec.input)
+      const names = extractFileRefs(spec, (inputs as Record<string, unknown>)[spec.input])
+      if (names === null) {
+        throw new MeterRefusalError(`graph references a file through ${ct}.${spec.input} in an unexpected shape`, 403)
+      }
+      for (const name of names) await checkFileOwnership(ct, spec.input, name, spec.semantics, ctx)
+    }
+
+    // 2) Upload-flagged inputs the map does not already cover — a plain
+    // annotated filename string (the Stage-6-Task-7 behaviour, retained as a
+    // catch-all so a catalog-flagged input we didn't enumerate is still vetted).
     for (const [inputName, value] of Object.entries(inputs as Record<string, unknown>)) {
-      const isLoadOutput = ct === 'LoadImageOutput' && inputName === 'image'
-      if (!isLoadOutput && !ctx.uploadFlagged.has(`${ct}.${inputName}`)) continue
-      // Absent/null references no file — leaves zero-file/partial graphs alone.
+      if (covered.has(inputName)) continue
+      if (!ctx.uploadFlagged.has(`${ct}.${inputName}`)) continue
       if (value === undefined || value === null) continue
-      // Fail closed: a flagged widget input must carry a plain filename string.
       if (typeof value !== 'string') {
         throw new MeterRefusalError(`graph references a file through ${ct}.${inputName} in an unexpected shape`, 403)
       }
       if (value === '') continue
-
-      if (isLoadOutput) {
-        // LoadImageOutput reads from the OUTPUT tree by definition, whatever
-        // (or whether) the value is annotated.
-        if (!(await ctx.ownsOutput(value))) {
-          throw new MeterRefusalError(`graph references an output file you do not own (${ct}.${inputName})`, 403)
-        }
-        continue
-      }
-
-      const { name, type } = annotatedFilepath(value)
-      if (type === 'output') {
-        if (!(await ctx.ownsOutput(value))) {
-          throw new MeterRefusalError(`graph references an output file you do not own (${ct}.${inputName})`, 403)
-        }
-      }
-      else if (!(await ctx.ownsInput(name))) {
-        throw new MeterRefusalError(`graph references an input file you do not own (${ct}.${inputName})`, 403)
-      }
+      await checkFileOwnership(ct, inputName, value, 'either', ctx)
     }
   }
 }
@@ -162,8 +191,8 @@ export async function loadUploadFlaggedInputs(fetchCatalog: () => Promise<unknow
   if (flagMapCache && now - flagMapCache.at < FLAG_MAP_TTL_MS) return flagMapCache.set
   const set = collectUploadFlaggedInputs(await fetchCatalog())
   // LoadImageOutput.image is remote-routed, not upload-flagged (nodes.py:1951-
-  // 1959), so the catalog walk never yields it — add the pair by hand.
-  set.add(LOAD_IMAGE_OUTPUT_PAIR)
+  // 1959), so the catalog walk never yields it — but GRAPH_FILE_READERS now
+  // covers it explicitly (semantics: output), so it no longer needs adding here.
   flagMapCache = { at: now, set }
   return set
 }
@@ -179,7 +208,7 @@ export async function loadUploadFlaggedInputs(fetchCatalog: () => Promise<unknow
 export async function runGraphFileValidation(prompt: Record<string, any>, userId: string, target: string): Promise<void> {
   if (!prompt || typeof prompt !== 'object' || Array.isArray(prompt)) return
   const hasCandidate = Object.values(prompt).some((n: any) =>
-    n?.class_type === 'LoadImageOutput'
+    (typeof n?.class_type === 'string' && GRAPH_FILE_READERS[n.class_type])
     || (n?.inputs && typeof n.inputs === 'object' && !Array.isArray(n.inputs)
       && Object.values(n.inputs).some(v => typeof v === 'string' && v !== '')))
   if (!hasCandidate) return

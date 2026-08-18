@@ -80,7 +80,7 @@ describe('validateGraphFileRefs — LoadImageOutput is always an OUTPUT read', (
     await expect(validateGraphFileRefs(loadOutput('u_other/theirs.png'), c)).rejects.toMatchObject({ statusCode: 403 })
   })
 
-  it('checks LoadImageOutput even when it is NOT in the uploadFlagged set (hardcoded pair)', async () => {
+  it('checks LoadImageOutput even when it is NOT in the uploadFlagged set (GRAPH_FILE_READERS map)', async () => {
     const c = ctx({ uploadFlagged: new Set<string>(), ownsOutput: vi.fn(async () => false) })
     await expect(validateGraphFileRefs(loadOutput('theirs.png'), c)).rejects.toMatchObject({ statusCode: 403 })
   })
@@ -118,6 +118,117 @@ describe('validateGraphFileRefs — fail closed on unknown shapes', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Task 7b — the unflagged / JSON-embedded / dict-valued file readers.
+// Each of these launders a cross-tenant read through an input the object_info
+// upload-flag walk never sees; the GRAPH_FILE_READERS map now vets them.
+// ---------------------------------------------------------------------------
+
+const node = (class_type: string, inputs: Record<string, unknown>) => ({ '1': { class_type, inputs } })
+
+describe('validateGraphFileRefs — Task 7b newly-covered readers refuse foreign files', () => {
+  it('LoadLatent.latent — REFUSES another tenant\'s latent (unflagged string input)', async () => {
+    const c = ctx({ ownsInput: vi.fn(async () => false) })
+    await expect(validateGraphFileRefs(node('LoadLatent', { latent: 'other.latent' }), c))
+      .rejects.toMatchObject({ statusCode: 403 })
+    expect(c.ownsInput).toHaveBeenCalledWith('other.latent')
+  })
+
+  it('Load3D.image — REFUSES a victim frame smuggled through the image dict', async () => {
+    const c = ctx({ ownsOutput: vi.fn(async () => false), ownsInput: vi.fn(async () => true) })
+    const g = node('Load3D', { image: { image: 'victim.png [output]', mask: '', normal: '', recording: '' }, model_file: 'ok.glb' })
+    await expect(validateGraphFileRefs(g, c)).rejects.toMatchObject({ statusCode: 403 })
+    expect(c.ownsOutput).toHaveBeenCalledWith('victim.png [output]')
+  })
+
+  it('Load3D.image — a non-object image value fails closed (403)', async () => {
+    await expect(validateGraphFileRefs(node('Load3D', { image: 'not-a-dict', model_file: '' }), ctx()))
+      .rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('Load3D.model_file — REFUSES a foreign model file', async () => {
+    const c = ctx({ ownsInput: vi.fn(async () => false) })
+    await expect(validateGraphFileRefs(node('Load3D', { image: {}, model_file: 'theirs.glb' }), c))
+      .rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('Compositor.motion_params — REFUSES a foreign frame embedded in the rendered[] blob', async () => {
+    // Own the first frame, not the second: the walk reaches the embedded frame
+    // and refuses on it specifically (proving the blob is walked, not skipped).
+    const c = ctx({ ownsInput: vi.fn(async (name: string) => name === 'mine1.png') })
+    const g = node('Compositor', { motion_params: JSON.stringify({ fps: 30, rendered: ['mine1.png', 'victim_frame.png'] }) })
+    await expect(validateGraphFileRefs(g, c)).rejects.toMatchObject({ statusCode: 403 })
+    expect(c.ownsInput.mock.calls.map(x => x[0])).toContain('victim_frame.png')
+  })
+
+  it('Compositor.motion_params — passes when every rendered frame is owned', async () => {
+    const c = ctx({ ownsInput: vi.fn(async () => true) })
+    const g = node('Compositor', { motion_params: JSON.stringify({ rendered: ['a.png', 'b.png'] }) })
+    await expect(validateGraphFileRefs(g, c)).resolves.toBeUndefined()
+    expect(c.ownsInput.mock.calls.map(x => x[0])).toEqual(['a.png', 'b.png'])
+  })
+
+  it('Compositor.motion_params — unparseable JSON fails closed (403)', async () => {
+    await expect(validateGraphFileRefs(node('Compositor', { motion_params: '{not json' }), ctx()))
+      .rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('Compositor.motion_params — empty / no-frames blob references nothing', async () => {
+    const c = ctx()
+    await validateGraphFileRefs(node('Compositor', { motion_params: '' }), c)
+    await validateGraphFileRefs(node('Compositor', { motion_params: '{}' }), c)
+    await validateGraphFileRefs(node('Compositor', { motion_params: JSON.stringify({ rendered: [] }) }), c)
+    expect(c.ownsInput).not.toHaveBeenCalled()
+    expect(c.ownsOutput).not.toHaveBeenCalled()
+  })
+
+  it('RenderType / TextMask / TextOnPath — REFUSE a foreign rendered string in params', async () => {
+    for (const ct of ['RenderType', 'TextMask', 'TextOnPath']) {
+      const c = ctx({ ownsInput: vi.fn(async () => false) })
+      const g = node(ct, { params: JSON.stringify({ rendered: 'someone_else.png' }) })
+      await expect(validateGraphFileRefs(g, c), ct).rejects.toMatchObject({ statusCode: 403 })
+      expect(c.ownsInput, ct).toHaveBeenCalledWith('someone_else.png')
+    }
+  })
+
+  it('KineticType.params — REFUSES a foreign frame in the rendered[] list', async () => {
+    const c = ctx({ ownsInput: vi.fn(async () => false) })
+    const g = node('KineticType', { params: JSON.stringify({ fps: 12, rendered: ['victim.png'] }) })
+    await expect(validateGraphFileRefs(g, c)).rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('Timeline.edit_state — REFUSES a foreign image-clip path (input semantics, literal)', async () => {
+    const c = ctx({ ownsInput: vi.fn(async () => false) })
+    const state = { tracks: [{ clips: [{ kind: 'image', path: '../other-tenant/secret.png' }] }] }
+    await expect(validateGraphFileRefs(node('Timeline', { edit_state: JSON.stringify(state) }), c))
+      .rejects.toMatchObject({ statusCode: 403 })
+    expect(c.ownsInput).toHaveBeenCalledWith('../other-tenant/secret.png')
+  })
+
+  it('Timeline.edit_state — checks asset_path too, and passes when owned', async () => {
+    const c = ctx({ ownsInput: vi.fn(async () => true) })
+    const state = { tracks: [{ clips: [{ path: 'mine1.png' }, { asset_path: 'mine2.png' }] }] }
+    await validateGraphFileRefs(node('Timeline', { edit_state: JSON.stringify(state) }), c)
+    expect(c.ownsInput.mock.calls.map(x => x[0])).toEqual(['mine1.png', 'mine2.png'])
+    expect(c.ownsOutput).not.toHaveBeenCalled()
+  })
+
+  it('the media readers (LoadVideo/Video/LUT/AudioWaveform/LoadAudio/Painter/WebcamCapture) all vet their filename', async () => {
+    const cases: [string, string][] = [
+      ['LoadVideo', 'file'], ['Video', 'file'], ['LUT', 'lut_file'],
+      ['AudioWaveform', 'audio_file'], ['LoadAudio', 'audio'], ['Audio', 'audio'],
+      ['RecordAudio', 'audio'], ['Painter', 'mask'], ['WebcamCapture', 'image'],
+      ['LoadVideoFrames', 'file'], ['SaveVideoFrames', 'audio_file'],
+      ['Scene3DStudio', 'beauty_image'], ['PoseMannequin', 'result_image'],
+    ]
+    for (const [ct, input] of cases) {
+      const c = ctx({ ownsInput: vi.fn(async () => false) })
+      await expect(validateGraphFileRefs(node(ct, { [input]: 'foreign.bin' }), c), ct)
+        .rejects.toMatchObject({ statusCode: 403 })
+    }
+  })
+})
+
 describe('loadUploadFlaggedInputs — derived from the live object_info catalog', () => {
   const catalog = {
     // legacy shape: [ ["file", ...], { image_upload: true } ]
@@ -135,8 +246,10 @@ describe('loadUploadFlaggedInputs — derived from the live object_info catalog'
     expect(set.has('LoadImage.image')).toBe(true)
     expect(set.has('LoadAudio.audio')).toBe(true)
     expect(set.has('CheckpointLoaderSimple.ckpt_name')).toBe(false)
-    // remote-routed, never object_info-flagged (nodes.py:1951-1959) — added by hand
-    expect(set.has('LoadImageOutput.image')).toBe(true)
+    // Task 7b: LoadImageOutput.image is remote-routed (nodes.py:1951-1959) so
+    // it is never object_info-flagged AND no longer added here — the
+    // GRAPH_FILE_READERS map covers it explicitly (semantics: output).
+    expect(set.has('LoadImageOutput.image')).toBe(false)
   })
 
   it('caches per process (does not refetch the catalog within the TTL)', async () => {
@@ -181,6 +294,18 @@ describe('injectOutputSubfolder', () => {
   it('strips ../ traversal from a client prefix before prefixing', () => {
     const out = injectOutputSubfolder({ '1': { class_type: 'SaveImage', inputs: { filename_prefix: '../../etc/x' } } }, 'u1')
     expect(out['1'].inputs.filename_prefix).toBe(`u_${hash}/etc/x`)
+  })
+
+  it('subfolders the Task 7b output classes too (Image / Video / SaveGLB / SaveAnimatedWEBP)', () => {
+    for (const ct of ['Image', 'Video', 'SaveGLB', 'SaveAnimatedWEBP', 'SaveWEBM', 'Audio']) {
+      const out = injectOutputSubfolder({ '1': { class_type: ct, inputs: {} } }, 'u1')
+      expect(out['1'].inputs.filename_prefix, ct).toBe(`u_${hash}/ComfyUI`)
+    }
+  })
+
+  it('an Image (SaveImage subclass) output lands under the caller u_<hash>/ subfolder', () => {
+    const out = injectOutputSubfolder({ '1': { class_type: 'Image', inputs: { filename_prefix: 'Poster' } } }, 'u1')
+    expect(out['1'].inputs.filename_prefix).toBe(`u_${hash}/Poster`)
   })
 
   it('injects into the whole SaveImage family, and does not mutate the input object', () => {
