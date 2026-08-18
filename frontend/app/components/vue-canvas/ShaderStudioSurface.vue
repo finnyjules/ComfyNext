@@ -385,7 +385,15 @@ function onFocusUp() { draggingFocus = false }
 
 // ── motion tracks ────────────────────────────────────────────────────────────
 const animatablePaths = computed(() => [
-  ...ANIMATABLE,
+  // Fixed-section paths are gated by their section's enable flag — a disabled
+  // section's uniform is never uploaded, so animating it would be a dead track.
+  ...ANIMATABLE.filter((a) => {
+    if (a.path.startsWith('adjust.')) return config.value.adjust.enabled
+    if (a.path.startsWith('post.blur.')) return config.value.post.blur.enabled
+    if (a.path.startsWith('post.chromatic.')) return config.value.post.chromatic.enabled
+    if (a.path.startsWith('post.bloom.')) return config.value.post.bloom.enabled
+    return true
+  }),
   ...(effectDef.value?.params ?? [])
     .filter(p => p.type !== 'enum')
     .map(p => ({ path: `effects.${activeEffect.value}.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min ?? 0, max: p.max ?? 1 })),
@@ -926,44 +934,50 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
       <!-- Duotone -->
       <StudioSection title="Duotone" :open="false">
         <template #badge><StudioSwitch v-model="config.duotone.enabled" /></template>
-        <div class="mb-2 flex items-center gap-2">
-          <label class="text-[11px] text-white/60">Ink</label>
-          <BindableRow control-key="duotone.ink" label="Ink" kind="color" :bound="boundColumnFor('duotone.ink')" @menu="openVarMenu" @promote="(control) => promote(control, agentParams[control.key] as string | number)">
-            <StudioColor v-model="config.duotone.ink" @update:model-value="(v: string) => onEdit('duotone.ink', v)" />
-          </BindableRow>
-          <label class="text-[11px] text-white/60">Paper</label>
-          <BindableRow control-key="duotone.paper" label="Paper" kind="color" :bound="boundColumnFor('duotone.paper')" @menu="openVarMenu" @promote="(control) => promote(control, agentParams[control.key] as string | number)">
-            <StudioColor v-model="config.duotone.paper" @update:model-value="(v: string) => onEdit('duotone.paper', v)" />
-          </BindableRow>
-        </div>
-        <PalettePicker mode="duotone" :seed="config.duotone.paper" @apply-duotone="applyDuotonePalette" />
+        <template v-if="config.duotone.enabled">
+          <div class="mb-2 flex items-center gap-2">
+            <label class="text-[11px] text-white/60">Ink</label>
+            <BindableRow control-key="duotone.ink" label="Ink" kind="color" :bound="boundColumnFor('duotone.ink')" @menu="openVarMenu" @promote="(control) => promote(control, agentParams[control.key] as string | number)">
+              <StudioColor v-model="config.duotone.ink" @update:model-value="(v: string) => onEdit('duotone.ink', v)" />
+            </BindableRow>
+            <label class="text-[11px] text-white/60">Paper</label>
+            <BindableRow control-key="duotone.paper" label="Paper" kind="color" :bound="boundColumnFor('duotone.paper')" @menu="openVarMenu" @promote="(control) => promote(control, agentParams[control.key] as string | number)">
+              <StudioColor v-model="config.duotone.paper" @update:model-value="(v: string) => onEdit('duotone.paper', v)" />
+            </BindableRow>
+          </div>
+          <PalettePicker mode="duotone" :seed="config.duotone.paper" @apply-duotone="applyDuotonePalette" />
+        </template>
       </StudioSection>
 
       <!-- Gradient Map -->
       <StudioSection title="Gradient Map" :open="false">
         <template #badge><StudioSwitch v-model="config.gradientMap.enabled" /></template>
-        <div class="mb-2 h-6 overflow-hidden rounded border border-white/10" :style="{ background: gradientMapRampCss }" />
-        <PalettePicker mode="stops" :stop-count="config.gradientMap.stops.length" :seed="config.gradientMap.stops[0]?.color ?? '#4f8ad9'" @apply-stops="applyGradientStops" />
-        <div class="mt-3">
-          <label class="mb-1 block text-[11px] text-white/60">Mix</label>
-          <input
-            v-model.number="config.gradientMap.mix" type="range" min="0" max="1" step="0.01"
-            v-studio-reset class="studio-range w-full" @input="onEdit('gradientMap.mix', config.gradientMap.mix)"
-          />
-        </div>
+        <template v-if="config.gradientMap.enabled">
+          <div class="mb-2 h-6 overflow-hidden rounded border border-white/10" :style="{ background: gradientMapRampCss }" />
+          <PalettePicker mode="stops" :stop-count="config.gradientMap.stops.length" :seed="config.gradientMap.stops[0]?.color ?? '#4f8ad9'" @apply-stops="applyGradientStops" />
+          <div class="mt-3">
+            <label class="mb-1 block text-[11px] text-white/60">Mix</label>
+            <input
+              v-model.number="config.gradientMap.mix" type="range" min="0" max="1" step="0.01"
+              v-studio-reset class="studio-range w-full" @input="onEdit('gradientMap.mix', config.gradientMap.mix)"
+            />
+          </div>
+        </template>
       </StudioSection>
 
       <!-- Adjustments -->
       <StudioSection title="Adjustments" :open="false">
         <template #badge><StudioSwitch v-model="config.adjust.enabled" /></template>
-        <select class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="pickAdjustPreset(($event.target as HTMLSelectElement).value)">
-          <option v-for="p in ADJUST_PRESETS" :key="p.name" :value="p.name">{{ p.name }}</option>
-        </select>
-        <template v-for="f in ([['exposure','Exposure',-2,2],['brightness','Brightness',-1,1],['contrast','Contrast',-1,1],['saturation','Saturation',-1,1],['hue','Hue',-180,180],['temperature','Temperature',-1,1],['tint','Tint',-1,1]] as const)" :key="f[0]">
-          <BindableRow :control-key="`adjust.${f[0]}`" :label="f[1]" kind="slider" :min="f[2]" :max="f[3]" :step="0.01" :bound="boundColumnFor(`adjust.${f[0]}`)" @menu="openVarMenu" @promote="(control) => promote(control, agentParams[control.key] as string | number)">
-            <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>{{ f[1] }}</span><span class="text-white/40">{{ (config.adjust as any)[f[0]].toFixed(2) }}</span></label>
-            <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit(`adjust.${f[0]}`, (config.adjust as any)[f[0]])" />
-          </BindableRow>
+        <template v-if="config.adjust.enabled">
+          <select class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="pickAdjustPreset(($event.target as HTMLSelectElement).value)">
+            <option v-for="p in ADJUST_PRESETS" :key="p.name" :value="p.name">{{ p.name }}</option>
+          </select>
+          <template v-for="f in ([['exposure','Exposure',-2,2],['brightness','Brightness',-1,1],['contrast','Contrast',-1,1],['saturation','Saturation',-1,1],['hue','Hue',-180,180],['temperature','Temperature',-1,1],['tint','Tint',-1,1]] as const)" :key="f[0]">
+            <BindableRow :control-key="`adjust.${f[0]}`" :label="f[1]" kind="slider" :min="f[2]" :max="f[3]" :step="0.01" :bound="boundColumnFor(`adjust.${f[0]}`)" @menu="openVarMenu" @promote="(control) => promote(control, agentParams[control.key] as string | number)">
+              <label class="mb-0.5 flex justify-between text-[11px] text-white/60"><span>{{ f[1] }}</span><span class="text-white/40">{{ (config.adjust as any)[f[0]].toFixed(2) }}</span></label>
+              <input v-model.number="(config.adjust as any)[f[0]]" type="range" :min="f[2]" :max="f[3]" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit(`adjust.${f[0]}`, (config.adjust as any)[f[0]])" />
+            </BindableRow>
+          </template>
         </template>
       </StudioSection>
 
