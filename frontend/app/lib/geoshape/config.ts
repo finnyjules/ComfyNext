@@ -17,6 +17,13 @@ export type GeoOverlapMode = 'hole' | 'shape'
 export type GeoSymmetryAxis = 'vertical' | 'horizontal'
 export type GeoClipMask = 'none' | 'circle' | 'square' | 'hexagon'
 export type GeoFillStrategy = 'single' | 'perClone' | 'pieces'
+/** Grid/linear clone STAGGER: shift successive columns/rows by a step.
+ *   off         — no stagger (default)
+ *   incremental — each step shifts progressively (0, s, 2s, 3s…): a diagonal cascade
+ *   alternate   — every other step shifts by a fixed amount (0, s, 0, s…): a brick/zigzag */
+export type GeoStagger = 'off' | 'incremental' | 'alternate'
+/** Which grid index drives the stagger: the COLUMN (push columns down/over) or the ROW. */
+export type GeoStepAxis = 'column' | 'row'
 export type GeoFillOrder = 'created' | 'depth' | 'leftRight' | 'topBottom' | 'rows' | 'columns' | 'centerOut' | 'around'
 export type GeoCrossingMode = 'depth' | 'split'
 
@@ -33,6 +40,12 @@ export interface GeoShapeConfig {
   angleStep: number
   /** radial only: spread clones evenly (360/count) instead of stepping by angleStep. */
   evenAngle: boolean
+  /** grid/linear only: stagger successive columns/rows by (stepX, stepY). */
+  stagger: GeoStagger
+  stepX: number
+  stepY: number
+  /** grid only: whether the stagger steps by column or row index. */
+  stepAxis: GeoStepAxis
   rotateBase: number
   rotateStep: number
   scaleStart: number
@@ -90,6 +103,10 @@ export const DEFAULT_CONFIG: GeoShapeConfig = {
   spacing: 220,
   angleStep: 60,
   evenAngle: true,
+  stagger: 'off',
+  stepX: 0,
+  stepY: 0,
+  stepAxis: 'column',
   rotateBase: 0,
   rotateStep: 0,
   scaleStart: 1,
@@ -139,6 +156,8 @@ const OVERLAPMODES = ['hole', 'shape'] as const
 const SYMMETRY_AXES = ['vertical', 'horizontal'] as const
 const CLIP_MASKS = ['none', 'circle', 'square', 'hexagon'] as const
 const FILL_STRATEGIES = ['single', 'perClone', 'pieces'] as const
+const STAGGERS = ['off', 'incremental', 'alternate'] as const
+const STEP_AXES = ['column', 'row'] as const
 const FILL_ORDERS = ['created', 'depth', 'leftRight', 'topBottom', 'rows', 'columns', 'centerOut', 'around'] as const
 const CROSSING_MODES = ['depth', 'split'] as const
 
@@ -202,6 +221,10 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
     spacing: num(o.spacing, d.spacing),
     angleStep: num(o.angleStep, d.angleStep),
     evenAngle: bool(o.evenAngle, d.evenAngle),
+    stagger: oneOf(o.stagger, STAGGERS, d.stagger),
+    stepX: num(o.stepX, d.stepX),
+    stepY: num(o.stepY, d.stepY),
+    stepAxis: oneOf(o.stepAxis, STEP_AXES, d.stepAxis),
     rotateBase: num(o.rotateBase, d.rotateBase),
     rotateStep: num(o.rotateStep, d.rotateStep),
     scaleStart: num(o.scaleStart, d.scaleStart),

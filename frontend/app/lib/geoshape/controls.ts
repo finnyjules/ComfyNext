@@ -55,6 +55,8 @@ const hasRoundCorners = (c: GeoShapeConfig) => c.roundCorners > 0
 const isGrid = (c: GeoShapeConfig) => c.layout === 'grid'
 const isRadial = (c: GeoShapeConfig) => c.layout === 'radial'
 const isGridOrLinear = (c: GeoShapeConfig) => c.layout === 'grid' || c.layout === 'linear'
+const hasStagger = (c: GeoShapeConfig) => c.stagger !== 'off' && isGridOrLinear(c)
+const hasStaggerGrid = (c: GeoShapeConfig) => c.stagger !== 'off' && c.layout === 'grid'
 const isOverlapShape = (c: GeoShapeConfig) => c.overlapMode === 'shape'
 const isSingleFill = (c: GeoShapeConfig) => c.fillStrategy === 'single'
 const isOverlapShapeAndSingleFill = (c: GeoShapeConfig) => isOverlapShape(c) && isSingleFill(c)
@@ -112,6 +114,14 @@ export const GEO_CONTROLS: GeoControl[] = [
   slider('spacing', 'Spacing', 0, 800, 1, 'Layout', DEFAULT_CONFIG.spacing, undefined, { when: isGridOrLinear }),
   switchC('evenAngle', 'Even spacing', DEFAULT_CONFIG.evenAngle, 'Layout', { when: isRadial }),
   slider('angleStep', 'Angle step', 0, 360, 1, 'Layout', DEFAULT_CONFIG.angleStep, undefined, { when: (c) => isRadial(c) && !c.evenAngle }),
+  select('stagger', 'Stagger', ['off', 'incremental', 'alternate'], DEFAULT_CONFIG.stagger, 'Layout',
+    'Shift successive columns/rows by a step: incremental cascades (0, s, 2s…); alternate bricks every other one (0, s, 0, s…)',
+    { when: isGridOrLinear }),
+  slider('stepX', 'Step X', -400, 400, 1, 'Layout', DEFAULT_CONFIG.stepX, undefined, { when: hasStagger }),
+  slider('stepY', 'Step Y', -400, 400, 1, 'Layout', DEFAULT_CONFIG.stepY, undefined, { when: hasStagger }),
+  select('stepAxis', 'Step by', ['column', 'row'], DEFAULT_CONFIG.stepAxis, 'Layout',
+    'Which grid index the stagger steps by — column pushes columns down/over, row does the classic brick offset',
+    { when: hasStaggerGrid }),
 
   // --- Transform (per-clone ramps in arrange.ts) ----------------------------
   slider('rotateBase', 'Rotate base', -180, 180, 1, 'Transform', DEFAULT_CONFIG.rotateBase),
@@ -191,7 +201,7 @@ export const GEO_GUIDANCE = `This is a PROCEDURAL 2D-VECTOR "clone and arrange" 
 
 BASE SHAPE: "shape" picks the family — polygon (regular N-gon via sides), star (N points via sides + starInner, the inner-vertex radius as a fraction of the outer radius, 0.01=needle-thin points, 0.99=almost a polygon), hexagon (fixed 6-gon, ignores sides), irregular (a polygon jittered per-vertex by irregularSeed — same seed always gives the same silhouette). size is the shape's radius before any clone spread. roundCorners (0=off) gates roundRadius, the corner-rounding fraction.
 
-LAYOUT: count is how many clones to place (grid layout instead uses gridCols × gridRows and ignores count). layout picks the placement curve: "radial" rings the clones around the center at radius; by default (evenAngle) they spread evenly (360/count) so any count forms a clean ring, and turning evenAngle off spaces them by angleStep degrees instead (for fans/spirals). spin is the ring's starting angle offset. "grid" tiles gridCols × gridRows clones spacing apart. "linear" strings count clones in a row, spacing apart.
+LAYOUT: count is how many clones to place (grid layout instead uses gridCols × gridRows and ignores count). layout picks the placement curve: "radial" rings the clones around the center at radius; by default (evenAngle) they spread evenly (360/count) so any count forms a clean ring, and turning evenAngle off spaces them by angleStep degrees instead (for fans/spirals). spin is the ring's starting angle offset. "grid" tiles gridCols × gridRows clones spacing apart. "linear" strings count clones in a row, spacing apart. For grid/linear, stagger (incremental|alternate) shifts successive columns/rows by (stepX, stepY) — incremental cascades progressively (a diagonal shear), alternate offsets every other one (a brick/zigzag); stepAxis chooses whether a grid steps by column or row.
 
 TRANSFORM: rotateBase + i*rotateStep rotates each successive clone (a spiral/fan feel as rotateStep grows). scaleStart→scaleEnd ramps clone size across the sequence (shrink/grow trails). skew shears every clone; spin only matters for radial layout.
 

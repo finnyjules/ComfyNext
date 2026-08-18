@@ -55,3 +55,54 @@ describe('geoshape arrange', () => {
     expect(p[1]!.y).toBeCloseTo(100 * Math.sin(30 * Math.PI / 180), 1)
   })
 })
+
+describe('geoshape arrange — stagger', () => {
+  // A 4x2 grid, spacing 0 so the stagger offset is the ONLY thing moving clones:
+  // clone i has column i%4, row floor(i/4). Base x/y are 0 (centered, spacing 0),
+  // so placement x/y == the stagger offset alone — easy to assert exactly.
+  const grid = (over: Partial<typeof DEFAULT_CONFIG>) =>
+    arrange({ ...DEFAULT_CONFIG, layout: 'grid', gridCols: 4, gridRows: 2, spacing: 0, rotateStep: 0, ...over })
+
+  it('off (default) leaves the grid unstaggered', () => {
+    const p = grid({ stagger: 'off', stepX: 50, stepY: 50 })
+    for (const c of p) { expect(c.x).toBeCloseTo(0, 6); expect(c.y).toBeCloseTo(0, 6) }
+  })
+
+  it('incremental by column cascades Y progressively down the columns', () => {
+    const p = grid({ stagger: 'incremental', stepX: 0, stepY: 60, stepAxis: 'column' })
+    // columns 0..3 in row 0 → y = 0,60,120,180
+    expect(p.slice(0, 4).map((c) => c.y)).toEqual([0, 60, 120, 180])
+    // row 1 repeats the same column pattern (stagger is column-driven).
+    expect(p.slice(4, 8).map((c) => c.y)).toEqual([0, 60, 120, 180])
+  })
+
+  it('alternate by column pushes every OTHER column, by a fixed amount', () => {
+    const p = grid({ stagger: 'alternate', stepX: 0, stepY: 60, stepAxis: 'column' })
+    expect(p.slice(0, 4).map((c) => c.y)).toEqual([0, 60, 0, 60])
+  })
+
+  it('step X and Y shift together (diagonal shear)', () => {
+    const p = grid({ stagger: 'incremental', stepX: 10, stepY: 20, stepAxis: 'column' })
+    expect(p[2]!.x).toBeCloseTo(20, 6) // col 2 → 2*10
+    expect(p[2]!.y).toBeCloseTo(40, 6) // col 2 → 2*20
+  })
+
+  it('step by ROW staggers rows instead of columns (brick)', () => {
+    const p = grid({ stagger: 'alternate', stepX: 80, stepY: 0, stepAxis: 'row' })
+    // row 0 (clones 0..3) unshifted; row 1 (clones 4..7) shifted by 80 in X.
+    expect(p.slice(0, 4).every((c) => c.x === 0)).toBe(true)
+    expect(p.slice(4, 8).every((c) => c.x === 80)).toBe(true)
+  })
+
+  it('linear staggers by clone position (row axis irrelevant)', () => {
+    const p = arrange({ ...DEFAULT_CONFIG, layout: 'linear', count: 4, spacing: 0, rotateStep: 0, stagger: 'alternate', stepX: 0, stepY: 40 })
+    expect(p.map((c) => c.y)).toEqual([0, 40, 0, 40])
+  })
+
+  it('config defaults keep stagger off and steps at zero', () => {
+    expect(DEFAULT_CONFIG.stagger).toBe('off')
+    expect(DEFAULT_CONFIG.stepX).toBe(0)
+    expect(DEFAULT_CONFIG.stepY).toBe(0)
+    expect(DEFAULT_CONFIG.stepAxis).toBe('column')
+  })
+})

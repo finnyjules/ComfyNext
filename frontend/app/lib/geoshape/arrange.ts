@@ -26,6 +26,19 @@ function rampT(i: number, count: number): number {
   return count > 1 ? i / (count - 1) : 0
 }
 
+/**
+ * The positional stagger offset for a clone whose stagger index (its column or
+ * row, or its position in a linear run) is `idx`.
+ *   incremental — offset grows with idx (0, s, 2s, 3s…): a diagonal cascade
+ *   alternate   — every other index gets a fixed offset (0, s, 0, s…): a brick/zigzag
+ * `off` (and a zero step) returns no offset, so existing marks are unchanged.
+ */
+function staggerOffset(cfg: GeoShapeConfig, idx: number): { dx: number; dy: number } {
+  if (cfg.stagger === 'off') return { dx: 0, dy: 0 }
+  const factor = cfg.stagger === 'incremental' ? idx : idx % 2
+  return { dx: cfg.stepX * factor, dy: cfg.stepY * factor }
+}
+
 export function arrange(cfg: GeoShapeConfig): ClonePlacement[] {
   const count = Math.max(1, Math.floor(cfg.count))
 
@@ -38,9 +51,12 @@ export function arrange(cfg: GeoShapeConfig): ClonePlacement[] {
       const cx = i % cols
       const cy = Math.floor(i / cols)
       const t = rampT(i, total)
+      // Stagger by whichever grid index the user picked (column pushes columns
+      // down/over; row does the classic brick offset).
+      const { dx, dy } = staggerOffset(cfg, cfg.stepAxis === 'row' ? cy : cx)
       placements.push({
-        x: (cx - (cols - 1) / 2) * cfg.spacing,
-        y: (cy - (rows - 1) / 2) * cfg.spacing,
+        x: (cx - (cols - 1) / 2) * cfg.spacing + dx,
+        y: (cy - (rows - 1) / 2) * cfg.spacing + dy,
         scale: lerp(cfg.scaleStart, cfg.scaleEnd, t),
         rotate: cfg.rotateBase + i * cfg.rotateStep,
         skew: cfg.skew,
@@ -53,9 +69,11 @@ export function arrange(cfg: GeoShapeConfig): ClonePlacement[] {
     const placements: ClonePlacement[] = []
     for (let i = 0; i < count; i++) {
       const t = rampT(i, count)
+      // A linear run has no columns/rows, so it staggers by clone position.
+      const { dx, dy } = staggerOffset(cfg, i)
       placements.push({
-        x: (i - (count - 1) / 2) * cfg.spacing,
-        y: 0,
+        x: (i - (count - 1) / 2) * cfg.spacing + dx,
+        y: 0 + dy,
         scale: lerp(cfg.scaleStart, cfg.scaleEnd, t),
         rotate: cfg.rotateBase + i * cfg.rotateStep,
         skew: cfg.skew,
