@@ -140,8 +140,8 @@ function declaresUploadWidget(opts: unknown): boolean {
 }
 
 /**
- * Empty the filename list on one input spec, in place, leaving every other
- * byte of it alone.
+ * Refill the filename list on one input spec with the CALLER's own uploaded
+ * filenames, in place, leaving every other byte of it alone.
  *
  * ComfyUI serves upload widgets in TWO shapes and a hosted scrubber that
  * knows only the documented one still leaks three node families:
@@ -156,25 +156,36 @@ function declaresUploadWidget(opts: unknown): boolean {
  * The `image_upload` flag itself is PRESERVED: the frontend keys its upload
  * button off it, and the point is to hide other tenants' filenames, not to
  * take the widget away.
+ *
+ * `ownedFilenames` is spread into a fresh array at each call site rather than
+ * assigned by reference — two specs on the same node (or two nodes) must not
+ * end up sharing one mutable array.
  */
-function scrubUploadSpec(spec: unknown[]): void {
-  if (Array.isArray(spec[0])) spec[0] = []
+function scrubUploadSpec(spec: unknown[], ownedFilenames: string[]): void {
+  if (Array.isArray(spec[0])) spec[0] = [...ownedFilenames]
   const opts = spec[1]
   if (opts && typeof opts === 'object' && Array.isArray((opts as Record<string, unknown>).options)) {
-    ;(opts as Record<string, unknown>).options = []
+    ;(opts as Record<string, unknown>).options = [...ownedFilenames]
   }
   // R3: emptying the list is not enough. ComfyUI seeds `default` with the
   // FIRST entry of that same directory listing, so AudioWaveform.audio_file
   // shipped the alphabetically-first filename in the shared input dir to every
-  // tenant with the options stripped. Blanked rather than deleted: the widget
-  // reads it, and a missing key and an empty one render the same.
+  // tenant with the options stripped. Stage 6: the default becomes the
+  // caller's own first-owned filename (or '' if they own nothing) — same
+  // reasoning as ComfyUI's own seeding, scoped to what the caller can see.
   if (opts && typeof opts === 'object' && typeof (opts as Record<string, unknown>).default === 'string') {
-    ;(opts as Record<string, unknown>).default = ''
+    ;(opts as Record<string, unknown>).default = ownedFilenames[0] ?? ''
   }
 }
 
 /**
- * Strip the shared input-directory listing out of an /object_info response.
+ * Replace the shared input-directory listing in an /object_info response
+ * with the CALLER's own uploaded filenames.
+ *
+ * `ownedFilenames` defaults to `[]` — an omitted second argument (every
+ * pre-Task-6 call site, and every test that doesn't care about refilling)
+ * empties the pickers exactly as the Stage 5 scrubber did, so "no known
+ * ownership" fails to the same safe, no-leak behavior it always had.
  *
  * Everything else must survive byte-identical — direct execution's
  * graphToPrompt validates against these schemas client-side, so a scrubber
@@ -182,7 +193,7 @@ function scrubUploadSpec(spec: unknown[]): void {
  * Mutates a structured clone; key insertion order is preserved by JS for the
  * non-numeric keys ComfyUI uses.
  */
-export function scrubObjectInfo(catalog: unknown): unknown {
+export function scrubObjectInfo(catalog: unknown, ownedFilenames: string[] = []): unknown {
   if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)) return catalog
   const out = structuredClone(catalog) as Record<string, any>
   for (const node of Object.values(out)) {
@@ -191,7 +202,7 @@ export function scrubObjectInfo(catalog: unknown): unknown {
     for (const section of Object.values(input)) {
       if (!section || typeof section !== 'object' || Array.isArray(section)) continue
       for (const spec of Object.values(section as Record<string, unknown>)) {
-        if (Array.isArray(spec) && declaresUploadWidget(spec[1])) scrubUploadSpec(spec)
+        if (Array.isArray(spec) && declaresUploadWidget(spec[1])) scrubUploadSpec(spec, ownedFilenames)
       }
     }
   }
@@ -215,9 +226,19 @@ export async function handleHostedObjectInfo(event: H3Event): Promise<unknown> {
   // differs per worker, so answering from the main instance would hand the
   // canvas a schema the executing engine does not have.
   const { target, backendPath } = engineTarget(event.path)
-  const res = await fetch(`${target}${backendPath}`, { headers: { origin: target } })
+  // Fetched once per request, in parallel with the engine round trip — the
+  // ownership lookup and the catalog fetch are independent, so there is no
+  // reason to serialize them.
+  const [owned, res] = await Promise.all([
+    ownedInputFilenames(userId),
+    fetch(`${target}${backendPath}`, { headers: { origin: target } }),
+  ])
   if (!res.ok) throw createError({ statusCode: 502, message: 'Engine object_info unavailable' })
-  return scrubObjectInfo(await res.json())
+  // Sorted for a stable `default` (ComfyUI itself seeds default from the
+  // alphabetically-first directory entry — this mirrors that ordering scoped
+  // to the caller's own files) and for deterministic tests.
+  const ownedFilenames = Array.from(owned).sort()
+  return scrubObjectInfo(await res.json(), ownedFilenames)
 }
 
 // ---------------------------------------------------------------------------

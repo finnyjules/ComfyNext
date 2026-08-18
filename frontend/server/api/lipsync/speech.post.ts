@@ -5,11 +5,19 @@
  * MiniMax voice_ids) and saves the mp3 into the ComfyUI input dir, returning a
  * '/view?filename=…&type=input' URL that FilmShotNode/LipSyncNode resolve at
  * execute. Must be allowlisted in server/middleware/comfyui-proxy.ts.
+ *
+ * Stage 6 (Task 6): this writes straight into the shared engine input dir,
+ * bypassing /upload — so, like the moodboard writers (Task 4), the write is
+ * recorded against the caller in `input_uploads` (hosted only) so the
+ * refilled /object_info pickers and the graph-reference validator see it as
+ * the caller's own file.
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { assertRateLimit } from '../../lib/rateLimit'
 import { preflightMeter } from '../../utils/requestMeter'
+import { canonicalUploadKey, recordUpload } from '../../utils/inputUploads'
+import { isHosted } from '../../utils/deployMode'
 
 const SPEECH_MODEL = 'minimax/speech-02-turbo'
 
@@ -68,6 +76,9 @@ export default defineEventHandler(async (event) => {
     await fs.mkdir(inputDir, { recursive: true })
     const filename = `lipsync-voice_${Date.now()}.mp3`
     await fs.writeFile(path.join(inputDir, filename), buf)
+    if (isHosted() && event.context.userId) {
+      await recordUpload(event.context.userId, canonicalUploadKey('input', '', filename))
+    }
 
     return { viewUrl: `/view?${new URLSearchParams({ filename, type: 'input' })}` }
   } catch (e) {

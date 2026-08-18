@@ -52,18 +52,23 @@ export async function uploadOwner(fileKey: string): Promise<string | null> {
 }
 
 /**
- * Stage 6 Task 2b — the caller's OWN top-level input filenames, for filtering
- * `/sailor/input_listing` and gating `/sailor/input_thumbnail`.
+ * Stage 6 Task 2b/6 — the caller's OWN top-level input filenames, for
+ * filtering `/sailor/input_listing`, gating `/sailor/input_thumbnail`, and
+ * (Task 6) refilling the engine's /object_info file pickers.
  *
- * `input_listing` walks only the TOP level of `input/` (a flat `os.listdir`),
- * so the keys that matter are the empty-subfolder `input` uploads —
- * canonicalUploadKey('input', '', name) === `input::<name>`. A row with a
- * non-empty subfolder names a nested file the flat listing never shows, so it
- * is deliberately excluded here.
+ * `input_listing` (and LoadImage's combo) walk only the TOP level of
+ * `input/` (a flat `os.listdir`), so the keys that matter are the
+ * empty-subfolder `input` uploads — canonicalUploadKey('input', '', name)
+ * === `input::<name>`. A row with a non-empty subfolder (`input:sub:name`)
+ * names a nested file the flat listing never shows, so it is excluded.
+ * `LIKE 'input::%'` pushes that filter into the query; the JS re-check below
+ * stays as the enforced behavior (a fake/legacy db that ignores the WHERE
+ * clause must not leak a subfoldered key), so the two are redundant on
+ * purpose rather than either alone being trusted.
  */
 export async function ownedInputFilenames(userId: string): Promise<Set<string>> {
   const { rows } = await db().query(
-    `SELECT file_key FROM input_uploads WHERE user_id = $1`, [userId])
+    `SELECT file_key FROM input_uploads WHERE user_id = $1 AND file_key LIKE 'input::%'`, [userId])
   const names = new Set<string>()
   const prefix = 'input::'
   for (const r of rows) {

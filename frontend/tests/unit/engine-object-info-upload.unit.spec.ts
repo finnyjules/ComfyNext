@@ -23,9 +23,10 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { scrubObjectInfo, handleHostedObjectInfo } = await import('../../server/utils/engineGate')
+const { ownedInputFilenames, canonicalUploadKey, recordUpload, __setInputUploadsDbForTests } = await import('../../server/utils/inputUploads')
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/object-info-sample.json', import.meta.url))
 const catalogText = readFileSync(FIXTURE, 'utf8')
@@ -33,6 +34,14 @@ const catalog = () => JSON.parse(catalogText)
 
 const fetchMock = vi.fn()
 ;(globalThis as any).fetch = fetchMock
+
+// Default fake input_uploads db: nobody owns anything. handleHostedObjectInfo
+// now calls ownedInputFilenames on every request, so every test in this file
+// needs SOME db behind it (a real one requires DATABASE_URL, which unit tests
+// never set) — individual describe blocks below override this with their own
+// Map-backed fake to exercise Stage 6 refilling.
+const emptyUploadsDb = { query: async () => ({ rows: [] as { file_key: string }[] }) }
+__setInputUploadsDbForTests(emptyUploadsDb)
 
 beforeEach(() => { fetchMock.mockReset() })
 
@@ -139,6 +148,130 @@ describe('scrubObjectInfo — the shared input directory never leaves the server
   })
 })
 
+// ------------------------------------------------- Stage 6 Task 6 — refill
+
+describe('scrubObjectInfo(catalog, ownedFilenames) — refills with the CALLER\'s own uploads', () => {
+  it('refills the LEGACY [[files], {image_upload}] combo with exactly the owned list', () => {
+    const before = catalog()
+    const after = scrubObjectInfo(before, ['mine.png', 'also-mine.png']) as any
+    expect(after.LoadImage.input.required.image[0]).toEqual(['mine.png', 'also-mine.png'])
+    expect(after.LoadImageMask.input.required.image[0]).toEqual(['mine.png', 'also-mine.png'])
+  })
+
+  it('refills the V2 ["COMBO", {options}] combo with exactly the owned list', () => {
+    const before = catalog()
+    const after = scrubObjectInfo(before, ['mine.mp3']) as any
+    expect(after.LoadAudio.input.required.audio[1].options).toEqual(['mine.mp3'])
+    expect(after.LoadVideo.input.required.file[1].options).toEqual(['mine.mp3'])
+  })
+
+  it('never leaks another tenant\'s filename from the real capture while refilling', () => {
+    const before = catalog()
+    const othersNames = [
+      ...before.LoadImage.input.required.image[0],
+      ...before.LoadImageMask.input.required.image[0],
+      ...before.LoadAudio.input.required.audio[1].options,
+      ...before.LoadVideo.input.required.file[1].options,
+      before.AudioWaveform.input.required.audio_file[1].default,
+    ]
+    expect(othersNames.length).toBeGreaterThan(0)
+
+    const serialized = JSON.stringify(scrubObjectInfo(before, ['caller-owned.png']))
+    for (const n of othersNames) expect(serialized, `leaked ${n}`).not.toContain(n)
+    expect(serialized).toContain('caller-owned.png')
+  })
+
+  it('empty ownership still empties the list — today\'s (Stage 5) behavior, now explicit', () => {
+    const before = catalog()
+    const after = scrubObjectInfo(before, []) as any
+    expect(after.LoadImage.input.required.image[0]).toEqual([])
+    expect(after.LoadAudio.input.required.audio[1].options).toEqual([])
+  })
+
+  it('omitting the second argument still empties the list (default = [])', () => {
+    const after = scrubObjectInfo(catalog()) as any
+    expect(after.LoadImage.input.required.image[0]).toEqual([])
+  })
+
+  it('default becomes the FIRST owned filename, not the engine\'s own alphabetical pick', () => {
+    const before = catalog()
+    const after = scrubObjectInfo(before, ['owned-first.mp3', 'owned-second.mp3']) as any
+    expect(after.AudioWaveform.input.required.audio_file[1].default).toBe('owned-first.mp3')
+  })
+
+  it('default blanks when the caller owns nothing', () => {
+    const after = scrubObjectInfo(catalog(), []) as any
+    expect(after.AudioWaveform.input.required.audio_file[1].default).toBe('')
+  })
+
+  it('the Stage-5 AudioWaveform/Happiness.mp3 default-leak fixture now shows the OWNED file only', () => {
+    const before = catalog()
+    const leaked = before.AudioWaveform.input.required.audio_file[1].default
+    expect(leaked, 'fixture must carry a real leaking default').toBeTruthy()
+
+    const after = scrubObjectInfo(before, ['owned.mp3']) as any
+    expect(after.AudioWaveform.input.required.audio_file[1].options).toEqual(['owned.mp3'])
+    expect(after.AudioWaveform.input.required.audio_file[1].default).toBe('owned.mp3')
+    expect(JSON.stringify(after), `leaked ${leaked}`).not.toContain(leaked)
+  })
+
+  it('all non-file data on a refilled node stays byte-identical', () => {
+    const before = catalog()
+    const after = scrubObjectInfo(before, ['mine.png']) as any
+    expect(after.LoadImage.output).toEqual(before.LoadImage.output)
+    expect(after.LoadImage.input_order).toEqual(before.LoadImage.input_order)
+    expect(after.LoadImage.input.required.image[1].image_upload).toBe(true)
+    expect(after.CLIPTextEncode).toEqual(before.CLIPTextEncode)
+  })
+
+  it('does not mutate its input, and does not alias the owned-filenames array across specs', () => {
+    const before = catalog()
+    const owned = ['mine.png']
+    const after = scrubObjectInfo(before, owned) as any
+    expect(before.LoadImage.input.required.image[0].length).toBeGreaterThan(0)
+    // Two different specs refilled from the same `owned` list must not share
+    // one array reference — mutating one picker's list must not touch another's.
+    expect(after.LoadImage.input.required.image[0]).not.toBe(after.LoadImageMask.input.required.image[0])
+    after.LoadImage.input.required.image[0].push('sneaky.png')
+    expect(after.LoadImageMask.input.required.image[0]).toEqual(['mine.png'])
+    expect(owned).toEqual(['mine.png'])
+  })
+})
+
+// ------------------------------------------------- Stage 6 Task 6 — ownedInputFilenames
+
+describe('ownedInputFilenames — flat top-level input:: keys, prefix stripped', () => {
+  afterEach(() => { __setInputUploadsDbForTests(emptyUploadsDb) })
+
+  it('selects only this user\'s rows, strips the input:: prefix, excludes subfoldered keys', async () => {
+    const rows = [
+      { file_key: 'input::b.png' },
+      { file_key: 'input::a.png' },
+      { file_key: 'input:sub:c.png' }, // non-empty subfolder → excluded (not top-level)
+      { file_key: 'output::d.png' }, // different kind entirely → excluded
+    ]
+    const queries: { sql: string, params: unknown[] }[] = []
+    __setInputUploadsDbForTests({
+      async query(sql: string, params: unknown[] = []) {
+        queries.push({ sql, params })
+        return { rows }
+      },
+    })
+
+    const names = await ownedInputFilenames('u1')
+    expect(names).toEqual(new Set(['a.png', 'b.png']))
+    // SQL filter correctness: user-scoped, flat input:: keys only.
+    expect(queries[0]!.sql).toMatch(/user_id\s*=\s*\$1/i)
+    expect(queries[0]!.sql).toMatch(/file_key\s+LIKE\s+'input::%'/i)
+    expect(queries[0]!.params).toEqual(['u1'])
+  })
+
+  it('returns an empty set for a user who owns nothing', async () => {
+    __setInputUploadsDbForTests({ async query() { return { rows: [] } } })
+    expect(await ownedInputFilenames('nobody')).toEqual(new Set())
+  })
+})
+
 // --------------------------------------------------------------- F2 handler
 
 describe('handleHostedObjectInfo', () => {
@@ -172,5 +305,73 @@ describe('handleHostedObjectInfo', () => {
     await expect(handleHostedObjectInfo(ev('/object_info', null))).rejects.toMatchObject({ statusCode: 401 })
     fetchMock.mockResolvedValue({ ok: false })
     await expect(handleHostedObjectInfo(ev('/object_info'))).rejects.toMatchObject({ statusCode: 502 })
+  })
+})
+
+// ------------------------------------------------- Stage 6 Task 6 — refill, end to end
+
+describe('handleHostedObjectInfo — refills the pickers with the CALLER\'s own uploads', () => {
+  afterEach(() => { __setInputUploadsDbForTests(emptyUploadsDb) })
+
+  it('lists only the caller\'s own filename in LoadImage\'s combo, sorted', async () => {
+    __setInputUploadsDbForTests({
+      async query(sql: string, params: unknown[] = []) {
+        if (/select\s+file_key\s+from\s+input_uploads/i.test(sql)) {
+          const [user] = params as string[]
+          return { rows: user === 'u1' ? [{ file_key: 'input::z.png' }, { file_key: 'input::a.png' }] : [] }
+        }
+        throw new Error(`unexpected sql: ${sql}`)
+      },
+    })
+    fetchMock.mockResolvedValue({ ok: true, json: async () => catalog() })
+
+    const out = await handleHostedObjectInfo(ev('/object_info', 'u1')) as any
+    expect(out.LoadImage.input.required.image[0]).toEqual(['a.png', 'z.png'])
+  })
+
+  it('another user\'s uploads never appear, even when someone else owns files', async () => {
+    __setInputUploadsDbForTests({
+      async query(sql: string, params: unknown[] = []) {
+        if (/select\s+file_key\s+from\s+input_uploads/i.test(sql)) {
+          const [user] = params as string[]
+          return { rows: user === 'u1' ? [{ file_key: 'input::mine.png' }] : [] }
+        }
+        throw new Error(`unexpected sql: ${sql}`)
+      },
+    })
+    fetchMock.mockResolvedValue({ ok: true, json: async () => catalog() })
+
+    const out = await handleHostedObjectInfo(ev('/object_info', 'u2')) as any
+    expect(out.LoadImage.input.required.image[0]).toEqual([])
+    expect(JSON.stringify(out)).not.toContain('mine.png')
+  })
+
+  it('integration-shaped: a file uploaded via recordUpload appears in the combo on the very next fetch', async () => {
+    const uploads = new Map<string, string>()
+    __setInputUploadsDbForTests({
+      async query(sql: string, params: unknown[] = []) {
+        if (/insert\s+into\s+input_uploads/i.test(sql)) {
+          const [key, user] = params as string[]
+          if (!uploads.has(key)) uploads.set(key, user)
+          return { rows: [] }
+        }
+        if (/select\s+file_key\s+from\s+input_uploads/i.test(sql)) {
+          const [user] = params as string[]
+          return { rows: [...uploads.entries()].filter(([, u]) => u === user).map(([file_key]) => ({ file_key })) }
+        }
+        throw new Error(`unexpected sql: ${sql}`)
+      },
+    })
+
+    // The upload gate records ownership under the ENGINE's stored name — same
+    // call recordUpload makes from handleHostedUpload's success path.
+    await recordUpload('u1', canonicalUploadKey('input', '', 'freshly-uploaded.png'))
+
+    fetchMock.mockResolvedValue({ ok: true, json: async () => catalog() })
+    const mine = await handleHostedObjectInfo(ev('/object_info', 'u1')) as any
+    expect(mine.LoadImage.input.required.image[0]).toEqual(['freshly-uploaded.png'])
+
+    const other = await handleHostedObjectInfo(ev('/object_info', 'u2')) as any
+    expect(other.LoadImage.input.required.image[0]).toEqual([])
   })
 })
