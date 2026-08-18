@@ -34,6 +34,10 @@
 
 - **Per-user engine settings (Task 8b).** ComfyUI's `--multi-user` won't accept a Clerk id as-is (it mints its own uuids and requires registration), so per-user `/settings` + `/userdata` need a clerk-id→engine-id mapping layer. Shipped OFF (`SAILOR_ENGINE_MULTI_USER` unset) so hosted stays byte-identical and the routes keep 403ing (no leak). The SettingsModal degrades cleanly to defaults; local-only settings persist client-side; saved work is covered by Sailor's own per-user project store. Fine for a 5-user beta; land 8b before scaling.
 
+## Independent security review (2026-08-17, `/code-review ultra`)
+
+One finding, real, fixed (`9c2323988`): a **cross-tenant character-record hijack** the per-task + whole-branch reviews both missed. `linkTrainedCharacter`'s training-finalize path overwrote a matched `<slug>.json` on disk with the caller's LoRA while `resource_owners` kept the original owner — so a victim's character record could be silently repointed at an attacker's model, and the victim would generate on it under their own wallet. The fix adds an `ownerOf` check before the disk write (hosted-gated); a record owned by another user downgrades to the safe de-collide-new path. RED-first, local byte-identical. This is exactly the belt-and-suspenders value of one independent pass over a mutation seam that incremental review verified only for the ownership *record*, not the ownership *guard*.
+
 ## Deploy preconditions (hosted) — MUST do before first real users
 
 1. **Empty stores, or a one-time ownership backfill.** A fresh volume is empty → correct. But the projects extension ships `comfynext→sailor` volume migrations, so if the deploy volume already holds projects/LoRAs/etc., those records are ownerless → invisible + 404 to their own authors. Launch with empty `/data` stores, or backfill `resource_owners` for pre-existing content first.
