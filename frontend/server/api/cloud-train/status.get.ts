@@ -20,6 +20,8 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import os from 'node:os'
 import { linkTrainedCharacter } from '~~/server/utils/characterLink'
+import { deployMode } from '../../utils/deployMode'
+import { ownerOf } from '../../utils/resourceOwners'
 
 const exec = promisify(execCb)
 
@@ -90,6 +92,20 @@ export default defineEventHandler(async (event) => {
   // (mirrors training-queue's own displayName-or-outputName convention).
   const displayName = String(query.displayName ?? '').trim() || outputName
   if (!id) throw createError({ statusCode: 400, message: 'Missing id' })
+
+  // Stage 6 Task 3b: ownership gate, BEFORE any Replicate poll or weights
+  // download. An id with no owner row (legacy training from before this
+  // task, or a local-mode record replayed on a hosted server) is refused
+  // exactly like a mismatched owner — fail closed, never guess an owner.
+  // Same "404, not 403" discipline as training-queue/voice-clone: no
+  // existence disclosure to a caller who doesn't own this id.
+  if (deployMode() === 'hosted') {
+    const owner = await ownerOf('cloud-training', id)
+    const userId = event.context.userId
+    if (!userId || owner !== userId) {
+      throw createError({ statusCode: 404, message: 'Training not found' })
+    }
+  }
 
   // Cloud LoRA jobs are Replicate *trainings*, not predictions.
   const res = await fetch(`https://api.replicate.com/v1/trainings/${id}`, {

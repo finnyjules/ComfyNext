@@ -28,6 +28,8 @@
  */
 import { assertRateLimit } from '../../lib/rateLimit'
 import { preflightMeter } from '../../utils/requestMeter'
+import { deployMode } from '../../utils/deployMode'
+import { recordOwner } from '../../utils/resourceOwners'
 
 function sanitize(name: string): string {
   return (name || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'my-lora'
@@ -152,6 +154,14 @@ export default defineEventHandler(async (event) => {
     // Debit-on-successful-start: the training was just created on Replicate,
     // so hardware time is now being consumed — settle now, not on completion.
     await ticket?.settle('train:' + training.id)
+    // Stage 6 Task 3b: record durable ownership the moment the training id
+    // is known, so status.get.ts can gate polls/downloads to the caller who
+    // paid for this training. Guarded on a non-empty userId even though the
+    // preflight above already requires a bound meter context in hosted mode
+    // — never record a bogus/ownerless row.
+    if (deployMode() === 'hosted' && event.context.userId) {
+      await recordOwner('cloud-training', training.id, event.context.userId)
+    }
     return {
       id: training.id,
       status: training.status,
