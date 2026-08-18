@@ -11,6 +11,8 @@ import { resolveWorkerTarget } from './workerRoute'
 import { settleGraphSuccess } from './meterGraphRun'
 import { parseUploadForm } from './multipart'
 import { canonicalUploadKey, recordUpload, unsafeUploadTarget, uploadExistsOnDisk, uploadOwner } from './inputUploads'
+import { normalizeEnginePath } from './enginePath'
+import { hostedCanMutate, ownedIds, ownerOf, recordOwner, releaseOwner } from './resourceOwners'
 
 /**
  * Review C2 — an exact mirror of ComfyUI's folder_paths.annotated_filepath().
@@ -457,4 +459,226 @@ export async function harvestPendingOutputs(userId: string): Promise<void> {
       console.error('[engineGate] harvest failed for pending run', { promptId, error: e })
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 6 Task 2 — /sailor projects are per-tenant.
+// ---------------------------------------------------------------------------
+
+/**
+ * The projects extension (comfy_extras/nodes_sailor_projects.py) reads the
+ * project uuid out of the path and serves it. Its ONLY check is `_is_safe_id`
+ * — path traversal — because the store predates accounts entirely: there is no
+ * identity in the request and none on disk. Hosted ownership therefore has to
+ * be decided here, against the resource_owners registry, before the engine is
+ * ever asked.
+ *
+ * PROJECTS ARE PERSONAL. Stage 6's "a record with no owner row is curated
+ * content: readable by all" rule (resourceOwners.hostedCanRead) deliberately
+ * does NOT apply: an unowned project is somebody's orphaned saved work, not
+ * house content. Unowned reads and deletes 404 like anyone else's. The single
+ * thing an unowned uuid permits is the WRITE that creates it — that is how a
+ * new project is born, and the same write against an OWNED uuid is refused.
+ *
+ * Refusals are 404, never 403: a 403 confirms the uuid exists, which turns the
+ * gate into an enumeration oracle for exactly the ids it protects.
+ */
+export type SailorRoute =
+  | { kind: 'list' }
+  | { kind: 'project', uuid: string, access: 'read' | 'write' | 'delete' }
+  | { kind: 'reject', status: number, message: string }
+
+const PROJECTS_PREFIX = '/sailor/projects'
+
+/**
+ * A byte-faithful mirror of `_is_safe_id` in nodes_sailor_projects.py:35-45.
+ * An id the engine would refuse can never legitimately be owned, so it is
+ * refused here too rather than forwarded to find out.
+ */
+export function isSafeProjectId(value: string): boolean {
+  return value.length > 0
+    && !value.includes('/')
+    && !value.includes('\\')
+    && !value.includes('..')
+    && !value.startsWith('.')
+}
+
+/**
+ * The path/verb table, taken from the aiohttp routes themselves rather than
+ * from what the frontend happens to call. Anything the engine does not serve
+ * is refused here — an unexpected verb or an unknown subroute must never fall
+ * through to a raw proxy.
+ *
+ * Segments are percent-DECODED first because aiohttp matches and fills
+ * `match_info` from the decoded path: `%76ersions` is the versions route to
+ * the engine, and `%70-abc` is the same project on disk as `p-abc`. Keying
+ * ownership off the raw spelling would let an encoded alias walk past the
+ * owner check on its way to the identical file.
+ */
+export function sailorProjectsRoute(pathNoQuery: string, method: string): SailorRoute {
+  const verb = (method || 'GET').toUpperCase()
+  const reject = (status: number, message: string): SailorRoute => ({ kind: 'reject', status, message })
+  const badVerb = reject(405, 'This method is not available on Sailor projects')
+  const notFound = reject(404, 'Not found')
+
+  if (pathNoQuery !== PROJECTS_PREFIX && !pathNoQuery.startsWith(PROJECTS_PREFIX + '/')) return notFound
+
+  const raw = pathNoQuery.slice(PROJECTS_PREFIX.length).split('/').filter(Boolean)
+  const segs: string[] = []
+  for (const s of raw) {
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(s)
+    }
+    catch {
+      return reject(400, 'Project path is not addressable')
+    }
+    segs.push(decoded)
+  }
+
+  if (segs.length === 0) return verb === 'GET' ? { kind: 'list' } : badVerb
+
+  const uuid = segs[0]!
+  if (!isSafeProjectId(uuid)) return reject(400, 'Project id is not addressable')
+
+  if (segs.length === 1) {
+    if (verb === 'GET') return { kind: 'project', uuid, access: 'read' }
+    if (verb === 'PUT') return { kind: 'project', uuid, access: 'write' }
+    if (verb === 'DELETE') return { kind: 'project', uuid, access: 'delete' }
+    return badVerb
+  }
+
+  if (segs.length === 2) {
+    // POST .../versions and POST .../generations both call ensure_project
+    // upstream, so they CREATE a project as readily as PUT does — same rule.
+    if (segs[1] === 'versions') return verb === 'POST' ? { kind: 'project', uuid, access: 'write' } : badVerb
+    if (segs[1] === 'generations') {
+      if (verb === 'POST') return { kind: 'project', uuid, access: 'write' }
+      if (verb === 'GET') return { kind: 'project', uuid, access: 'read' }
+      return badVerb
+    }
+    return notFound
+  }
+
+  if (segs.length === 3 && segs[1] === 'versions') {
+    if (!isSafeProjectId(segs[2]!)) return reject(400, 'Version id is not addressable')
+    return verb === 'GET' ? { kind: 'project', uuid, access: 'read' } : badVerb
+  }
+
+  return notFound
+}
+
+/**
+ * Project bodies are whole workflow graphs, and the gate buffers them to
+ * forward the identical bytes — so, like the upload gate, the buffer needs an
+ * explicit ceiling (proxyRequest used to stream and never had one).
+ */
+export const MAX_SAILOR_BODY_BYTES = 100 * 1024 * 1024
+
+const SAILOR_BODY_METHODS = new Set(['PUT', 'POST', 'PATCH'])
+
+/**
+ * Forward to the engine the way the raw proxy would: same worker
+ * (`?comfyWorker=N` still selects a pool worker), same canonical path, same
+ * bytes, same content-type. NOTHING else from the client request is
+ * forwarded — no client-supplied identity headers reach the engine.
+ */
+async function forwardSailor(event: H3Event): Promise<{ status: number, body: unknown }> {
+  const { port, cleanUrl } = resolveWorkerTarget(event.path)
+  const target = `http://127.0.0.1:${port}`
+  // Forward the NORMALIZED path, not the raw one: `/comfyui/...` and folded
+  // dot segments must reach aiohttp as the path this gate actually decided on.
+  const enginePath = normalizeEnginePath(cleanUrl)
+  const method = (event.method || 'GET').toUpperCase()
+  const headers: Record<string, string> = { origin: target }
+  let body: Buffer | undefined
+
+  if (SAILOR_BODY_METHODS.has(method)) {
+    const declared = Number(getRequestHeader(event, 'content-length'))
+    if (Number.isFinite(declared) && declared > MAX_SAILOR_BODY_BYTES) {
+      throw createError({ statusCode: 413, message: 'Project body exceeds the 100 MB limit' })
+    }
+    const raw = await readRawBody(event, false)
+    if (raw && raw.length > MAX_SAILOR_BODY_BYTES) {
+      throw createError({ statusCode: 413, message: 'Project body exceeds the 100 MB limit' })
+    }
+    body = raw ?? undefined
+    const contentType = getRequestHeader(event, 'content-type')
+    if (contentType) headers['content-type'] = contentType
+  }
+
+  const res = await fetch(`${target}${enginePath}`, { method, headers, body: body as any })
+  const text = await res.text()
+  try {
+    return { status: res.status, body: JSON.parse(text) }
+  }
+  catch {
+    return { status: res.status, body: text }
+  }
+}
+
+/**
+ * The index is rebuilt from the caller's own ownership rows — allowlist, never
+ * spread (Stage 5 review M5): only `projects` leaves this function, so a key
+ * the extension adds later cannot ride out unfiltered.
+ */
+async function listOwnedProjects(event: H3Event, userId: string): Promise<unknown> {
+  const { status, body } = await forwardSailor(event)
+  if (status < 200 || status >= 300) {
+    throw createError({ statusCode: 502, message: 'Engine projects list unavailable' })
+  }
+  const owned = await ownedIds('project', userId)
+  const entries = (body as { projects?: unknown })?.projects
+  const list = Array.isArray(entries) ? entries : []
+  return { projects: list.filter(e => owned.has(String((e as { uuid?: unknown })?.uuid))) }
+}
+
+export async function handleHostedSailor(event: H3Event): Promise<unknown> {
+  const userId = event.context.userId
+  if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+
+  const [pathNoQuery] = normalizeEnginePath(event.path).split('?')
+  const route = sailorProjectsRoute(pathNoQuery ?? '', event.method)
+  if (route.kind === 'reject') throw createError({ statusCode: route.status, message: route.message })
+  if (route.kind === 'list') return listOwnedProjects(event, userId)
+
+  const owner = await ownerOf('project', route.uuid)
+  // Same 404 for "owned by someone else" and "does not exist" — the caller
+  // must not be able to tell those apart.
+  const missing = () => createError({ statusCode: 404, message: 'Project not found' })
+  if (route.access === 'read' || route.access === 'delete') {
+    if (owner !== userId) throw missing()
+  }
+  else if (owner !== null && !hostedCanMutate(owner, userId)) {
+    throw missing()
+  }
+
+  const { status, body } = await forwardSailor(event)
+  setResponseStatus(event, status)
+  const wrote = status >= 200 && status < 300
+
+  // Claim only what the ENGINE actually created: a refused write must not
+  // leave an ownership row pointing at a project that does not exist.
+  if (wrote && route.access === 'write' && owner === null) {
+    try {
+      await recordOwner('project', route.uuid, userId)
+    }
+    catch (e) {
+      // The write already happened; a missing row fails CLOSED (the project is
+      // invisible and unreadable to everyone, including its author, until the
+      // next save re-claims it) rather than exposing it.
+      console.error('[engineGate] failed to record project ownership', { uuid: route.uuid, error: e })
+    }
+  }
+  if (wrote && route.access === 'delete') {
+    try {
+      await releaseOwner('project', route.uuid)
+    }
+    catch (e) {
+      // Harmless the other way round: the row outlives a deleted project and
+      // keeps the uuid claimed by its author, which no one else can use.
+      console.error('[engineGate] failed to release project ownership', { uuid: route.uuid, error: e })
+    }
+  }
+  return body
 }

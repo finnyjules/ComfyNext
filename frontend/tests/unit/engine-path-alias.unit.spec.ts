@@ -52,11 +52,13 @@ const handleHostedQueueGet = vi.fn(async () => ({ handler: 'queue' }))
 const handleHostedInterrupt = vi.fn(async () => ({ handler: 'interrupt' }))
 const handleHostedObjectInfo = vi.fn(async () => ({ handler: 'objectInfo' }))
 const handleHostedUpload = vi.fn(async () => ({ handler: 'upload' }))
+const handleHostedSailor = vi.fn(async () => ({ handler: 'sailorProjects' }))
 vi.mock('../../server/utils/engineGate', () => ({
   handleHostedQueueGet: (...a: any[]) => handleHostedQueueGet(...(a as [])),
   handleHostedInterrupt: (...a: any[]) => handleHostedInterrupt(...(a as [])),
   handleHostedObjectInfo: (...a: any[]) => handleHostedObjectInfo(...(a as [])),
   handleHostedUpload: (...a: any[]) => handleHostedUpload(...(a as [])),
+  handleHostedSailor: (...a: any[]) => handleHostedSailor(...(a as [])),
 }))
 
 let middleware: (event: any) => Promise<any>
@@ -75,6 +77,7 @@ beforeEach(() => {
   handleHostedInterrupt.mockClear()
   handleHostedObjectInfo.mockClear()
   handleHostedUpload.mockClear()
+  handleHostedSailor.mockClear()
 })
 afterEach(() => { mode = 'local' })
 
@@ -274,10 +277,70 @@ describe('hosted mode: alias forms hit the same gates as canonical paths', () =>
   // reading that handler in ComfyUI's server.py — what does it read, what does
   // it write, whose data is in scope? "It's a static GET" is not an audit.
   it('still raw-proxies the engine paths that survived the round-2 handler audit', async () => {
-    for (const [p, m] of [['/system_stats', 'GET'], ['/extensions/foo.js', 'GET'], ['/global_subgraphs', 'GET'], ['/sailor/thing', 'GET']] as const) {
+    for (const [p, m] of [['/system_stats', 'GET'], ['/extensions/foo.js', 'GET'], ['/global_subgraphs', 'GET']] as const) {
       proxyRequest.mockClear()
       await middleware(ev(p, m))
       expect(proxyRequest, `${m} ${p} must still proxy`).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  // STAGE 6 TASK 2 — `/sailor/thing` used to sit in the list above, and its
+  // removal is the lesson landing a second time. `/sailor` was allowlisted
+  // because it is Sailor's OWN namespace, which is a fact about the path and
+  // not about the handlers: comfy_extras/nodes_sailor_projects.py reads the
+  // project uuid off the path, checks `_is_safe_id` (traversal only) and
+  // serves it, with no identity anywhere in the request or on disk. So this
+  // one entry published every tenant's saved graphs — list, read, overwrite,
+  // delete — plus the install-wide spend ledger, to every signed-in user.
+  // /sailor is now the worked example of the round-2 rule: an allowlist entry
+  // is a claim about a HANDLER, and it needs the handler audit before it is
+  // made. Projects are gated, spend is refused, and the still-unaudited rest
+  // of the extension keeps today's behaviour under a NAMED branch so the gap
+  // is visible rather than implied by a list.
+  it('T2: routes every /sailor/projects alias to the ownership gate, never the raw proxy', async () => {
+    for (const [p, m] of [
+      ['/sailor/projects', 'GET'],
+      ['/sailor/projects/abc', 'GET'],
+      ['/sailor/projects/abc', 'PUT'],
+      ['/sailor/projects/abc', 'DELETE'],
+      ['/sailor/projects/abc/versions', 'POST'],
+      ['/sailor/projects/abc/generations', 'GET'],
+      ['/comfyui/sailor/projects', 'GET'],
+      ['/comfyui/sailor/projects/abc', 'DELETE'],
+      ['/sailor/projects?comfyWorker=1', 'GET'],
+      ['/sailor/assets/../projects/abc', 'GET'],
+    ] as const) {
+      proxyRequest.mockClear(); handleHostedSailor.mockClear()
+      await middleware(ev(p, m))
+      expect(handleHostedSailor, `${m} ${p} must be gated`).toHaveBeenCalledTimes(1)
+      expect(proxyRequest, `${m} ${p} must not raw-proxy`).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T2: refuses /sailor/spend — it aggregates the whole install\'s ledger', async () => {
+    for (const p of ['/sailor/spend', '/sailor/spend/summary', '/comfyui/sailor/spend/summary']) {
+      expect(await status(p), p).toBe(403)
+    }
+    expect(proxyRequest, '/sailor/spend must never reach the engine').not.toHaveBeenCalled()
+    expect(handleHostedSailor).not.toHaveBeenCalled()
+  })
+
+  it('T2: the /api mirror of a projects route is refused outright, not proxied', async () => {
+    // ComfyUI mirrors EVERY route under /api (server.py:1207-1218), custom
+    // extensions included. `/sailor` is deliberately NOT in
+    // ENGINE_ROUTE_PREFIXES, so the mirror never normalizes and the
+    // deny-by-default tail refuses it — fail closed, no engine contact.
+    for (const p of ['/api/sailor/projects', '/api/sailor/projects/abc', '/comfyui/api/sailor/projects/abc']) {
+      expect(await status(p), p).toBe(403)
+    }
+    expect(proxyRequest).not.toHaveBeenCalled()
+  })
+
+  it('T2: the un-audited rest of the /sailor extension still raw-proxies', async () => {
+    for (const p of ['/sailor/assets', '/sailor/shader_effects', '/sailor/output_listing', '/sailor/input_thumbnail']) {
+      proxyRequest.mockClear()
+      await middleware(ev(p, 'GET'))
+      expect(proxyRequest, `${p} must still proxy`).toHaveBeenCalledTimes(1)
     }
   })
 
@@ -373,6 +436,9 @@ describe('local mode is byte-identical — no gate, no 403, same proxy target', 
     // must still raw-proxy locally — no scrubber, no overwrite sniff, no 403.
     ['/comfyui/object_info', 'GET'], ['/upload/image', 'POST'], ['/gate/resume', 'POST'],
     ['/extensions/../history', 'GET'],
+    // Stage 6 Task 2: the projects gate and the spend refusal are hosted-only.
+    ['/sailor/projects', 'GET'], ['/sailor/projects/abc', 'PUT'], ['/sailor/projects/abc', 'DELETE'],
+    ['/sailor/projects/abc/versions', 'POST'], ['/sailor/spend/summary', 'GET'],
   ] as const
 
   it('proxies every path the hosted gates intercept', async () => {
@@ -384,6 +450,7 @@ describe('local mode is byte-identical — no gate, no 403, same proxy target', 
     expect(handleMeteredPrompt).not.toHaveBeenCalled()
     expect(handleHostedQueueGet).not.toHaveBeenCalled()
     expect(handleHostedInterrupt).not.toHaveBeenCalled()
+    expect(handleHostedSailor, 'local mode must never enter the projects gate').not.toHaveBeenCalled()
   })
 
   it('sends the pre-Stage-5 target URL for each alias (normalization must not reach the proxy)', async () => {
@@ -395,6 +462,9 @@ describe('local mode is byte-identical — no gate, no 403, same proxy target', 
       ['/comfyui/api/queue', 'http://127.0.0.1:8188/api/queue'],
       ['/comfyui/internal/files/output', 'http://127.0.0.1:8188/internal/files/output'],
       ['/comfyui/settings', 'http://127.0.0.1:8188/settings'],
+      ['/sailor/projects', 'http://127.0.0.1:8188/sailor/projects'],
+      ['/comfyui/sailor/projects/abc', 'http://127.0.0.1:8188/sailor/projects/abc'],
+      ['/sailor/spend/summary', 'http://127.0.0.1:8188/sailor/spend/summary'],
       ['/queue?comfyWorker=2', 'http://127.0.0.1:8191/queue'],
       ['/comfyui', 'http://127.0.0.1:8188/'],
     ]

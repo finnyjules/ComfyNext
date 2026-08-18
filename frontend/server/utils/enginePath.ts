@@ -107,6 +107,7 @@ export type EngineDecision =
   | { kind: 'interrupt' }
   | { kind: 'objectInfo' }
   | { kind: 'upload' }
+  | { kind: 'sailorProjects' }
   | { kind: 'proxy' }
   | { kind: 'forbid', message: string }
 
@@ -134,12 +135,21 @@ export type EngineDecision =
  * `/ws` is deliberately here: WebSocket gating is Task 7's job and this is a
  * plain HTTP middleware; refusing it would break the canvas without closing
  * anything (the upgrade is dispatched in nuxt.config, not here).
+ *
+ * STAGE 6 — `/sailor` WAS on this list and is the worked example of the lesson
+ * above. It looked like Sailor's own namespace, so nobody read the handlers:
+ * `comfy_extras/nodes_sailor_projects.py` takes the project uuid off the path,
+ * checks `_is_safe_id` (traversal only) and serves it. Zero identity, in the
+ * request or on disk. So the entry silently published every tenant's saved
+ * work, and the install-wide spend ledger, to every signed-in user. Projects
+ * and spend now have explicit branches below; the REMAINING `/sailor/*`
+ * extension routes are still un-audited and keep today's raw behaviour via a
+ * deliberate, named branch rather than an unexamined allowlist entry.
  */
 const HOSTED_RAW_ALLOW = [
   '/system_stats',
   '/extensions',
   '/global_subgraphs',
-  '/sailor',
   '/ws',
 ]
 
@@ -209,6 +219,21 @@ export function hostedEngineDecision(enginePath: string, method: string): Engine
     if (verb === 'POST') return { kind: 'upload' }
     return { kind: 'forbid', message: 'Only POST /upload is available in hosted mode' }
   }
+
+  // Stage 6 Task 2 — the durable-projects extension trusts its path uuid with
+  // zero identity: `_is_safe_id` is the ONLY check between a signed-in tenant
+  // and any other tenant's saved graph. Ownership is enforced HERE, in the
+  // proxy layer, against the resource_owners registry, because the engine has
+  // nowhere to keep it. The spend summary aggregates the whole install's
+  // ledger across every project and user — operator data, not tenant data.
+  if (match(p, '/sailor/spend')) return { kind: 'forbid', message: 'Spend summary is operator data in hosted mode' }
+  if (match(p, '/sailor/projects')) return { kind: 'sailorProjects' }
+  // The rest of the /sailor extension (assets, input/output listings, shader
+  // effects, timeline render, model downloads) has NOT had the handler audit
+  // this list demands — it keeps its pre-Stage-6 raw behaviour so the hosted
+  // canvas keeps working, and is named here so the gap is visible instead of
+  // hiding inside HOSTED_RAW_ALLOW. Auditing it is a follow-up, not a claim.
+  if (match(p, '/sailor')) return { kind: 'proxy' }
 
   if (HOSTED_RAW_ALLOW.some(a => match(p, a))) return { kind: 'proxy' }
   return { kind: 'forbid', message: 'This engine endpoint is not available in hosted mode' }
