@@ -38,7 +38,7 @@ const controls: ControlSpec[] = [
   { key: 'shadow', label: 'Shadow', kind: 'slider', min: 0, max: 100, step: 1, default: 0, group: 'Color' },
   // Stroke — an outline along each ring's inner + outer band edges (0 = off)
   { key: 'strokeWidth', label: 'Stroke', kind: 'slider', min: 0, max: 0.45, step: 0.01, default: 0, group: 'Stroke' },
-  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Stroke' },
+  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Stroke', showIf: { key: 'strokeWidth', notEquals: 0 } },
   // Motion
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 8, step: 1, default: 1, group: 'Motion' },
   { key: 'direction', label: 'Direction', kind: 'select', options: ['forward', 'reverse'], default: 'forward', group: 'Motion' },

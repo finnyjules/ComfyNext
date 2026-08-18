@@ -42,7 +42,7 @@ const controls: ControlSpec[] = [
   // Color
   { key: 'frontMode', label: 'Text face', kind: 'select', options: ['text on band', 'text only'], default: 'text on band', group: 'Color' },
   { key: 'textColor', label: 'Text color', kind: 'color', default: '#ffffff', group: 'Color' },
-  { key: 'bandColor', label: 'Band color', kind: 'color', default: '#000000', group: 'Color' },
+  { key: 'bandColor', label: 'Band color', kind: 'color', default: '#000000', group: 'Color', showIf: { key: 'frontMode', equals: 'text on band' } },
   // Iridescent underside ramp (multi-stop). Violet intentionally left out per house style — add a
   // stop in the control if you want the exact reference ramp.
   { key: 'fills', label: 'Underside gradient', kind: 'fillList', default: defaultFillsFor(5, 'spiral'), group: 'Color' },

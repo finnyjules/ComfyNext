@@ -16,6 +16,10 @@ import { onionburstEffect } from '../../app/lib/spacetype/effects/onionburst'
 import { shutterEffect } from '../../app/lib/spacetype/effects/shutter'
 import { streamerEffect } from '../../app/lib/spacetype/effects/streamer'
 import { stringEffect } from '../../app/lib/spacetype/effects/string'
+import { spiralEffect } from '../../app/lib/spacetype/effects/spiral'
+import { contourEffect } from '../../app/lib/spacetype/effects/contour'
+import { tunnelEffect } from '../../app/lib/spacetype/effects/tunnel'
+import { tickerEffect } from '../../app/lib/spacetype/effects/ticker'
 
 // Real exports are `coilEffect`/`cylinderEffect`/`fieldEffect`/`ribbonEffect` (SpaceTypeEffect
 // objects with a `.controls` array), not bare `coil`/`cylinder`/`field`/`ribbon` — the brief's
@@ -435,5 +439,55 @@ describe('task-5b: melt/onionburst/shutter/streamer/string mode-specific control
       expect(showIfVisible(c, readWith('textureMode', 'Text'))).toBe(false)
       expect(showIfVisible(c, readWith('textureMode', 'Stripes'))).toBe(false)
     }
+  })
+})
+
+/**
+ * Audit gap fixes — 4 controls that render inert output with no way to tell why:
+ *  - spiral: bandColor only feeds the front face's band texture; FACE_FRAG's
+ *    uNoStripes>0.5 branch (frontMode==='text only') early-returns with uTextColor,
+ *    never sampling the band texture, so bandColor only matters for 'text on band'.
+ *  - contour/tunnel: FRAG only blends uStrokeColor when uStroke (strokeWidth) > 0.
+ *  - ticker: the stroke mesh is only built when strokeWidth > 0 (see buildTickerStrokeData
+ *    call inside `if (strokeWidth > 0)`); `alternate` drives `i % 2 === 1`, which can never
+ *    be true when rowCount === 1.
+ */
+describe('audit gap fixes: spiral/contour/tunnel/ticker mode-specific controls gated', () => {
+  const byKey = (controls: any[], effectName: string, key: string) => {
+    const c = controls.find(x => x.key === key)
+    expect(c, `${effectName}.${key} exists`).toBeTruthy()
+    expect(c.showIf, `${effectName}.${key} has showIf`).toBeTruthy()
+    return c
+  }
+  const readWith = (key: string, value: unknown) => (k: string) => (k === key ? (value as any) : undefined)
+
+  it('spiral: bandColor shown only when frontMode=text on band', () => {
+    const c = byKey(spiralEffect.controls as any[], 'spiral', 'bandColor')
+    expect(showIfVisible(c, readWith('frontMode', 'text only'))).toBe(false)
+    expect(showIfVisible(c, readWith('frontMode', 'text on band'))).toBe(true)
+  })
+
+  it('contour: strokeColor hidden when strokeWidth=0, visible otherwise', () => {
+    const c = byKey(contourEffect.controls as any[], 'contour', 'strokeColor')
+    expect(showIfVisible(c, readWith('strokeWidth', 0))).toBe(false)
+    expect(showIfVisible(c, readWith('strokeWidth', 5))).toBe(true)
+  })
+
+  it('tunnel: strokeColor hidden when strokeWidth=0, visible otherwise', () => {
+    const c = byKey(tunnelEffect.controls as any[], 'tunnel', 'strokeColor')
+    expect(showIfVisible(c, readWith('strokeWidth', 0))).toBe(false)
+    expect(showIfVisible(c, readWith('strokeWidth', 5))).toBe(true)
+  })
+
+  it('ticker: strokeColor hidden when strokeWidth=0, visible otherwise', () => {
+    const c = byKey(tickerEffect.controls as any[], 'ticker', 'strokeColor')
+    expect(showIfVisible(c, readWith('strokeWidth', 0))).toBe(false)
+    expect(showIfVisible(c, readWith('strokeWidth', 5))).toBe(true)
+  })
+
+  it('ticker: alternate hidden when rowCount=1, visible otherwise', () => {
+    const c = byKey(tickerEffect.controls as any[], 'ticker', 'alternate')
+    expect(showIfVisible(c, readWith('rowCount', 1))).toBe(false)
+    expect(showIfVisible(c, readWith('rowCount', 3))).toBe(true)
   })
 })

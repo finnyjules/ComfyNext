@@ -29,7 +29,7 @@ const controls: ControlSpec[] = [
   { key: 'rowCount', label: 'Rows', kind: 'slider', min: 1, max: 12, step: 1, default: 3, group: 'Ribbon' },
   { key: 'rowSpacing', label: 'Row spacing', kind: 'slider', min: 0.4, max: 4, step: 0.05, default: 1.4, group: 'Ribbon' },
   { key: 'rowPhase', label: 'Row phase', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Ribbon' },
-  { key: 'alternate', label: 'Alternate', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Ribbon' },
+  { key: 'alternate', label: 'Alternate', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Ribbon', showIf: { key: 'rowCount', notEquals: 1 } },
   { key: 'segments', label: 'Segments', kind: 'slider', min: 16, max: 400, step: 2, default: 160, group: 'Wave' },
   { key: 'waveAmplitude', label: 'Wave amount', kind: 'slider', min: 0, max: 6, step: 0.05, default: 0, group: 'Wave' },
   { key: 'waveFrequency', label: 'Wave freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.5, group: 'Wave' },
@@ -37,7 +37,7 @@ const controls: ControlSpec[] = [
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.6, group: 'Motion' },
   // Rails along the band's two long edges. Default 0 (off) so existing scenes are unchanged.
   { key: 'strokeWidth', label: 'Stroke', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0, group: 'Stroke' },
-  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Stroke' },
+  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Stroke', showIf: { key: 'strokeWidth', notEquals: 0 } },
   // Seeded 'ticker', not 'ribbon': tests/unit/spacetype-palette.unit.spec.ts holds every effect's
   // fillList default to defaultFillsFor(n, <that effect's own id>).
   { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'ticker'), group: 'Color' },
