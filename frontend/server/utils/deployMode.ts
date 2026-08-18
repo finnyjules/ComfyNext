@@ -16,3 +16,29 @@ export function deployMode(): DeployMode {
 export function isHosted(): boolean {
   return deployMode() === 'hosted'
 }
+
+/**
+ * Stage 6 Task 8 — the per-user engine settings/userdata switch. OFF unless
+ * `SAILOR_ENGINE_MULTI_USER` is explicitly set truthy. It gates BOTH the
+ * engine's `--multi-user` flag (start.sh) and the proxy's userScoped
+ * route-opening (comfyui-proxy.ts) so the two can never disagree: with it
+ * unset, `/settings` + `/userdata` stay 403 in hosted (byte-identical to
+ * today, no shared-dir leak) and ComfyUI stays single-user.
+ *
+ * DANGER — do NOT set this until an engine-user REGISTRATION layer exists.
+ * Under `--multi-user`, ComfyUI's get_request_user_id raises `KeyError`
+ * (→ 401) for any `comfy-user` id not present in `user/users.json`, INCLUDING
+ * `default`. Clerk ids are never registered there (and POST /users mints its
+ * OWN id rather than accepting one), so enabling this without a
+ * clerk-id → engine-user mapping 401s every settings/userdata request. See the
+ * Task 8 report for the two open blockers (registration + the cross-origin
+ * canvas iframe hitting /settings directly without the header).
+ *
+ * Evaluated per call (never cached), same as deployMode().
+ */
+export function engineMultiUser(): boolean {
+  const v = process.env.SAILOR_ENGINE_MULTI_USER
+  if (typeof v !== 'string') return false
+  const s = v.trim().toLowerCase()
+  return s !== '' && s !== '0' && s !== 'false'
+}

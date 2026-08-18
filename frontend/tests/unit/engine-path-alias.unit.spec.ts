@@ -37,9 +37,14 @@ const proxyRequest = vi.fn(async (_event: any, url: string, _opts?: any) => ({ p
 g.proxyRequest = proxyRequest
 
 let mode: 'local' | 'hosted' = 'local'
+// Stage 6 Task 8 — the per-user settings/userdata switch. OFF by default here,
+// so settings/userdata decide as userScoped but the middleware refuses them 403
+// (the shipping default); the dedicated block below flips it on.
+let multiUser = false
 vi.mock('../../server/utils/deployMode', () => ({
   deployMode: () => mode,
   isHosted: () => mode === 'hosted',
+  engineMultiUser: () => multiUser,
 }))
 
 const handleMeteredPrompt = vi.fn(async () => ({ handler: 'metered' }))
@@ -55,6 +60,7 @@ const handleHostedUpload = vi.fn(async () => ({ handler: 'upload' }))
 const handleHostedSailor = vi.fn(async () => ({ handler: 'sailorProjects' }))
 const handleHostedSailorData = vi.fn(async () => ({ handler: 'sailorData' }))
 const handleHostedOutputListing = vi.fn(async () => ({ handler: 'outputListing' }))
+const handleHostedUserScoped = vi.fn(async () => ({ handler: 'userScoped' }))
 vi.mock('../../server/utils/engineGate', () => ({
   handleHostedQueueGet: (...a: any[]) => handleHostedQueueGet(...(a as [])),
   handleHostedInterrupt: (...a: any[]) => handleHostedInterrupt(...(a as [])),
@@ -63,6 +69,7 @@ vi.mock('../../server/utils/engineGate', () => ({
   handleHostedSailor: (...a: any[]) => handleHostedSailor(...(a as [])),
   handleHostedSailorData: (...a: any[]) => handleHostedSailorData(...(a as [])),
   handleHostedOutputListing: (...a: any[]) => handleHostedOutputListing(...(a as [])),
+  handleHostedUserScoped: (...a: any[]) => handleHostedUserScoped(...(a as [])),
 }))
 
 let middleware: (event: any) => Promise<any>
@@ -84,6 +91,8 @@ beforeEach(() => {
   handleHostedSailor.mockClear()
   handleHostedSailorData.mockClear()
   handleHostedOutputListing.mockClear()
+  handleHostedUserScoped.mockClear()
+  multiUser = false
 })
 afterEach(() => { mode = 'local' })
 
@@ -285,9 +294,54 @@ describe('hosted mode: alias forms hit the same gates as canonical paths', () =>
   })
 
   it('denies unlisted engine paths by default', async () => {
-    for (const p of ['/comfyui/settings', '/comfyui/userdata/x', '/comfyui/models/checkpoints', '/comfyui/free', '/comfyui/api/settings']) {
+    for (const p of ['/comfyui/models/checkpoints', '/comfyui/free', '/comfyui/api/free']) {
       expect(await status(p), p).toBe(403)
     }
+  })
+
+  // STAGE 6 TASK 8 — /settings + /userdata are userScoped, and gated on the
+  // engineMultiUser() switch. OFF (the shipping default) they 403 exactly like
+  // an unlisted path — no shared-dir leak. ON they route to the per-user gate.
+  it('T8: settings + userdata 403 while the multi-user switch is off (every guarded alias)', async () => {
+    // The guarded spellings — reachable via the /comfyui or /api PROXY_PREFIX —
+    // reach the hosted decision and are refused 403 with the switch off.
+    for (const p of ['/comfyui/settings', '/api/settings', '/comfyui/api/settings',
+      '/comfyui/userdata/x', '/api/userdata/x', '/comfyui/api/v2/userdata']) {
+      expect(await status(p), p).toBe(403)
+      expect(handleHostedUserScoped, p).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T8: the BARE canonical spellings are not proxy-prefixed — they pass through to Nitro, never the engine', async () => {
+    // `/settings`, `/userdata`, `/v2/userdata` are deliberately NOT in
+    // PROXY_PREFIXES, so they never reach the hosted decision OR the raw proxy;
+    // Nitro simply 404s them. Safe (no engine contact), just not a 403.
+    for (const p of ['/settings', '/userdata/x', '/v2/userdata']) {
+      expect(await status(p), p).toBe('passthrough')
+      expect(proxyRequest, p).not.toHaveBeenCalled()
+      expect(handleHostedUserScoped, p).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T8: with the switch on, every alias routes to the userScoped gate, never the raw proxy', async () => {
+    multiUser = true
+    for (const [p, m] of [
+      ['/comfyui/settings', 'GET'], ['/comfyui/settings/Comfy.Locale', 'POST'],
+      ['/api/settings', 'GET'], ['/comfyui/api/settings', 'GET'],
+      ['/comfyui/userdata/x', 'GET'], ['/api/userdata/x', 'DELETE'],
+      ['/comfyui/api/v2/userdata', 'GET'], ['/comfyui/userdata/a.json/move/b.json', 'POST'],
+    ] as const) {
+      handleHostedUserScoped.mockClear(); proxyRequest.mockClear()
+      await middleware(ev(p, m))
+      expect(handleHostedUserScoped, `${m} ${p} must be user-scoped`).toHaveBeenCalledTimes(1)
+      expect(proxyRequest, `${m} ${p} must not raw-proxy`).not.toHaveBeenCalled()
+    }
+  })
+
+  it('T8: a verb the routes do not serve is refused, switch on or off', async () => {
+    multiUser = true
+    expect(await status('/comfyui/settings', 'PUT')).toBe(403)
+    expect(handleHostedUserScoped).not.toHaveBeenCalled()
   })
 
   // ROUND 2 — these expectations MOVED, and the move is the lesson.

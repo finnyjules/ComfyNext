@@ -53,11 +53,31 @@ if [ -d /data ]; then
   fi
 fi
 
+# Stage 6 Task 8 — per-user settings + userdata. When SAILOR_ENGINE_MULTI_USER
+# is set truthy, run ComfyUI with --multi-user so UserManager files each
+# tenant's settings/userdata under user/<id>/, keyed off the `comfy-user`
+# header the authenticated Nuxt proxy injects (server/middleware/comfyui-proxy.ts,
+# handleHostedUserScoped). The SAME env gates the proxy's userScoped
+# route-opening (deployMode.ts engineMultiUser()), so the flag and the header
+# injection can never disagree. Local dev launches main.py directly (never this
+# script) and always stays single-user.
+#
+# DANGER — leave this UNSET until an engine-user registration layer lands.
+# Under --multi-user, get_request_user_id raises KeyError (→ 401) for any
+# `comfy-user` id absent from user/users.json, INCLUDING `default`; Clerk ids
+# are never registered there. See the Task 8 report for the open blockers.
+MULTI_USER_ARG=""
+case "$(printf '%s' "${SAILOR_ENGINE_MULTI_USER:-}" | tr '[:upper:]' '[:lower:]')" in
+  ''|0|false) : ;;
+  *) MULTI_USER_ARG="--multi-user" ;;
+esac
+
 # 1) ComfyUI backend (CPU-only) on :8188.
 cd /app
 python main.py \
   --listen 0.0.0.0 --port 8188 \
   --cpu --disable-auto-launch \
+  ${MULTI_USER_ARG:+$MULTI_USER_ARG} \
   --output-directory /data/output \
   --input-directory /data/input \
   --temp-directory /data/temp \

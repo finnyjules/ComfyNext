@@ -4,9 +4,9 @@
 
 import { resolveWorkerTarget } from '../utils/workerRoute'
 import { PROXY_PREFIXES } from '../utils/authGuard'
-import { deployMode } from '../utils/deployMode'
+import { deployMode, engineMultiUser } from '../utils/deployMode'
 import { handleMeteredPrompt } from '../utils/meterGraphRun'
-import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload, handleHostedSailor, handleHostedSailorData, handleHostedOutputListing } from '../utils/engineGate'
+import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload, handleHostedSailor, handleHostedSailorData, handleHostedOutputListing, handleHostedUserScoped } from '../utils/engineGate'
 import { normalizeEnginePath, hostedEngineDecision } from '../utils/enginePath'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
@@ -16,6 +16,17 @@ const NITRO_ROUTE_PREFIXES = ['/view', '/history']
 
 export default defineEventHandler(async (event) => {
   const path = event.path
+
+  // Stage 6 Task 8 — HEADER SPOOF RULE. A client must NEVER supply its own
+  // `comfy-user`: under --multi-user the engine treats that header as identity,
+  // so an inbound one would let any caller read/write another tenant's
+  // settings + userdata. Strip it here, before ANY branch or proxy, in EVERY
+  // mode. Local is single-user so the header is inert there, but stripping
+  // uniformly guarantees no raw-proxy or forward can ever carry a
+  // client-injected id to the engine. The one legitimate `comfy-user` is set
+  // server-side in handleHostedUserScoped, downstream of this strip.
+  const reqHeaders = event.node?.req?.headers as Record<string, unknown> | undefined
+  if (reqHeaders && 'comfy-user' in reqHeaders) delete reqHeaders['comfy-user']
 
   // Skip proxying for Nitro's own API routes and server routes
   if (NITRO_API_PATHS.some((p) => path === p || path.startsWith(p + '?'))) return
@@ -56,6 +67,15 @@ export default defineEventHandler(async (event) => {
     // are filtered to owned rows and deletes 404 when the file/asset isn't the
     // caller's — the engine is never touched on an ownership miss.
     if (decision.kind === 'sailorData') return handleHostedSailorData(event)
+    // Stage 6 Task 8: ComfyUI's per-user settings + userdata, forwarded with a
+    // server-set `comfy-user`. Gated on engineMultiUser() — the engine must be
+    // running --multi-user for these to be per-user (single-user would make
+    // /userdata a SHARED cross-tenant dir). With the switch off (the default)
+    // they stay 403, exactly as before this task.
+    if (decision.kind === 'userScoped') {
+      if (!engineMultiUser()) throw createError({ statusCode: 403, message: 'Per-user engine data is not enabled in hosted mode' })
+      return handleHostedUserScoped(event)
+    }
     // Deny by default: an engine path that isn't explicitly allowlisted for
     // hosted raw proxying is refused, so a route nobody has audited can
     // never become a cross-tenant surface merely by existing upstream.

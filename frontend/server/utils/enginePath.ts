@@ -22,6 +22,18 @@
  * every local decision ignores the result (see comfyui-proxy.ts).
  */
 
+/**
+ * STAGE 6 TASK 8 — ComfyUI's per-user settings + userdata surfaces. Under
+ * `--multi-user` (hosted only, opt-in) the engine reads the `comfy-user`
+ * request header in UserManager.get_request_user_id and files these under
+ * `user/<id>/`. These MUST also be in ENGINE_ROUTE_PREFIXES below so the
+ * `/api/...` mirror spelling collapses to the canonical form like every other
+ * engine route (a free bypass otherwise). `/v2/userdata` is listed separately
+ * from `/userdata` because the prefix match is boundary-aware: `/userdata`
+ * never matches `/v2/userdata`.
+ */
+export const USER_SCOPED_PREFIXES = ['/settings', '/userdata', '/v2/userdata']
+
 /** Engine routes the `/api` mirror actually serves. Order irrelevant. */
 export const ENGINE_ROUTE_PREFIXES = [
   '/prompt',
@@ -36,7 +48,11 @@ export const ENGINE_ROUTE_PREFIXES = [
   '/ws',
   '/extensions',
   '/global_subgraphs',
+  ...USER_SCOPED_PREFIXES,
 ]
+
+/** Verbs the settings/userdata aiohttp routes serve (POST covers /userdata/{file}/move/{dest}). */
+const USER_SCOPED_METHODS = new Set(['GET', 'POST', 'DELETE'])
 
 function splitQuery(path: string): [string, string] {
   const i = path.indexOf('?')
@@ -110,6 +126,7 @@ export type EngineDecision =
   | { kind: 'upload' }
   | { kind: 'sailorProjects' }
   | { kind: 'sailorData' }
+  | { kind: 'userScoped' }
   | { kind: 'proxy' }
   | { kind: 'forbid', message: string }
 
@@ -330,6 +347,19 @@ export function hostedEngineDecision(enginePath: string, method: string): Engine
   if (match(p, '/upload')) {
     if (verb === 'POST') return { kind: 'upload' }
     return { kind: 'forbid', message: 'Only POST /upload is available in hosted mode' }
+  }
+
+  // Stage 6 Task 8 — ComfyUI's per-user settings + userdata. Forwarded with a
+  // server-set `comfy-user` header (the authenticated caller) so the engine,
+  // running --multi-user, files each tenant's data under user/<id>/. The verbs
+  // the aiohttp routes serve are GET/POST/DELETE (POST also covers
+  // /userdata/{file}/move/{dest}); every other verb is refused. This decision
+  // is PURE — whether the userScoped path is actually ACTIVATED (vs left 403)
+  // is the middleware's env gate, since the engine must be --multi-user for it
+  // to be safe (single-user would make /userdata a shared cross-tenant dir).
+  if (USER_SCOPED_PREFIXES.some(a => match(p, a))) {
+    if (USER_SCOPED_METHODS.has(verb)) return { kind: 'userScoped' }
+    return { kind: 'forbid', message: 'This method is not available on per-user engine data in hosted mode' }
   }
 
   // Stage 6 Task 2 — the durable-projects extension trusts its path uuid with

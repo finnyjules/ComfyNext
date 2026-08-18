@@ -1028,3 +1028,71 @@ export async function handleHostedSailorData(event: H3Event): Promise<unknown> {
   // Unreachable — sailorDataRoute returns a reject for everything else.
   throw notFound()
 }
+
+// ---------------------------------------------------------------------------
+// Stage 6 Task 8 — per-user engine settings + userdata (ComfyUI --multi-user).
+// ---------------------------------------------------------------------------
+
+/**
+ * The buffer ceiling for a settings/userdata write. Same reasoning as the
+ * upload and sailor gates: the body is held to forward the identical bytes, so
+ * it needs an explicit cap (proxyRequest streamed and never had one).
+ */
+export const MAX_USERSCOPED_BYTES = 100 * 1024 * 1024
+
+/** The verbs that carry a body onto these routes (POST /userdata/{file}, its /move, POST /settings). */
+const USERSCOPED_BODY_METHODS = new Set(['POST', 'PUT', 'PATCH'])
+
+/**
+ * Forward a settings/userdata request to the engine with a SERVER-SET
+ * `comfy-user` header — the authenticated caller's id — and NOTHING
+ * client-supplied. The middleware has already stripped any inbound
+ * `comfy-user` (the spoof rule), and this is the ONE place the real one is
+ * set, so a client can never inject another tenant's id.
+ *
+ * The response is returned byte-verbatim (a Buffer + the engine's
+ * content-type), not round-tripped through JSON: userdata GET serves a raw
+ * FileResponse that JSON.parse would mangle, and settings GET is already JSON
+ * that survives as bytes. `?comfyWorker=N` still selects the pool worker; the
+ * `/comfyui`-prefixed path is normalized the way the raw proxy would.
+ *
+ * NOTE this only yields per-user isolation when the engine runs `--multi-user`
+ * AND the caller's id is a registered engine user (users.json). Without that,
+ * ComfyUI returns "default" (single-user) or 401s (multi-user, unregistered).
+ * The middleware gates activation on engineMultiUser(); registration is a
+ * documented follow-up (see the Task 8 report).
+ */
+export async function handleHostedUserScoped(event: H3Event): Promise<unknown> {
+  const userId = event.context.userId
+  if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+
+  const { port, cleanUrl } = resolveWorkerTarget(event.path)
+  const target = `http://127.0.0.1:${port}`
+  const enginePath = normalizeEnginePath(cleanUrl)
+  const method = (event.method || 'GET').toUpperCase()
+
+  // origin override for the engine's origin-check middleware; comfy-user is the
+  // authenticated caller, NEVER anything from the inbound request.
+  const headers: Record<string, string> = { origin: target, 'comfy-user': userId }
+  let body: Buffer | undefined
+
+  if (USERSCOPED_BODY_METHODS.has(method)) {
+    const declared = Number(getRequestHeader(event, 'content-length'))
+    if (Number.isFinite(declared) && declared > MAX_USERSCOPED_BYTES) {
+      throw createError({ statusCode: 413, message: 'Request body exceeds the 100 MB limit' })
+    }
+    const raw = await readRawBody(event, false)
+    if (raw && raw.length > MAX_USERSCOPED_BYTES) {
+      throw createError({ statusCode: 413, message: 'Request body exceeds the 100 MB limit' })
+    }
+    body = raw ?? undefined
+    const contentType = getRequestHeader(event, 'content-type')
+    if (contentType) headers['content-type'] = contentType
+  }
+
+  const res = await fetch(`${target}${enginePath}`, { method, headers, body: body as any })
+  setResponseStatus(event, res.status)
+  const ct = res.headers?.get?.('content-type')
+  if (ct) setResponseHeader(event, 'content-type', ct)
+  return Buffer.from(await res.arrayBuffer())
+}
