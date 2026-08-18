@@ -187,15 +187,30 @@ const railLayers = computed(() => doc.value.layers.map((l, i) => ({ label: layer
 // Click a row to select it; click the ALREADY-active row again to deselect → the
 // right panel flips to the composite (Frame/Intersections) properties.
 function onSelectLayer(i: number) { activeLayer.value = activeLayer.value === i ? -1 : i }
+// A new/duplicated layer lands EXACTLY on top of an identical mark reads as one
+// shape — editing it then looks like it "does nothing" or "changes everything".
+// So a fresh layer is nudged diagonally off the layer it stacks onto: its
+// independence is immediately visible, and the partial overlap feeds the
+// Intersections colouring. Nudge ~half the mark's radius so it clearly overlaps
+// rather than clearing it. Users who want a concentric stack can zero the offset.
 function addLayer() {
   if (doc.value.layers.length >= LAYER_MAX) return
-  doc.value.layers.push(mergeLayer({}))
-  activeLayer.value = doc.value.layers.length - 1
+  const idx = doc.value.layers.length
+  const layer = mergeLayer({})
+  const prev = doc.value.layers[idx - 1]
+  const nudge = Math.max(60, Math.round(layer.mark.size * 0.5))
+  layer.offset.x = (prev?.offset.x ?? 0) + nudge
+  layer.offset.y = (prev?.offset.y ?? 0) + nudge
+  doc.value.layers.push(layer)
+  activeLayer.value = idx
 }
 function duplicateLayer(i: number) {
   const src = doc.value.layers[i]; if (!src) return
   const copy = mergeLayer(JSON.parse(JSON.stringify(src)))
   copy.layerId = mergeLayer({}).layerId // fresh id so the two are addressable apart
+  const nudge = Math.max(40, Math.round(copy.mark.size * 0.35))
+  copy.offset.x += nudge // offset the copy so it isn't hidden behind its source
+  copy.offset.y += nudge
   doc.value.layers.splice(i + 1, 0, copy)
   activeLayer.value = i + 1
 }
