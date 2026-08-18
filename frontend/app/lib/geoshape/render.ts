@@ -25,7 +25,7 @@ import type { VectorShape } from '~/lib/vector/svg'
 import { commandsToPathData, shapesToSVG, transformCommands, type SvgDocOptions } from '~/lib/vector/svg'
 import { baseShapePath } from './shapes'
 import { arrange } from './arrange'
-import { composite } from './boolean'
+import { composite, overlapFaces } from './boolean'
 import { resolvePaint } from './paint'
 import type { GeoShapeConfig } from './config'
 import type { GeoStudioDoc, GeoLayer } from './studio'
@@ -249,17 +249,26 @@ function applyLayerOffset(shapes: VectorShape[], off: GeoLayer['offset']): Vecto
  * concatenated — later layers paint over earlier ones. A one-layer doc with a
  * native offset is byte-identical to `renderShapes(layer.mark)`.
  *
+ * When `doc.overlap.enabled`, the regions where ≥2 layers cross are computed
+ * (`overlapFaces`) and appended AFTER the layers so they overpaint the
+ * intersections with the stack overlap palette.
+ *
  * NOTE: per-layer opacity/blend are NOT applied here — flat concatenation can't
  * isolate a layer's internal overlaps, so honouring them needs group compositing
- * (Phase 3). Cross-layer intersection faces (Phase 2) will be appended after the
- * layers so they overpaint the overlaps.
+ * (Phase 3).
  */
 export async function renderStudio(doc: GeoStudioDoc): Promise<VectorShape[]> {
-  const out: VectorShape[] = []
+  // Per-layer shape groups are kept (not just flattened) so the overlap pass can
+  // union each layer into a silhouette and intersect silhouettes across layers.
+  const perLayer: VectorShape[][] = []
   for (const layer of doc.layers) {
     if (!layer.enabled) continue
     const shapes = await renderShapes(layer.mark)
-    out.push(...applyLayerOffset(shapes, layer.offset))
+    perLayer.push(applyLayerOffset(shapes, layer.offset))
+  }
+  const out: VectorShape[] = perLayer.flat()
+  if (doc.overlap.enabled && perLayer.length >= 2) {
+    out.push(...(await overlapFaces(perLayer, doc.overlap)))
   }
   return out
 }

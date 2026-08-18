@@ -145,6 +145,20 @@ function stackValue(key: string): string | number | boolean {
   return stackProxy[key] as string | number | boolean
 }
 
+// ── Intersections (stack-level cross-layer overlap palette) — the payoff colouring:
+// where ≥2 layers cross, the region is painted from `overlap.fills` by `overlap.order`
+// (+ crossingMode). Mirrors the per-mark fills-list editor, but on `doc.overlap`.
+const OVERLAP_ORDERS = ['created', 'depth', 'leftRight', 'topBottom', 'rows', 'columns', 'centerOut', 'around']
+const OVERLAP_CROSSINGS = ['depth', 'split']
+function addOverlapPaletteFill() { doc.value.overlap.fills = [...doc.value.overlap.fills, '#7c3aed'] }
+function removeOverlapPaletteFill(i: number) {
+  if (doc.value.overlap.fills.length <= 1) return
+  doc.value.overlap.fills = doc.value.overlap.fills.filter((_, j) => j !== i)
+}
+function updateOverlapPaletteFill(i: number, p: Paint) {
+  doc.value.overlap.fills = doc.value.overlap.fills.map((x, j) => (j === i ? p : x))
+}
+
 // ── re-roll — regenerates every UNLOCKED section of the SELECTED layer's mark from a
 // fresh derived seed. `mark.locks` starts empty, so a plain click re-rolls the whole
 // active mark.
@@ -577,6 +591,37 @@ async function exportSvg() {
           :visible="() => true"
           @set="setStackControl"
         />
+
+        <!-- Intersections — colour the regions where layers cross, from a palette +
+             an order-logic (the same "pieces" system, but across whole layers). -->
+        <StudioSection title="Intersections">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Colour intersections</span>
+            <StudioSwitch v-model="doc.overlap.enabled" />
+          </div>
+          <template v-if="doc.overlap.enabled">
+            <p class="text-[10px] leading-relaxed text-white/35">
+              Where two or more layers overlap, paint that region from these colours.
+            </p>
+            <div class="space-y-2">
+              <div v-for="(f, i) in doc.overlap.fills" :key="'ix' + i"
+                   class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
+                <div class="flex items-center gap-1.5">
+                  <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 1 }}</span>
+                  <FillControl class="flex-1" allow-image :show-anchor="false" :model-value="f" @update:model-value="(v: Paint) => updateOverlapPaletteFill(i, v)" />
+                  <button v-if="doc.overlap.fills.length > 1" type="button" @click="removeOverlapPaletteFill(i)" aria-label="Remove intersection colour"
+                          class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                  </button>
+                </div>
+              </div>
+              <button type="button" @click="addOverlapPaletteFill"
+                      class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add intersection colour</button>
+            </div>
+            <StudioSelect label="Colour order" v-model="doc.overlap.order" :options="OVERLAP_ORDERS" />
+            <StudioSelect label="Crossings" v-model="doc.overlap.crossingMode" :options="OVERLAP_CROSSINGS" />
+          </template>
+        </StudioSection>
 
         <!-- Canvas (export dimensions — not part of the doc) -->
         <StudioSection title="Canvas">

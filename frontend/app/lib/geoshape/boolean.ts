@@ -16,8 +16,10 @@
  * unbounded item tree.
  */
 import { paperToCommands } from '~/lib/vectortype/extrudeSolid'
+import { commandsToPathData, type VectorShape } from '~/lib/vector/svg'
 import { rankOrder } from './order'
 import type { GeoShapeConfig } from './config'
+import type { GeoOverlap } from './studio'
 import type { ClonePlacement } from './arrange'
 import type { Paint } from '~/lib/compositor/paint'
 // Type-only: `render.ts` also imports `composite` from this module, so a
@@ -414,6 +416,102 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
       })
     }
     return out
+  } finally {
+    sc.project.clear()
+  }
+}
+
+// ── Cross-layer intersection faces (Shape Studio layers) ─────────────────────────
+const nonEmptyItem = (p: any): boolean => !!(p && p.bounds && p.bounds.width > 1e-6 && p.bounds.height > 1e-6)
+
+/**
+ * The regions where STACKED LAYERS cross, coloured by the stack-level overlap
+ * palette — the layered-studio counterpart of a single mark's `pieces` overlap
+ * colouring (this reuses the exact same numerically-stable nested-`atLeast` depth
+ * bands + `rankOrder` logic, just fed one silhouette PER LAYER instead of per clone).
+ *
+ * `layerShapes` is each ENABLED layer's already-composed, already-offset shapes; a
+ * layer's silhouette is the union of its shapes (internal evenodd holes are folded
+ * in — cross-layer overlap reads the layer's outer painted area, a deliberate v1
+ * simplification). Returns paintable faces to CONCATENATE AFTER the layers so they
+ * overpaint the intersections. Empty unless ≥2 layers actually overlap.
+ */
+export async function overlapFaces(layerShapes: VectorShape[][], overlap: GeoOverlap): Promise<GeoVectorShape[]> {
+  const withShapes = layerShapes.filter((s) => s.length > 0)
+  if (withShapes.length < 2 || overlap.fills.length === 0) return []
+  const sc = await paperScope()
+  try {
+    // 1. one silhouette per layer = union of that layer's shapes.
+    const sils: paper.PathItem[] = []
+    for (const shapes of withShapes) {
+      let sil: any = null
+      for (const s of shapes) {
+        const d = commandsToPathData(s.commands)
+        if (!d) continue
+        const p = new sc.CompoundPath(d)
+        sil = sil ? sil.unite(p) : p
+      }
+      if (nonEmptyItem(sil)) sils.push(sil as paper.PathItem)
+    }
+    if (sils.length < 2) return []
+
+    // 2. exact-depth bands (depth ≥ 2) from nested "covered by ≥ k layers" sets —
+    //    the same stable construction the in-mark pieces path uses.
+    const atLeast: (paper.PathItem | null)[] = []
+    for (const c of sils) {
+      for (let k = atLeast.length + 1; k >= 1; k--) {
+        const lower = k >= 2 ? atLeast[k - 2] : null
+        if (k >= 2 && !nonEmptyItem(lower)) continue
+        const add = lower ? (lower as any).intersect(c) : (c as any).clone()
+        if (!nonEmptyItem(add)) continue
+        atLeast[k - 1] = atLeast[k - 1] ? (atLeast[k - 1] as any).unite(add) : add
+      }
+    }
+    const bands: { path: paper.PathItem; depth: number }[] = []
+    for (let d = 2; d <= atLeast.length; d++) {
+      const cur = atLeast[d - 1]; if (!nonEmptyItem(cur)) continue
+      const deeper = atLeast[d]
+      const band = nonEmptyItem(deeper) ? (cur as any).subtract(deeper) : cur
+      if (nonEmptyItem(band)) bands.push({ path: band as paper.PathItem, depth: d })
+    }
+    if (!bands.length) return []
+
+    // 3. faces: one per band (depth mode) or per connected component (split mode).
+    const faces: { path: paper.PathItem; depth: number }[] = []
+    for (const { path, depth } of bands) {
+      const parts = overlap.crossingMode === 'split' ? splitFaces(sc, path) : [path]
+      for (const p of parts) if (nonEmptyItem(p)) faces.push({ path: p, depth })
+    }
+
+    // 4. colour by the overlap palette + order-logic. depth = by overlap depth
+    //    (2-deep → fills[0]); created = sequential; anything spatial → rankOrder.
+    const fills = overlap.fills
+    let ranks: number[]
+    if (overlap.order === 'depth') {
+      ranks = faces.map((f) => f.depth - 2)
+    } else if (overlap.order === 'created') {
+      ranks = faces.map((_, i) => i)
+    } else {
+      const band = Math.max(1, ...faces.map((f) => Math.max((f.path as any).bounds.width, (f.path as any).bounds.height)))
+      ranks = rankOrder(
+        faces.map((f, i) => ({ cx: (f.path as any).bounds.center.x, cy: (f.path as any).bounds.center.y, i })),
+        overlap.order, band,
+      )
+    }
+    const pick = (r: number): Paint => fills[((r % fills.length) + fills.length) % fills.length]!
+
+    return faces
+      .filter((f) => nonEmptyItem(f.path))
+      .map((f, i) => {
+        const paint = pick(ranks[i] ?? 0)
+        return {
+          commands: paperToCommands(f.path),
+          paint,
+          fill: solidOf(paint),
+          stroke: null,
+          fillRule: 'nonzero' as const,
+        }
+      })
   } finally {
     sc.project.clear()
   }
