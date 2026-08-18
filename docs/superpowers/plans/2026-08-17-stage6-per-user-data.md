@@ -267,6 +267,37 @@ export default defineEventHandler(async (event) => {
 
 ---
 
+### Task 7b: complete the engine file-surface audit (validator coverage + output-node coverage) — found in review
+
+**Context:** Task 7's review found its validator model was too narrow. `validateGraphFileRefs` only inspects object_info UPLOAD-FLAGGED inputs + hardcoded `LoadImageOutput.image`, but the engine has 11+ nodes that read files by UNFLAGGED plain-string / JSON-embedded / dict-valued inputs through `folder_paths.get_annotated_filepath` (which does a bare join with NO containment). Several decode the file into an IMAGE/VIDEO the attacker saves to their own `u_<hash>/` folder and views — a laundered cross-tenant read that prices at base-render so `priceGraph` never blocks it. Separately, `OUTPUT_CLASS_TYPES` misses Sailor's PRIMARY export nodes (`Image`/`Video`/`Audio` + `SaveAnimatedWEBP`/`SaveGLB`/`Preview3D`), so their outputs skip subfolder injection and land in the shared root. Both are pre-deploy blockers (not exploitable until deployed). Same class of gap as Task 2b (scout under-enumerated a broad engine surface).
+
+**Files:**
+- Modify: `frontend/server/utils/meterGraphRun.ts` (validator coverage map + injection set), `frontend/server/utils/priceBook.ts` (OUTPUT_CLASS_TYPES) OR a new `frontend/server/utils/engineFileSurface.ts` holding both checked-in maps
+- Test: `frontend/tests/unit/engine-file-surface.unit.spec.ts` (coverage guards), extend `graph-file-refs.unit.spec.ts` + `metered-prompt-forward.unit.spec.ts`
+- Read-only: nodes.py + every `comfy_extras/*.py` + `custom_nodes/**` node that reads or writes engine files (parallel sessions may hold these — never modify)
+
+**Step 1: Audit the engine's file-READ surface (mechanical, like Task 3's 72-class sweep).** Enumerate every registered node whose execute reads from `input/`/`output/`/`temp/`:
+```
+grep -rnE "get_annotated_filepath|get_input_directory|get_output_directory|folder_paths\.(get_)?(input|output|temp)" comfy_extras/ nodes.py custom_nodes/ | grep -v test
+```
+For EACH hit, read the node's `INPUT_TYPES` + execute to find which input(s) carry the filename (String, a combo, a JSON blob field like `params`/`motion_params`/`edit_state` with an embedded `rendered[]`/frame list, or a dict like Load3D's `image`). Build a checked-in map `GRAPH_FILE_READERS: Record<classType, FileInputSpec[]>` where each spec says HOW to extract the referenced filename(s) from that input's value: `{ input, shape: 'string' | 'json-path', jsonPath?: string, semantics: 'input' | 'output' | 'either' }`. The review named these to start (verify each + find any it missed): LoadLatent, Load3D, Scene3DStudio, PoseMannequin, Compositor, KineticType, RenderType, TextMask, TextOnPath, Timeline, LUT, LoadImage-family, LoadImageOutput.
+
+**Step 2: Audit the file-WRITE surface.** Enumerate every node writing to the output dir on execute/export:
+```
+grep -rnE "get_output_directory|get_save_image_path|_export_to_output|save.*output" comfy_extras/ nodes.py custom_nodes/ | grep -v test
+```
+Build the complete `OUTPUT_CLASS_TYPES` set (Image/Video/Audio/SaveImage/PreviewImage/SaveVideo/SaveAudio/VHS_VideoCombine/SaveAnimatedWEBP/SaveAnimatedPNG/SaveGLB/Preview3D + any found). A save node NOT in the set writes to the shared root — that is the bug.
+
+**Step 3: Coverage guards (MANDATORY, the durable deliverable — Task 2b pattern).** Two tests that grep the engine and FAIL on drift: (a) every node matching the file-READ grep is either in `GRAPH_FILE_READERS` or on an explicit `NON_FILE_READ_EXEMPT` list (with a reason — e.g. the grep matched a dir-creation, not a read); (b) every node matching the file-WRITE grep is in `OUTPUT_CLASS_TYPES` or an explicit exempt list. A newly-added file-reading/writing node fails the suite instead of silently bypassing.
+
+**Step 4: Expand `validateGraphFileRefs`** to walk `GRAPH_FILE_READERS`: for each node in the prompt, for each of its file-input specs, extract the referenced filename(s) per `shape` (string direct; json-path → parse the JSON value, walk to the array/field, collect names), resolve annotation via `annotatedFilepath`, and ownership-check per `semantics` (input → input_uploads; output → graph_runs; either → try both, own-if-either). Unknown/unparseable value on a known file input → refuse (fail closed). Keep the validation-before-hold ordering. Drop the wrong "LoadImageOutput.image is not upload-flagged" comment/test premise (it IS flagged — the map subsumes the hardcode).
+
+**Step 5: Wire the expanded OUTPUT_CLASS_TYPES** into the injection (already reads the set) and confirm the settle/view round-trip test covers an `Image`-class output landing in `u_<hash>/`.
+
+**Step 6: RED-first adversarial tests** — one per newly-covered reader class: a graph with `Load3D.image = "victim [output]"` / `Compositor.motion_params` embedding another tenant's rendered frame / `LoadLatent.latent = "other.latent"` etc. → 403, engine never touched, no hold. Own file → passes. An `Image`-class SaveImage subclass → output subfoldered. Plus the two coverage guards RED against the current (incomplete) maps.
+
+**Step 7:** GREEN across the meter family + the new guards. **Step 8: Commit** — `fix(stage6): complete engine file-read/write ownership coverage — closes graph-laundered cross-tenant reads`.
+
 ### Task 8: Per-user settings + userdata — ComfyUI multi-user behind the proxy
 
 **Files:**
