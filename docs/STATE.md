@@ -31,6 +31,10 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
+### Elements — ready-made animated text/layout gallery — DESIGNED 2026-08-18 (not built)
+
+Butter.video-inspired: a job-named gallery (Callouts · Stickers · Kinetic Text · Marquees · Carousels) of **parametric compound presets** hosted in the Compositor. An Element is a pure `compose()` recipe (staging-style) that measures the current text and re-emits its `LocalLayer` group on every edit — "retype and it still fits" by construction (geoshape outlines regenerated, never stretched). Instance = `sailor_elements[groupId]` recipe card beside real layers; **detach** drops the recipe and leaves plain layers. Palette-only taste in v1 (brand bg/fg/accent). Carousels are **node-backed** (preconfigured Expressive/Space Type nodes behind the same cards) — first proof of catalog-abstracts-backend. Spec: `docs/superpowers/specs/2026-08-18-elements-gallery-design.md`. Next: implementation plan.
+
 ### Shape Studio — stacked shape layers + colourable intersections — LANDED 2026-08-18
 
 Shape Studio went from ONE mark to a **stack of independent marks**, mirroring Gradient/Shader's layer model but for 2D vector. It now edits a **`GeoStudioDoc`** (`lib/geoshape/studio.ts`): `layers[1..6]`, each a full `GeoShapeConfig` ("mark") + wrapper `{layerId, enabled, offset{x,y,scale,rotate}, opacity, blend}`, plus a stack-level `overlap` palette and one shared `padding` frame. Reuses the shared `StudioLayerStack` rail (identity-based labels); selecting a layer scopes the whole existing controls panel to that layer's mark; deselecting (click active row again) → composite panel (Frame padding + **Intersections**).
