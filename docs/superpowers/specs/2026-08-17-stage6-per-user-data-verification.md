@@ -47,6 +47,7 @@ The Fly volume + `SAILOR_DATA_DIR` + per-user subfolders covers a 5-user beta. R
 ## Riders (carried, triaged)
 
 - **FIX-BEFORE-LAUNCH:** the empty-store/backfill precondition (#1 above); the Stage-5 deploy list.
+- **FIX in the pre-launch hardening wave (one-liners, launch-inert only under the empty-store precondition):** `moodboards/refs.post` doesn't ownership-check the *destination* flat name (a guessable caller-chosen slug can integrity-overwrite a victim's `mb_<slug>_<i>` refs); `moodboards/images.post` lets a tenant write into a *curated* folder (violates mutate-by-none); trained-artifact `recordOwner` has no retry on a DB blip (WARN-logged — needs a backfill sweep); `secrets.ts` still hardcodes `.data` instead of `storeDir` (hosted-inert since BYOK is refused).
 - **RIDE (post-beta / with 8b):** Task 8b registration mapping; `/view` `type=temp` + `[temp]`-annotation 403s; `ensureInputFilename` silent-fallback UX; `SaveTrainingDataset`→`LoadTrainingDataset` round-trip refused until per-user input/output writes exist; `_live_preview` fixed-prefix write; render-template embeds all fonts (not owner-scoped); `listOwned` N+1 query; object_info refill lists names without a live-dir cross-check; voice/character restart-edge lands curated; trained-output flat namespace (first-owner-wins, fail-closed on collision) — add a per-user prefix when convenient.
 - **DROP:** per-user spend UI (later product feature reading the ledger); the Stage-5 badge chip.
 
