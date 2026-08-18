@@ -444,12 +444,14 @@ const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => config.
 
 // ── outputs (mirror Gradient Studio) ───────────────────────────────────────────
 async function renderBlob(t01: number): Promise<Blob> {
-  const src = resolved.value!
-  const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+  const src = resolved.value
+  const { w, h } = src
+    ? outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+    : { w: GENERATIVE_DIM, h: GENERATIVE_DIM }
   const dur = clockDuration()
   const t = t01 * dur
   const cfg = animated.value ? applyMotion(motionConfigFor(config.value, dur), t) : config.value
-  const base = await src.getFrame(t01, w, h)
+  const base = src ? await src.getFrame(t01, w, h) : GENERATIVE_BASE
   shaderFx.render(composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def, layer) => texBundle(def, layer)), base, w, h)
   const c = shaderFx.outputCanvas!
   return await new Promise<Blob>((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png', 0.95))
@@ -494,7 +496,7 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
 }
 
 async function generateImage() {
-  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
+  if (!resolved.value && !isGenerative.value) { bakeMsg.value = 'Add a source first'; return }
   baking.value = true; bakeMsg.value = 'Rendering…'; stopPreview()
   try {
     const blob = await renderBlob(0)
@@ -531,12 +533,19 @@ async function generateImage() {
  *  dispatch/download" without their own catch firing a second, more generic
  *  message. Mirrors Gradient Studio's bakeGradientVideo (Task 6). */
 async function bakeShaderVideo(): Promise<{ filename: string; ext: 'mp4' | 'webm' } | null> {
-  const src = resolved.value!
+  const src = resolved.value
   // Whoever supplies the frames owns the clock: an animated upstream (e.g. a
   // Gradient Studio loop) overrides our own duration/fps; a still source
-  // leaves our own Motion controls in charge. See resolve.ts's exportClock.
+  // leaves our own Motion controls in charge. A generative effect with no
+  // source (null src) hits the same "still" branch — exportClock already
+  // treats a null resolved source as "no upstream clock" and falls back to
+  // ownDuration/ownFps, so it self-animates via u_time over our own Motion
+  // clock (renderBlob(i/total) below already varies t per frame). See
+  // resolve.ts's exportClock.
   const clock = exportClock(src, config.value.motion.duration, config.value.motion.fps)
-  const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+  const { w, h } = src
+    ? outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+    : { w: GENERATIVE_DIM, h: GENERATIVE_DIM }
   const total = Math.max(1, Math.round(clock.fps * clock.duration))
   const bakeCfg = { fps: clock.fps, loopDuration: clock.duration, W: w, H: h, seed: 'shader', sig: JSON.stringify(config.value) }
   const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
@@ -556,7 +565,7 @@ async function bakeShaderVideo(): Promise<{ filename: string; ext: 'mp4' | 'webm
 }
 
 async function generateVideo() {
-  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
+  if (!resolved.value && !isGenerative.value) { bakeMsg.value = 'Add a source first'; return }
   baking.value = true; stopPreview()
   try {
     const encoded = await bakeShaderVideo()
@@ -575,7 +584,7 @@ async function generateVideo() {
  *  loop bails on baking.value mid-await specifically so it can't corrupt the
  *  shared shaderFx canvas this capture reads from (see renderFrame's comment). */
 async function downloadPng() {
-  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
+  if (!resolved.value && !isGenerative.value) { bakeMsg.value = 'Add a source first'; return }
   baking.value = true; bakeMsg.value = 'Rendering…'; stopPreview()
   try {
     const blob = await renderBlob(0)
@@ -591,7 +600,7 @@ async function downloadPng() {
  *  cleared on success here, or the footer's notice would show a stale
  *  "Encoding…" forever instead of returning to idle. */
 async function downloadVideoFile() {
-  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
+  if (!resolved.value && !isGenerative.value) { bakeMsg.value = 'Add a source first'; return }
   baking.value = true; stopPreview()
   try {
     const encoded = await bakeShaderVideo()
@@ -611,26 +620,32 @@ async function downloadVideoFile() {
 
 async function exportWebEmbed() {
   if (embedding.value) return
-  if (!resolved.value) { embedErr.value = true; embedMsg.value = 'Add a source first'; return }
+  if (!resolved.value && !isGenerative.value) { embedErr.value = true; embedMsg.value = 'Add a source first'; return }
   embedding.value = true
   embedErr.value = false
   embedMsg.value = 'Building…'
   try {
-    const src = resolved.value!
+    const src = resolved.value
     // An animated upstream (Gradient/Space Type wired in) would export as a
     // single frozen base frame looping for a duration chosen because the source
-    // moves. Refuse before any expensive work happens. See resolve.ts.
-    assertEmbeddableSource(src)
+    // moves. Refuse before any expensive work happens. See resolve.ts. A
+    // generative effect has no upstream to refuse — nothing to check, and
+    // assertEmbeddableSource only throws when a live/animated source is wired
+    // in, which is impossible with a null src.
+    if (src) assertEmbeddableSource(src)
     const clock = exportClock(src, config.value.motion.duration, config.value.motion.fps)
-    const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+    const { w, h } = src
+      ? outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+      : { w: GENERATIVE_DIM, h: GENERATIVE_DIM }
 
     // Inline the source image — the exported file must not fetch it. `src` is
     // the ResolvedSource wrapper (getFrame/width/height/...), not itself
     // drawable, so pull an actual frame the same way renderFrame/renderBlob do
     // (resolve.ts:201/396) before handing it to the 2D canvas. Drawing through
     // a 2D canvas gives a data: URI regardless of whether the frame arrived as
-    // an <img>, a canvas, or a bitmap.
-    const frame = await src.getFrame(0, w, h)
+    // an <img>, a canvas, or a bitmap. No source → the same neutral
+    // GENERATIVE_BASE canvas the preview/renderBlob paths use.
+    const frame = src ? await src.getFrame(0, w, h) : GENERATIVE_BASE
     const flat = document.createElement('canvas')
     flat.width = w
     flat.height = h
@@ -813,13 +828,13 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
           notice: (!embedErr && embedMsg) ? embedMsg : (bakeMsg || null),
         },
         downloads: [
-          { label: 'Download PNG', onClick: downloadPng, disabled: !resolved },
-          { label: 'Download video', onClick: downloadVideoFile, busy: baking, disabled: !resolved },
+          { label: 'Download PNG', onClick: downloadPng, disabled: !resolved && !isGenerative },
+          { label: 'Download video', onClick: downloadVideoFile, busy: baking, disabled: !resolved && !isGenerative },
           { label: 'Export embed', onClick: exportWebEmbed, busy: embedding },
         ],
         canvas: [
-          { label: 'As image', onClick: generateImage, busy: baking, disabled: !resolved },
-          { label: 'As video', onClick: generateVideo, busy: baking, disabled: !resolved },
+          { label: 'As image', onClick: generateImage, busy: baking, disabled: !resolved && !isGenerative },
+          { label: 'As video', onClick: generateVideo, busy: baking, disabled: !resolved && !isGenerative },
         ],
       }" />
     </template>
