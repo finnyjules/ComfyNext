@@ -40,8 +40,12 @@ export const LORA_SLUG_OWNERS = ['finnyjules']
 export const LORA_RENDER_CREDITS = 8      // ~$0.04 observed median — 2× markup
 export const RESTYLE_LORA_CREDITS = 18    // ~$0.09 observed median — 2× markup
 
-// Terminal output nodes that mean "the GPU produced a deliverable" → base render.
-const OUTPUT_CLASS_TYPES = new Set([
+// Terminal output nodes that mean "the GPU produced a deliverable" → base
+// render. Exported (Stage 6 Task 7) so the hosted forward path injects a
+// per-user filename_prefix on exactly this family — one source of truth for
+// "what writes a deliverable" shared by the pricer and the output-subfolder
+// injection.
+export const OUTPUT_CLASS_TYPES = new Set([
   'SaveImage', 'PreviewImage', 'SaveVideo', 'VHS_VideoCombine', 'SaveAudio',
 ])
 

@@ -6,6 +6,7 @@ import { UnpricedGraphError } from '../../server/utils/priceBook'
 function deps(overrides: Partial<any> = {}) {
   return {
     priceGraph: vi.fn(() => ({ credits: 5, version: 'test-v1', breakdown: [] })),
+    validateFileRefs: vi.fn(async () => {}),
     hold: vi.fn(async () => ({ ok: true as const, holdId: 7 })),
     getAvailable: vi.fn(async () => 3),
     forward: vi.fn(async () => ({ status: 200, body: { prompt_id: 'p1', number: 1, node_errors: {} } })),
@@ -30,6 +31,34 @@ describe('meterGraphSubmit', () => {
 
   it('rejects a malformed body (no prompt graph)', async () => {
     await expect(meterGraphSubmit('u1', {}, deps())).rejects.toMatchObject({ statusCode: 400 })
+  })
+
+  // Stage 6 Task 7: file-reference ownership is checked BEFORE pricing and the
+  // hold, so a graph reaching for another tenant's file is refused at zero
+  // cost — no price, no hold, no forward, no ownership row, engine never
+  // touched.
+  it('refuses a foreign file reference (403) with NO hold, NO forward, engine untouched', async () => {
+    const d = deps({ validateFileRefs: vi.fn(async () => { throw new MeterRefusalError('graph references a file you do not own', 403) }) })
+    await expect(meterGraphSubmit('u1', BODY, d)).rejects.toMatchObject({ statusCode: 403 })
+    expect(d.validateFileRefs).toHaveBeenCalledWith(BODY.prompt)
+    expect(d.priceGraph).not.toHaveBeenCalled()
+    expect(d.hold).not.toHaveBeenCalled()
+    expect(d.forward).not.toHaveBeenCalled()
+    expect(d.registerRun).not.toHaveBeenCalled()
+    expect(d.startSettle).not.toHaveBeenCalled()
+  })
+
+  it('validates file refs BEFORE pricing and holding (order matters)', async () => {
+    const d = deps()
+    await meterGraphSubmit('u1', BODY, d)
+    expect(d.validateFileRefs.mock.invocationCallOrder[0]).toBeLessThan(d.priceGraph.mock.invocationCallOrder[0])
+    expect(d.validateFileRefs.mock.invocationCallOrder[0]).toBeLessThan(d.hold.mock.invocationCallOrder[0])
+  })
+
+  it('never validates file refs for a signed-out caller (401 fires first)', async () => {
+    const d = deps()
+    await expect(meterGraphSubmit(null, BODY, d)).rejects.toMatchObject({ statusCode: 401 })
+    expect(d.validateFileRefs).not.toHaveBeenCalled()
   })
 
   it('holds before forwarding and returns ComfyUI body verbatim', async () => {

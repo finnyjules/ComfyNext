@@ -6,7 +6,7 @@ import { resolveWorkerTarget } from '../utils/workerRoute'
 import { PROXY_PREFIXES } from '../utils/authGuard'
 import { deployMode } from '../utils/deployMode'
 import { handleMeteredPrompt } from '../utils/meterGraphRun'
-import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload, handleHostedSailor, handleHostedSailorData } from '../utils/engineGate'
+import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload, handleHostedSailor, handleHostedSailorData, handleHostedOutputListing } from '../utils/engineGate'
 import { normalizeEnginePath, hostedEngineDecision } from '../utils/enginePath'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
@@ -43,6 +43,10 @@ export default defineEventHandler(async (event) => {
     if (decision.kind === 'objectInfo') return handleHostedObjectInfo(event)
     // F4: refuses an `overwrite` field, then forwards the identical bytes.
     if (decision.kind === 'upload') return handleHostedUpload(event)
+    // Stage 6 Task 7: LoadImageOutput's remote picker — the caller's OWN
+    // outputs (from graph_runs), matching the engine's flat-array shape, in
+    // place of the shared /internal enumeration oracle.
+    if (decision.kind === 'outputListing') return handleHostedOutputListing(event)
     // Stage 6 Task 2: the projects extension has no identity of its own, so
     // ownership is checked here against resource_owners before the engine is
     // asked anything — a project that isn't yours 404s, list included.

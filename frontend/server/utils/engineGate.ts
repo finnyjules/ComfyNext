@@ -132,7 +132,7 @@ export async function handleHostedInterrupt(event: H3Event): Promise<any> {
  * Model/checkpoint/LoRA combos carry none of them and are shared assets
  * anyway, so they survive untouched.
  */
-const UPLOAD_FLAG_KEYS = ['image_upload', 'video_upload', 'audio_upload', 'file_upload']
+export const UPLOAD_FLAG_KEYS = ['image_upload', 'video_upload', 'audio_upload', 'file_upload']
 
 function declaresUploadWidget(opts: unknown): boolean {
   if (!opts || typeof opts !== 'object' || Array.isArray(opts)) return false
@@ -207,6 +207,69 @@ export function scrubObjectInfo(catalog: unknown, ownedFilenames: string[] = [])
     }
   }
   return out
+}
+
+/**
+ * Stage 6 Task 7 — the `ClassType.inputName` pairs whose widget embeds a file
+ * from a shared engine directory, harvested from the SAME object_info catalog
+ * the scrubber reads (`declaresUploadWidget` over `UPLOAD_FLAG_KEYS`). This is
+ * the map the graph-file-reference validator consults to decide which inputs
+ * carry a filename it must vet for ownership before a graph runs. Pure over the
+ * catalog — the caller caches it (~60s) so a submission doesn't refetch it.
+ *
+ * NOTE `LoadImageOutput.image` is deliberately NOT here: its widget is
+ * remote-routed (`remote: {route: "/internal/files/output"}`, nodes.py:1951-
+ * 1959) rather than upload-flagged, so it never carries an UPLOAD_FLAG_KEYS
+ * key — the validator adds that pair by hand.
+ */
+export function collectUploadFlaggedInputs(catalog: unknown): Set<string> {
+  const out = new Set<string>()
+  if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)) return out
+  for (const [className, node] of Object.entries(catalog as Record<string, any>)) {
+    const input = node?.input
+    if (!input || typeof input !== 'object' || Array.isArray(input)) continue
+    for (const section of Object.values(input)) {
+      if (!section || typeof section !== 'object' || Array.isArray(section)) continue
+      for (const [inputName, spec] of Object.entries(section as Record<string, unknown>)) {
+        if (Array.isArray(spec) && declaresUploadWidget(spec[1])) out.add(`${className}.${inputName}`)
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Stage 6 Task 7 — LoadImageOutput's picker is remote-routed to
+ * `/internal/files/output`; the rest of `/internal` is a cross-tenant
+ * enumeration oracle and stays 403 (enginePath.ts). Here the caller sees ONLY
+ * their OWN outputs, served from `graph_runs`, in the SAME flat JSON array of
+ * filename strings the engine's route returns (api_server/routes/internal/
+ * internal_routes.py:54-70) so the remote combo renders. Because outputs now
+ * land in `output/u_<hash>/...`, each entry carries its per-user subfolder
+ * (`<subfolder>/<filename>`) — the value the widget submits then resolves under
+ * that subfolder and is re-checked for ownership by the graph validator.
+ */
+export async function handleHostedOutputListing(event: H3Event): Promise<string[]> {
+  const userId = event.context.userId
+  if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+  const owned = await ownedOutputKeys(userId)
+  const names: string[] = []
+  for (const key of owned) {
+    // key === `<type>:<subfolder>:<filename>` (outputKey) — subfolder/filename
+    // never contain a colon, so split on the first two.
+    const first = key.indexOf(':')
+    if (first < 0) continue
+    const second = key.indexOf(':', first + 1)
+    if (second < 0) continue
+    const type = key.slice(0, first)
+    if (type !== 'output') continue
+    const subfolder = key.slice(first + 1, second)
+    const filename = key.slice(second + 1)
+    if (!filename) continue
+    names.push(subfolder ? `${subfolder}/${filename}` : filename)
+  }
+  names.sort()
+  return names
 }
 
 /** Resolve the pool worker and rewrite `/comfyui`-prefixed paths, as the raw proxy does. */

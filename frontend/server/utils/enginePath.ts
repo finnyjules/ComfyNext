@@ -106,6 +106,7 @@ export type EngineDecision =
   | { kind: 'queueGet' }
   | { kind: 'interrupt' }
   | { kind: 'objectInfo' }
+  | { kind: 'outputListing' }
   | { kind: 'upload' }
   | { kind: 'sailorProjects' }
   | { kind: 'sailorData' }
@@ -297,8 +298,13 @@ export function hostedEngineDecision(enginePath: string, method: string): Engine
   }
   if (match(p, '/history')) return { kind: 'forbid', message: 'Use /history — the engine mirror is not tenant-scoped' }
   if (match(p, '/view')) return { kind: 'forbid', message: 'Use /view — the engine mirror is not tenant-scoped' }
-  // ComfyUI's /internal/files/* lists the output directory: a filename
+  // Stage 6 Task 7: LoadImageOutput's picker is remote-routed to
+  // GET /internal/files/output. That one route is served per-user (the
+  // caller's OWN outputs from graph_runs) so the combo renders; every OTHER
+  // /internal path — and every non-GET verb on this one — stays forbidden
+  // below, since the raw route lists the shared output directory: a filename
   // enumeration oracle that hands an attacker exactly the keys /view checks.
+  if (p === '/internal/files/output' && verb === 'GET') return { kind: 'outputListing' }
   if (match(p, '/internal')) return { kind: 'forbid', message: 'Engine internals are not exposed in hosted mode' }
 
   // F1: POST /gate/resume takes a client-supplied prompt_id, deep-copies the

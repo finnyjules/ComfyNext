@@ -54,6 +54,7 @@ const handleHostedObjectInfo = vi.fn(async () => ({ handler: 'objectInfo' }))
 const handleHostedUpload = vi.fn(async () => ({ handler: 'upload' }))
 const handleHostedSailor = vi.fn(async () => ({ handler: 'sailorProjects' }))
 const handleHostedSailorData = vi.fn(async () => ({ handler: 'sailorData' }))
+const handleHostedOutputListing = vi.fn(async () => ({ handler: 'outputListing' }))
 vi.mock('../../server/utils/engineGate', () => ({
   handleHostedQueueGet: (...a: any[]) => handleHostedQueueGet(...(a as [])),
   handleHostedInterrupt: (...a: any[]) => handleHostedInterrupt(...(a as [])),
@@ -61,6 +62,7 @@ vi.mock('../../server/utils/engineGate', () => ({
   handleHostedUpload: (...a: any[]) => handleHostedUpload(...(a as [])),
   handleHostedSailor: (...a: any[]) => handleHostedSailor(...(a as [])),
   handleHostedSailorData: (...a: any[]) => handleHostedSailorData(...(a as [])),
+  handleHostedOutputListing: (...a: any[]) => handleHostedOutputListing(...(a as [])),
 }))
 
 let middleware: (event: any) => Promise<any>
@@ -81,6 +83,7 @@ beforeEach(() => {
   handleHostedUpload.mockClear()
   handleHostedSailor.mockClear()
   handleHostedSailorData.mockClear()
+  handleHostedOutputListing.mockClear()
 })
 afterEach(() => { mode = 'local' })
 
@@ -191,7 +194,10 @@ describe('F6: a dot-segment path is REFUSED, not proxied', () => {
   beforeEach(() => { mode = 'hosted' })
 
   it('refuses paths that fold onto a gated engine route', async () => {
-    for (const p of ['/extensions/../history', '/extensions/%2e%2e/history', '/comfyui/extensions/../history', '/extensions/../internal/files/output', '/extensions/../gate/resume']) {
+    // Stage 6 Task 7: /internal/files/OUTPUT GET is now the per-user listing,
+    // so the dot-fold probe uses /internal/files/INPUT — still forbidden — to
+    // prove folding onto a gated route is refused.
+    for (const p of ['/extensions/../history', '/extensions/%2e%2e/history', '/comfyui/extensions/../history', '/extensions/../internal/files/input', '/extensions/../gate/resume']) {
       expect(await status(p), p).toBe(403)
     }
     expect(proxyRequest).not.toHaveBeenCalled()
@@ -256,9 +262,25 @@ describe('hosted mode: alias forms hit the same gates as canonical paths', () =>
     }
   })
 
-  it('refuses /internal — ComfyUI\'s file listings are a cross-tenant enumeration oracle', async () => {
-    for (const p of ['/comfyui/internal/files/output', '/api/internal/files/output', '/comfyui/api/internal/files/input']) {
+  it('serves GET /internal/files/output per-user (LoadImageOutput picker) across every alias', async () => {
+    // Stage 6 Task 7: the ONE /internal route the LoadImageOutput combo needs
+    // is served as the caller's own outputs; every other /internal path stays
+    // a 403 enumeration-oracle refusal.
+    // Bare `/internal` is not a PROXY_PREFIX (reached only via /comfyui or
+    // /api), same as the /view and /history alias tests above.
+    for (const p of ['/comfyui/internal/files/output', '/api/internal/files/output', '/comfyui/api/internal/files/output']) {
+      expect(await status(p), p).toBe('outputListing')
+    }
+  })
+
+  it('still refuses the rest of /internal — file listings are a cross-tenant enumeration oracle', async () => {
+    // /internal/files/input, other /internal subpaths, and any non-GET verb on
+    // the output listing all stay forbidden.
+    for (const p of ['/comfyui/internal/files/input', '/api/internal/files/temp', '/comfyui/internal/logs']) {
       expect(await status(p), p).toBe(403)
+    }
+    for (const m of ['POST', 'DELETE', 'PUT']) {
+      expect(await status('/comfyui/internal/files/output', m), m).toBe(403)
     }
   })
 

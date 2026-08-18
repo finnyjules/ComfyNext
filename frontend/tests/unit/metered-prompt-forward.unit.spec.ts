@@ -24,9 +24,10 @@ vi.mock('h3', async (orig) => {
 })
 
 const createGraphRun = vi.fn(async () => {})
+const resolveGraphRun = vi.fn(async () => {})
 vi.mock('../../server/utils/graphRuns', async (orig) => {
   const actual = await orig() as any
-  return { ...actual, createGraphRun: (...a: any[]) => createGraphRun(...(a as [])), resolveGraphRun: async () => {} }
+  return { ...actual, createGraphRun: (...a: any[]) => createGraphRun(...(a as [])), resolveGraphRun: (...a: any[]) => resolveGraphRun(...(a as [])) }
 })
 
 vi.mock('../../server/utils/settleWatcher', () => ({ settleOnCompletion: vi.fn(async () => 'success') }))
@@ -48,9 +49,14 @@ const fetchMock = vi.fn(async (_url: string, _init?: any) => ({
 
 let handleMeteredPrompt: (event: any) => Promise<any>
 let settleGraphSuccess: (target: string, promptId: string, holdId: number | null, credits: number) => Promise<void>
-beforeAll(async () => { ({ handleMeteredPrompt, settleGraphSuccess } = await import('../../server/utils/meterGraphRun')) })
+let shortUserHash: (userId: string) => string
+let viewGateDecision: (q: { filename: string, type?: string, subfolder?: string }) => any
+beforeAll(async () => {
+  ;({ handleMeteredPrompt, settleGraphSuccess, shortUserHash } = await import('../../server/utils/meterGraphRun'))
+  ;({ viewGateDecision } = await import('../../server/utils/engineGate'))
+})
 
-beforeEach(() => { fetchMock.mockClear(); createGraphRun.mockClear() })
+beforeEach(() => { fetchMock.mockClear(); createGraphRun.mockClear(); resolveGraphRun.mockClear() })
 
 const GRAPH = { '1': { class_type: 'SaveImage', inputs: {} } }
 
@@ -63,12 +69,16 @@ function forwardedBody(): any {
 }
 
 describe('I2 — a client-chosen prompt_id is never forwarded', () => {
-  it('strips prompt_id from the forwarded body', async () => {
+  it('strips prompt_id from the forwarded body (and injects the per-user output prefix)', async () => {
     await handleMeteredPrompt(ev({ prompt: GRAPH, client_id: 'c1', prompt_id: 'victims-run-id' }))
     const sent = forwardedBody()
     expect('prompt_id' in sent, 'forwarded body must not carry prompt_id').toBe(false)
-    expect(sent.prompt).toEqual(GRAPH)
     expect(sent.client_id).toBe('c1')
+    // Stage 6 Task 7: SaveImage now writes under the caller's own subfolder.
+    expect(sent.prompt['1'].class_type).toBe('SaveImage')
+    expect(sent.prompt['1'].inputs.filename_prefix).toBe(`u_${shortUserHash('u1')}/ComfyUI`)
+    // The submitter's own GRAPH object is never mutated (clone semantics).
+    expect((GRAPH['1'].inputs as any).filename_prefix).toBeUndefined()
   })
 
   it('ownership is recorded under the ENGINE-assigned id, not the submitted one', async () => {
@@ -86,6 +96,32 @@ describe('M6 — the promptId is percent-encoded into the history path', () => {
   it('encodes in the settlement harvest', async () => {
     await settleGraphSuccess('http://127.0.0.1:8188', 'a b/../c', null, 0)
     expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:8188/history/a%20b%2F..%2Fc')
+  })
+})
+
+describe('Stage 6 Task 7 — outputs settle under the per-user subfolder and stay /view-gated', () => {
+  it('records the subfoldered output key, and /view derives the SAME ownership key', async () => {
+    const hash = shortUserHash('u1')
+    const image = { filename: 'ComfyUI_00001_.png', subfolder: `u_${hash}`, type: 'output' }
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ p9: { outputs: { '9': { images: [image] } } } }),
+    })
+    await settleGraphSuccess('http://127.0.0.1:8188', 'p9', null, 0)
+
+    const call = resolveGraphRun.mock.calls[0] as any[]
+    expect(call[0]).toBe('p9')
+    expect(call[1]).toBe('settled')
+    const outputs = call[2] as string[]
+    expect(outputs).toContain(`output:u_${hash}:ComfyUI_00001_.png`)
+
+    // End-to-end: the /view gate, given the same subfoldered file, must derive
+    // the identical key that settlement recorded — so a per-user-subfoldered
+    // output remains ownership-gated on read.
+    const gate = viewGateDecision({ filename: image.filename, subfolder: image.subfolder, type: 'output' })
+    expect(gate).toEqual({ kind: 'check', key: `output:u_${hash}:ComfyUI_00001_.png` })
+    expect(new Set(outputs).has(gate.key)).toBe(true)
   })
 })
 
