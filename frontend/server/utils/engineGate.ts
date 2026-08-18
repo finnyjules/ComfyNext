@@ -839,10 +839,20 @@ export async function handleHostedSailorData(event: H3Event): Promise<unknown> {
       if (typeof importPath !== 'string' || !importPath) {
         throw createError({ statusCode: 400, message: "Asset import requires a 'path'" })
       }
+      // Reject the RAW path as absolute/unsafe before it is ever split into
+      // subfolder+basename. A depth-1 absolute path like `/app` splits to
+      // subfolder='' + basename='app' — unsafeUploadTarget('', 'app') only
+      // catches an absolute path when the SUBFOLDER carries the leading `/`,
+      // so a one-segment path slipped past that check while `os.path.isabs`
+      // in the engine still reads it at filesystem root. Checked independent
+      // of the split so every depth of absolute path is caught here.
+      if (importPath.startsWith('/') || /^[a-zA-Z]:/.test(importPath) || importPath.split('/').some(seg => seg === '..')) {
+        throw createError({ statusCode: 400, message: 'Asset import path is not addressable' })
+      }
       // The engine treats `path` as `os.path.join(input_dir, path)` — dirname is
-      // the subfolder, basename the file. Reject an absolute path, any `..`
-      // segment, or a backslash (the parser-disagreement class) up front — 400
-      // for a malformed/escaping path. unsafeUploadTarget owns that whole class.
+      // the subfolder, basename the file. unsafeUploadTarget is the second gate:
+      // the same class again on the split pieces, plus the backslash
+      // parser-disagreement check — 400 for a malformed/escaping path.
       const slash = importPath.lastIndexOf('/')
       const subfolder = slash >= 0 ? importPath.slice(0, slash) : ''
       const basename = slash >= 0 ? importPath.slice(slash + 1) : importPath

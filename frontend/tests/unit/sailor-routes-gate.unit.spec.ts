@@ -365,6 +365,18 @@ describe('the timeline-asset library is per-user', () => {
     expect([...owners.keys()], 'no forged asset ownership').toEqual([])
   })
 
+  it('a single-segment absolute path (/app) is rejected 400, engine never forwarded, no ownership recorded', async () => {
+    // Regression for the depth-1 bypass: splitting on the last `/` gives
+    // subfolder='' + basename='app' for `/app`, and unsafeUploadTarget('', 'app')
+    // only inspects the subfolder for a leading `/` — so a depth-1 absolute path
+    // slipped past the old split-based check while `/etc/hostname` (subfolder
+    // `/etc`) did not.
+    const r = await call('/sailor/asset_import', 'POST', 'u1', { path: '/app' })
+    expect(r.status).toBe(400)
+    expect(fetchMock, 'engine must NEVER see an absolute path').not.toHaveBeenCalled()
+    expect([...owners.keys()], 'no forged asset ownership').toEqual([])
+  })
+
   it('a `..` traversal path is rejected 400, engine never forwarded', async () => {
     const r = await call('/sailor/asset_import', 'POST', 'u1', { path: '../../other-tenant-file.mp4' })
     expect(r.status).toBe(400)
