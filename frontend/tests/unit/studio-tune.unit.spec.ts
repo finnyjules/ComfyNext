@@ -194,24 +194,46 @@ describe('tuneShapeNode', () => {
     expect(studioTunerFor('ShapeStudio')).toBeTypeOf('function')
   })
 
-  it('preserves the persisted wrapper when it writes back', async () => {
-    // sailor_shapeStudio is { config, canvasW, canvasH, aspectKey, orbit } — NOT a
-    // bare config like gradient's. Overwriting it with just the config would lose
-    // the user's canvas size and camera orbit.
+  it('migrates a legacy {config} blob to a doc and preserves the wrapper', async () => {
+    // sailor_shapeStudio is now { doc, canvasW, canvasH, aspectKey } — the tuner
+    // edits the base layer's mark. A legacy { config } blob must migrate (not be
+    // read as defaults or written back as a dead `config` key), and the canvas
+    // size must survive the write.
     const { __shapeAdapterForTest } = await import('~/lib/agent/studioTune')
     const node: any = { data: { properties: { sailor_shapeStudio: {
-      config: { fillMode: 'facets' }, canvasW: 1920, canvasH: 1080, aspectKey: '16:9',
+      config: { shape: 'star', sides: 7 }, canvasW: 1920, canvasH: 1080, aspectKey: '16:9',
       orbit: { yaw: 1, pitch: 2, zoom: 3 },
     } } } }
     const a = __shapeAdapterForTest
     const cfg = await a.read(node)
+    // read migrated the legacy config into the base layer's mark (not defaults).
+    expect(cfg.config.shape).toBe('star')
+    expect(cfg.config.sides).toBe(7)
     a.write(node, cfg.config)
     const saved = node.data.properties.sailor_shapeStudio
     expect(saved.canvasW).toBe(1920)
     expect(saved.canvasH).toBe(1080)
     expect(saved.aspectKey).toBe('16:9')
     expect(saved.orbit).toEqual({ yaw: 1, pitch: 2, zoom: 3 })
-    expect(saved.config).toBeDefined()
+    // Persists the layered doc; the stale legacy `config` key is dropped.
+    expect(saved.doc?.layers?.[0]?.mark?.shape).toBe('star')
+    expect(saved.config).toBeUndefined()
+  })
+
+  it('tunes the base layer of an existing doc (round-trips through doc)', async () => {
+    const { __shapeAdapterForTest } = await import('~/lib/agent/studioTune')
+    const { defaultDoc } = await import('~/lib/geoshape/studio')
+    const doc0 = defaultDoc()
+    doc0.layers.push({ ...doc0.layers[0]!, layerId: 'second' }) // a 2nd layer that must survive
+    const node: any = { data: { properties: { sailor_shapeStudio: { doc: doc0, canvasW: 800, canvasH: 800 } } } }
+    const a = __shapeAdapterForTest
+    const cfg = await a.read(node)
+    cfg.config.sides = 11
+    a.write(node, cfg.config)
+    const saved = node.data.properties.sailor_shapeStudio
+    expect(saved.doc.layers).toHaveLength(2)                 // 2nd layer preserved
+    expect(saved.doc.layers[0].mark.sides).toBe(11)          // base tuned
+    expect(saved.doc.layers[1].layerId).toBe('second')
   })
 
   it('falls back to defaults when the node has never been opened', async () => {

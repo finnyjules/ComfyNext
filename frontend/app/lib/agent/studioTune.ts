@@ -38,7 +38,7 @@ import { buildGradientPreset } from '~/lib/gradientfx/presets'
 import { cloneConfig as cloneGradientConfig, ensureConfigDefaults as ensureGradientConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
 import { cloneConfig as cloneShaderConfig, defaultConfig as defaultShaderConfig, hydrateConfig as hydrateShaderConfig, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
-import { mergeConfig as mergeShapeConfig } from '~/lib/geoshape/config'
+import { studioDocFromPersisted } from '~/lib/geoshape/studio'
 import { geoAgentControls as shapeAgentControls, GEO_GUIDANCE as SHAPE_GUIDANCE } from '~/lib/geoshape/agentControls'
 // Vector Type's config + control schema are fontkit-free (controls.ts imports
 // VtAxis TYPE-only, on purpose); only ./font.ts loads the parser, and that one is
@@ -379,17 +379,27 @@ export async function tuneShaderNode(node: any, request: string, apiKey: string)
  */
 const shapeAdapter: PatchAdapter = {
   read: (n: any) => {
-    const config = mergeShapeConfig(n?.data?.properties?.sailor_shapeStudio?.config)
-    return { config, controls: shapeAgentControls(config) }
+    // Shape Studio persists a LAYERED `doc` now (legacy `{config}` blobs migrate
+    // via studioDocFromPersisted). The canvas tuner edits the BASE layer's mark
+    // (layer 0) — the same flat GeoShapeConfig the agent vocabulary describes.
+    const doc = studioDocFromPersisted(n?.data?.properties?.sailor_shapeStudio)
+    const mark = doc.layers[0]!.mark
+    return { config: mark, controls: shapeAgentControls(mark) }
   },
-  params: (config: any) => makeConfigParams(() => config, () => 0),
-  write: (n: any, config: any) => {
+  params: (mark: any) => makeConfigParams(() => mark),
+  write: (n: any, mark: any) => {
     if (!n.data) n.data = {}
     if (!n.data.properties) n.data.properties = {}
     const prev = n.data.properties.sailor_shapeStudio ?? {}
-    n.data.properties.sailor_shapeStudio = { ...prev, config: JSON.parse(JSON.stringify(config)) }
+    // Re-load the doc (migrating legacy), drop the tuned mark back into layer 0,
+    // and persist `doc` — preserving canvasW/H/aspectKey and dropping any stale
+    // legacy `config` key so the node bake (which prefers `doc`) stays consistent.
+    const doc = studioDocFromPersisted(prev)
+    doc.layers[0] = { ...doc.layers[0]!, mark: JSON.parse(JSON.stringify(mark)) }
+    const { config: _legacyConfig, ...rest } = prev as Record<string, any>
+    n.data.properties.sailor_shapeStudio = { ...rest, doc: JSON.parse(JSON.stringify(doc)) }
   },
-  clone: (config: any) => JSON.parse(JSON.stringify(config)),
+  clone: (mark: any) => JSON.parse(JSON.stringify(mark)),
   label: 'Shape studio',
   guidance: SHAPE_GUIDANCE,
 }
@@ -397,9 +407,10 @@ const shapeAdapter: PatchAdapter = {
 /** Exposed for tests only — the adapter is otherwise reached via the registry. */
 export const __shapeAdapterForTest = shapeAdapter
 
-/** Shape Studio: config lives nested under sailor_shapeStudio.config, alongside
- *  canvas size + camera orbit that are NOT tune-adjustable — write must merge
- *  back into the wrapper rather than replace it (see shapeAdapter above). */
+/** Shape Studio: the mark lives nested under sailor_shapeStudio.doc.layers[0].mark,
+ *  alongside canvas size (NOT tune-adjustable) — the tuner edits the base layer's
+ *  mark and merges it back into the doc rather than replacing the wrapper (see
+ *  shapeAdapter above). */
 export async function tuneShapeNode(node: any, request: string, apiKey: string): Promise<TuneResult> {
   return runParamPatch(node, request, apiKey, shapeAdapter)
 }

@@ -202,14 +202,23 @@ function duplicateLayer(i: number) {
 function removeLayer(i: number) {
   if (doc.value.layers.length <= 1) return
   doc.value.layers.splice(i, 1)
+  // Keep the SAME layer selected: removing one BELOW the active index shifts the
+  // active layer down by one; clamp if the active (or a higher) layer was removed.
+  if (i < activeLayer.value) activeLayer.value--
   if (activeLayer.value >= doc.value.layers.length) activeLayer.value = doc.value.layers.length - 1
 }
 function reorderLayer(from: number, to: number) {
   const layers = doc.value.layers
   if (from < 0 || from >= layers.length || to < 0 || to >= layers.length) return
+  // Follow the user's CURRENT selection by id, not the dragged row — reordering a
+  // non-active layer must not hijack the selection to it.
+  const activeId = isSelected.value ? layers[activeLayer.value]?.layerId : null
   const [m] = layers.splice(from, 1)
   layers.splice(to, 0, m!)
-  activeLayer.value = to
+  if (activeId) {
+    const idx = layers.findIndex((l) => l.layerId === activeId)
+    if (idx >= 0) activeLayer.value = idx
+  }
 }
 function toggleLayer(i: number) {
   const l = doc.value.layers[i]; if (l) l.enabled = !l.enabled
@@ -225,6 +234,12 @@ const strokeEnabled = computed<boolean>({
 const strokeHex = computed<string>({
   get: () => activeMark.value.stroke ?? lastStrokeColor.value,
   set: (v: string) => { lastStrokeColor.value = v; activeMark.value.stroke = v },
+})
+// Re-seed the remembered stroke colour when switching layers, so toggling stroke
+// on layer B restores B's own last colour rather than a different layer's.
+watch(activeLayer, () => {
+  const s = activeMark.value.stroke
+  if (s != null) lastStrokeColor.value = s
 })
 
 // ── fills / overlapFills list editors — operate on the SELECTED layer's mark via the

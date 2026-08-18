@@ -85,15 +85,16 @@ async function textureControls(node: any): Promise<StudioControlDesc[]> {
   return mapAll(TEXTURE_CONTROLS as ControlSpec[])
 }
 
-/** Shape Studio: same config the canvas tuner reads (sailor_shapeStudio.config,
- *  falling back to a fresh default config via mergeConfig). */
+/** Shape Studio: same mark the canvas tuner reads — the base layer of the
+ *  persisted `doc` (sailor_shapeStudio.doc), legacy `{config}` blobs migrated,
+ *  falling back to a fresh default doc. */
 async function shapeControls(node: any): Promise<StudioControlDesc[]> {
-  const [{ mergeConfig }, { geoAgentControls }] = await Promise.all([
-    import('~/lib/geoshape/config'),
+  const [{ studioDocFromPersisted }, { geoAgentControls }] = await Promise.all([
+    import('~/lib/geoshape/studio'),
     import('~/lib/geoshape/agentControls'),
   ])
-  const config = mergeConfig(node?.data?.properties?.sailor_shapeStudio?.config)
-  return mapAll(geoAgentControls(config))
+  const mark = studioDocFromPersisted(node?.data?.properties?.sailor_shapeStudio).layers[0]!.mark
+  return mapAll(geoAgentControls(mark))
 }
 
 /**
