@@ -20,7 +20,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
 | Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask, + mode-gated params) | ✅ descriptor (+ mask) | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
-| Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ | ✅ descriptor | ~1,750 (lib/geoshape) |
+| Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ + **layer stack** (rail, per-layer scoping, placement) | ✅ descriptor (active layer only) | ~1,900 (lib/geoshape + studio.ts) |
 | Shot Director | ✅ | ✅ keyframes | ✅ | ❌ | 988 |
 | Smart Layout | ✅ batch export | ❌ | ✅ | ✅ commands | 7,262 (UI) |
 | Lip-Sync Studio | ❌ (server) | ❌ | ✅ | ❌ | 82 |
@@ -30,6 +30,14 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Shape Studio — stacked shape layers + colourable intersections — LANDED 2026-08-18
+
+Shape Studio went from ONE mark to a **stack of independent marks**, mirroring Gradient/Shader's layer model but for 2D vector. It now edits a **`GeoStudioDoc`** (`lib/geoshape/studio.ts`): `layers[1..6]`, each a full `GeoShapeConfig` ("mark") + wrapper `{layerId, enabled, offset{x,y,scale,rotate}, opacity, blend}`, plus a stack-level `overlap` palette and one shared `padding` frame. Reuses the shared `StudioLayerStack` rail (identity-based labels); selecting a layer scopes the whole existing controls panel to that layer's mark; deselecting (click active row again) → composite panel (Frame padding + **Intersections**).
+
+**Render** (`renderStudio` in `render.ts`) concatenates enabled layers' offset-transformed shapes into ONE `VectorShape[]` — preview, PNG bake and SVG (`studioToSvg`) all consume it, so parity is automatic and a one-layer doc is byte-identical to the old single mark (legacy `{config}` blobs migrate transparently via `studioDocFromPersisted`). **Intersections**: `overlapFaces()` (`boolean.ts`) unions each layer into a silhouette and reuses the in-mark "pieces" nested-`atLeast` depth bands + `rankOrder` to colour the ≥2-deep regions from `overlap.fills` (by depth / created / spatial order; depth|split crossings), appended last so they overpaint. Live-verified end-to-end (multi-layer offset stack + intersection region renders).
+
+**Owed (Phase 3):** per-layer opacity/blend reserved but not yet composited (needs offscreen/`<g>` group isolation); agent addresses the active layer only (stack `overlap.*`/`padding` not agent-legible yet); on-canvas offset drag. Spec: `docs/superpowers/specs/2026-08-18-shape-studio-layers-design.md`.
 
 ### Expressive + Shader Studios — control-relevance gating (hide controls the current mode ignores) — LANDED 2026-08-17
 
