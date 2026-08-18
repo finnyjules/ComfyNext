@@ -298,6 +298,23 @@ Build the complete `OUTPUT_CLASS_TYPES` set (Image/Video/Audio/SaveImage/Preview
 
 **Step 7:** GREEN across the meter family + the new guards. **Step 8: Commit** — `fix(stage6): complete engine file-read/write ownership coverage — closes graph-laundered cross-tenant reads`.
 
+### Task 7c: write-side containment + per-user output subfolders for the remaining writers (found across Task 7 review rounds)
+
+**Context:** Task 7's `injectOutputSubfolder` only rewrites `filename_prefix`, so save nodes that place files via a DIFFERENT field skip per-user subfoldering — and one skips containment entirely. These are WRITE-integrity gaps (not cross-tenant reads — that objective is met), but a graph writing outside the output root or into the shared root is a real pre-deploy problem.
+
+**The writers (verify each handler before fixing):**
+- `SaveImageDataSetToFolder.execute` (`comfy_extras/nodes_dataset.py:237`): `os.path.join(get_output_directory(), folder_name)` with NO `commonpath` containment → `folder_name="../.."` writes OUTSIDE the output root (arbitrary filesystem write as the engine process). MOST SERIOUS.
+- `SaveLoRA` (`prefix` field) and other dataset savers (`folder_name`) — write to the shared output root un-subfoldered (collision/exposure between tenants).
+- `_live_preview.save_generation_output` — fixed `"generation"` prefix, uncontained (lower severity, preview).
+
+**Files:** Modify `frontend/server/utils/meterGraphRun.ts` (or `engineFileSurface.ts`) — the injection; Test: extend `metered-prompt-forward.unit.spec.ts` + `engine-file-surface.unit.spec.ts`. Read-only: the engine save handlers.
+
+**Step 1: Build `GRAPH_OUTPUT_WRITERS` — a per-class map of WHICH field carries the output path** (`filename_prefix` for the SaveImage family, `prefix` for SaveLoRA, `folder_name` for the dataset savers, etc.), covering every class in the expanded OUTPUT_CLASS_TYPES. This replaces the single hardcoded `filename_prefix` assumption in `injectOutputSubfolder`.
+**Step 2: Generalize `injectOutputSubfolder`** to rewrite the RIGHT field per class: prepend `u_<callerHash>/` after stripping any `../`, absolute, or leading-`u_<seg>/` from the client value (the same sanitizeExistingPrefix hardening Task 7 uses for filename_prefix), so EVERY output writer lands under the caller's subtree and a `../..` traversal is neutralized before forwarding.
+**Step 3: Coverage guard** — assert every class in OUTPUT_CLASS_TYPES has an entry in `GRAPH_OUTPUT_WRITERS` (which field) so a new save node can't be added without declaring its path field. Extend guard B.
+**Step 4: RED-first** — `SaveImageDataSetToFolder {folder_name:"../../etc"}` → forwarded body has `folder_name` rewritten to `u_<hash>/...` (traversal neutralized); SaveLoRA `prefix` subfoldered; every OUTPUT_CLASS_TYPES class's path-field rewritten; local byte-identical.
+**Step 5: Fix the cosmetic** `nodes_compositor.py` guard-note label (HTTP-route hit, not schema listing). **Step 6: Commit** — `fix(stage6): per-user output subfolders + traversal containment for all writers`.
+
 ### Task 8: Per-user settings + userdata — ComfyUI multi-user behind the proxy
 
 **Files:**
