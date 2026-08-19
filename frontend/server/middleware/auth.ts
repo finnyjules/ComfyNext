@@ -16,6 +16,7 @@ import { guardDecision } from '../utils/authGuard'
 import { ensureUserWithBonus } from '../utils/userSync'
 import { getLiveLedger } from '../utils/ledgerLive'
 import { bindMeterContext, clearMeterContext } from '../utils/requestMeter'
+import { checkBetaAccess } from '../utils/betaAccess'
 import type { H3Event } from 'h3'
 
 /**
@@ -37,7 +38,10 @@ export function resolveClerkUserId(event: H3Event): string | null {
   }
 }
 
-type ClerkClientLike = { authenticateRequest: (req: Request) => Promise<{ toAuth: () => { userId: string | null } | null }> }
+type ClerkClientLike = {
+  authenticateRequest: (req: Request) => Promise<{ toAuth: () => { userId: string | null } | null }>
+  users?: { getUser: (userId: string) => Promise<any> }
+}
 
 // Lazily-created hosted Clerk client (never constructed in local mode).
 let clerkClient: ClerkClientLike | null = null
@@ -82,6 +86,19 @@ export async function resolveHostedUserId(event: H3Event): Promise<string | null
     const state = await getClerkClient().authenticateRequest(bodylessRequest)
     const auth = state.toAuth()
     return auth?.userId ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Primary email for a Clerk user — the beta-allowlist identity. Returns
+ * null on any failure so checkBetaAccess fails CLOSED (deny, retry later). */
+export async function fetchPrimaryEmail(userId: string): Promise<string | null> {
+  try {
+    const u: any = await getClerkClient().users!.getUser(userId)
+    const emails: Array<{ id?: string; emailAddress?: string }> = u?.emailAddresses ?? []
+    const primary = emails.find(e => e.id === u?.primaryEmailAddressId) ?? emails[0]
+    return primary?.emailAddress ?? null
   } catch {
     return null
   }
@@ -132,6 +149,17 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, message: 'Sign in required' })
   }
   if (decision.kind === 'attach') {
+    // Private-beta allowlist (Stage 8): deny BEFORE attaching identity,
+    // binding the meter, or lazily provisioning the wallet+bonus — a
+    // non-invited signup must never acquire a spendable wallet. Fails
+    // CLOSED (unset list or failed email lookup ⇒ deny).
+    const beta = await checkBetaAccess(decision.userId, {
+      allowlistRaw: process.env.SAILOR_BETA_ALLOWLIST,
+      getEmail: fetchPrimaryEmail,
+    })
+    if (!beta.allowed) {
+      throw createError({ statusCode: 403, message: 'Sailor is in private beta', data: { code: 'beta_not_invited' } })
+    }
     event.context.userId = decision.userId
     bindMeterContext({ userId: decision.userId })
     if (shouldLazySync(decision.userId)) {

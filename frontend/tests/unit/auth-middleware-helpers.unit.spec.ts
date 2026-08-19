@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
  * auth.ts calls defineEventHandler at module scope (a Nitro auto-import that
@@ -8,14 +8,16 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest'
  */
 const g = globalThis as any
 g.defineEventHandler = (fn: any) => fn
-g.createError = (opts: { statusCode: number, message?: string, statusMessage?: string }) => {
-  const err = new Error(opts.message ?? opts.statusMessage) as Error & { statusCode: number }
+g.createError = (opts: { statusCode: number, message?: string, statusMessage?: string, data?: unknown }) => {
+  const err = new Error(opts.message ?? opts.statusMessage) as Error & { statusCode: number, data?: unknown }
   err.statusCode = opts.statusCode
+  err.data = opts.data
   return err
 }
 
 let resolveClerkUserId: (event: any) => string | null
 let resolveHostedUserId: (event: any) => Promise<string | null>
+let fetchPrimaryEmail: (userId: string) => Promise<string | null>
 let shouldLazySync: (userId: string) => boolean
 let __resetLazySyncForTests: () => void
 let __setClerkClientForTests: (client: any) => void
@@ -24,12 +26,14 @@ let authHandler: (event: any) => Promise<void>
 let bindMeterContext: (ctx: { userId: string }) => void
 let currentMeterContext: () => { userId: string } | null
 let __resetMeterContextForTests: () => void
+let __resetBetaAccessForTests: () => void
 
 beforeAll(async () => {
   const authModule = await import('../../server/middleware/auth')
-  ;({ resolveClerkUserId, resolveHostedUserId, shouldLazySync, __resetLazySyncForTests, __setClerkClientForTests } = authModule)
+  ;({ resolveClerkUserId, resolveHostedUserId, fetchPrimaryEmail, shouldLazySync, __resetLazySyncForTests, __setClerkClientForTests } = authModule)
   authHandler = authModule.default as unknown as (event: any) => Promise<void>
   ;({ bindMeterContext, currentMeterContext, __resetMeterContextForTests } = await import('../../server/utils/requestMeter'))
+  ;({ __resetBetaAccessForTests } = await import('../../server/utils/betaAccess'))
 })
 
 // A minimal event whose toWebRequest(event) short-circuits to event.web.request
@@ -107,6 +111,8 @@ describe('shouldLazySync', () => {
 describe('auth middleware binds/clears the meter context', () => {
   const KEY = 'NUXT_CLERK_SECRET_KEY'
   const savedKey = process.env[KEY]
+  const ALLOWLIST_KEY = 'SAILOR_BETA_ALLOWLIST'
+  const savedAllowlist = process.env[ALLOWLIST_KEY]
 
   function setHosted(): void {
     process.env[KEY] = 'sk_test_hosted'
@@ -126,14 +132,23 @@ describe('auth middleware binds/clears the meter context', () => {
     __setClerkClientForTests(null)
     __resetLazySyncForTests()
     __resetMeterContextForTests()
+    __resetBetaAccessForTests()
     if (savedKey === undefined) delete process.env[KEY]
     else process.env[KEY] = savedKey
+    if (savedAllowlist === undefined) delete process.env[ALLOWLIST_KEY]
+    else process.env[ALLOWLIST_KEY] = savedAllowlist
   })
 
   it('binds currentMeterContext().userId on an authed hosted (attach) request', async () => {
     setHosted()
+    // Stage 8: the attach branch now gates on the beta allowlist, so this
+    // stub must resolve an allowlisted email — this test is about
+    // meter-context binding, not allowlist enforcement (see the dedicated
+    // "beta allowlist enforcement" describe below for that).
+    process.env[ALLOWLIST_KEY] = 'user1@example.com'
     __setClerkClientForTests({
       authenticateRequest: async () => ({ toAuth: () => ({ userId: 'user_1' }) }),
+      users: { getUser: async () => ({ emailAddresses: [{ id: 'em_1', emailAddress: 'user1@example.com' }] }) },
     })
     // Pre-consume the once-per-process lazy-sync seam so the handler's
     // attach branch doesn't fire a live ensureUserWithBonus/ledger call.
@@ -168,5 +183,78 @@ describe('auth middleware binds/clears the meter context', () => {
     await authHandler(event)
 
     expect(currentMeterContext()).toBeNull()
+  })
+})
+
+describe('fetchPrimaryEmail', () => {
+  afterEach(() => __setClerkClientForTests(null))
+  it('returns the primary email address', async () => {
+    __setClerkClientForTests({
+      users: { getUser: async () => ({ primaryEmailAddressId: 'em_2', emailAddresses: [{ id: 'em_1', emailAddress: 'old@example.com' }, { id: 'em_2', emailAddress: 'ada@example.com' }] }) },
+    } as any)
+    expect(await fetchPrimaryEmail('user_a')).toBe('ada@example.com')
+  })
+  it('falls back to the first email when no primary id matches', async () => {
+    __setClerkClientForTests({ users: { getUser: async () => ({ emailAddresses: [{ id: 'em_1', emailAddress: 'only@example.com' }] }) } } as any)
+    expect(await fetchPrimaryEmail('user_a')).toBe('only@example.com')
+  })
+  it('returns null on a lookup failure or an email-less user (fail closed upstream)', async () => {
+    __setClerkClientForTests({ users: { getUser: async () => { throw new Error('down') } } } as any)
+    expect(await fetchPrimaryEmail('user_a')).toBeNull()
+    __setClerkClientForTests({ users: { getUser: async () => ({ emailAddresses: [] }) } } as any)
+    expect(await fetchPrimaryEmail('user_a')).toBeNull()
+  })
+})
+
+describe('auth handler — beta allowlist enforcement (hosted)', () => {
+  // Hosted mode via env; a stubbed Clerk client authenticates user_a whose
+  // email is resolved by the same stub's users.getUser.
+  const HOSTED_ENV = { NUXT_CLERK_SECRET_KEY: 'sk_test_stub' }
+  let saved: Record<string, string | undefined>
+  beforeEach(() => {
+    saved = {}
+    for (const k of ['NUXT_CLERK_SECRET_KEY', 'SAILOR_BETA_ALLOWLIST']) saved[k] = process.env[k]
+    Object.assign(process.env, HOSTED_ENV)
+    __resetBetaAccessForTests()
+    __resetLazySyncForTests()
+    __resetMeterContextForTests()
+  })
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v }
+    __setClerkClientForTests(null)
+  })
+
+  function stubClerk(email: string | null) {
+    __setClerkClientForTests({
+      authenticateRequest: async () => ({ toAuth: () => ({ userId: 'user_a' }) }),
+      users: { getUser: async () => ({ emailAddresses: email ? [{ id: 'em_1', emailAddress: email }] : [] }) },
+    } as any)
+  }
+  function guardedEvent(): any {
+    return { path: '/api/wallet', context: {}, web: { request: new Request('http://localhost/api/wallet') } }
+  }
+
+  it('rejects a signed-in non-listed user with 403 beta_not_invited and never provisions them', async () => {
+    process.env.SAILOR_BETA_ALLOWLIST = 'ada@example.com'
+    stubClerk('mallory@evil.io')
+    const event = guardedEvent()
+    await expect(authHandler(event)).rejects.toMatchObject({ statusCode: 403, data: { code: 'beta_not_invited' } })
+    expect(event.context.userId).toBeUndefined()          // never attached
+    expect(currentMeterContext()).toBeNull()               // never metered
+    expect(shouldLazySync('user_a')).toBe(true)            // lazy sync never consumed → bonus never granted
+  })
+  it('denies EVERYONE when the allowlist is unset (default-deny)', async () => {
+    delete process.env.SAILOR_BETA_ALLOWLIST
+    stubClerk('ada@example.com')
+    await expect(authHandler(guardedEvent())).rejects.toMatchObject({ statusCode: 403 })
+  })
+  it('attaches a listed user exactly as before', async () => {
+    process.env.SAILOR_BETA_ALLOWLIST = 'ada@example.com'
+    stubClerk('ada@example.com')
+    shouldLazySync('user_a') // pre-consume the memo so the handler skips the real-ledger lazy sync
+    const event = guardedEvent()
+    await authHandler(event)
+    expect(event.context.userId).toBe('user_a')
+    expect(currentMeterContext()).toEqual({ userId: 'user_a' })
   })
 })
