@@ -15,6 +15,7 @@
  * table is hosted-only.
  */
 import { connectLedgerDb, type LedgerDbHandle } from './ledgerDb'
+import { captureError } from './observe'
 
 type DbLike = { query(sql: string, params?: unknown[]): Promise<{ rows: any[] }> }
 
@@ -40,5 +41,6 @@ export async function recordProviderUsage(row: { userId: string | null; provider
       [row.userId, row.provider, row.model, row.usd, row.jobId])
   } catch (e) {
     console.error('[providerUsage] insert failed', { jobId: row.jobId, model: row.model, error: e })
+    captureError(e, { site: 'recordProviderUsage', jobId: row.jobId, model: row.model, provider: row.provider })
   }
 }

@@ -29,6 +29,7 @@
  */
 import { connectLedgerDb, type LedgerDbHandle } from './ledgerDb'
 import { isHosted } from './deployMode'
+import { captureError } from './observe'
 
 type DbLike = { query(sql: string, params?: unknown[]): Promise<{ rows: any[] }> }
 
@@ -124,6 +125,7 @@ export async function runReconcile(): Promise<void> {
       console.error('[reconcile] UNMATCHED provider spend — code regression', {
         unmatchedJobIds: result.unmatchedJobIds,
       })
+      captureError(new Error('reconcile: unmatched provider spend — code regression'), { site: 'runReconcile', unmatchedJobIds: result.unmatchedJobIds })
     }
   } catch (e) {
     console.error('[reconcile] daily digest failed', { error: e })

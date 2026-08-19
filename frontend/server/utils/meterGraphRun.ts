@@ -18,6 +18,7 @@ import { settleOnCompletion } from './settleWatcher'
 import { stripForeignComfyOrgCreds } from './spikeAuth'
 import { resolveWorkerTarget } from './workerRoute'
 import { getLiveLedger } from './ledgerLive'
+import { captureError } from './observe'
 import { annotatedFilepath, collectUploadFlaggedInputs } from './engineGate'
 import { canonicalUploadKey, uploadOwner } from './inputUploads'
 import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS, GRAPH_OUTPUT_WRITERS, extractFileRefs, graphFolderOwnedBy, type FileRefSemantics } from './engineFileSurface'
@@ -510,7 +511,10 @@ export async function settleGraphSuccess(target: string, promptId: string, holdI
   if (holdId !== null) {
     try {
       const s = await getLiveLedger().settle(holdId, credits, `graph:${promptId}`)
-      if (!s.settled) console.error('[graphMeter] SETTLE ON RELEASED HOLD — run shipped uncharged', { promptId, holdId, credits })
+      if (!s.settled) {
+        console.error('[graphMeter] SETTLE ON RELEASED HOLD — run shipped uncharged', { promptId, holdId, credits })
+        captureError(new Error('graphMeter: settle on released hold — run shipped uncharged'), { site: 'meterGraphRun', promptId, holdId, credits })
+      }
     } catch (e) {
       console.error('[graphMeter] SETTLE FAILED after successful run', { promptId, holdId, credits, e })
     }

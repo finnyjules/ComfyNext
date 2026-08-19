@@ -59,6 +59,7 @@ import { deployMode } from './deployMode'
 import { costForModel, LORA_RENDER_CREDITS, LORA_SLUG_OWNERS, MODEL_COSTS } from './priceBook'
 import { getLiveLedger } from './ledgerLive'
 import { assertSpendAllowed } from './systemControls'
+import { captureError } from './observe'
 
 /**
  * Operator safety-valve guard (Stage 7 Task 4), injected behind a seam so the
@@ -282,6 +283,7 @@ async function settleHoldOrLog(
       // The hold was already released (holdSweep's TTL, or a double-release
       // on a failure path) — the provider output shipped and nobody paid.
       console.error('[meter] SETTLE ON RELEASED HOLD — output shipped uncharged', { userId, model, credits, jobId, holdId })
+      captureError(new Error('meter: settle on released hold — output shipped uncharged'), { site: 'settleModelHold', userId, model, credits, jobId, holdId })
     }
   } catch (e) {
     console.error('[meter] SETTLE FAILED after successful job', { userId, model, credits, jobId, holdId, error: e })
@@ -455,8 +457,10 @@ export async function settleModel(model: string, jobId: string): Promise<void> {
     const result = await ledger.debit(userId, credits, `provider:${model}`, jobId)
     if (!result.ok) {
       console.error('[meter] DEBIT FAILED after successful job', { userId, model, credits, jobId, result })
+      captureError(new Error('meter: debit failed after successful job'), { site: 'settleModel', userId, model, credits, jobId, result })
     }
   } catch (e) {
     console.error('[meter] DEBIT FAILED after successful job', { userId, model, credits, jobId, error: e })
+    captureError(e, { site: 'settleModel', userId, model, credits, jobId })
   }
 }

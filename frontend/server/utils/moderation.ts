@@ -5,6 +5,8 @@
  * blip must not take all generation down for a watched beta. No OPENAI_API_KEY
  * (local mode) → no-op { ok: true }, byte-identical.
  */
+import { captureError } from './observe'
+
 let fetchOverride: typeof fetch | null = null
 export function __setModerationFetchForTests(fn: typeof fetch | null): void { fetchOverride = fn }
 
@@ -26,7 +28,7 @@ export async function moderatePrompt(text: string): Promise<{ ok: true } | { ok:
         signal: ctrl.signal,
       })
     } finally { clearTimeout(t) }
-    if (!res?.ok) { console.error('[moderation] non-200 — failing open', { status: res?.status }); return { ok: true } }
+    if (!res?.ok) { console.error('[moderation] non-200 — failing open', { status: res?.status }); captureError(new Error('moderation: non-200 — failing open'), { site: 'moderatePrompt', status: res?.status }); return { ok: true } }
     const data = await res.json()
     const result = data?.results?.[0]
     if (result?.flagged) {
@@ -36,6 +38,7 @@ export async function moderatePrompt(text: string): Promise<{ ok: true } | { ok:
     return { ok: true }
   } catch (e) {
     console.error('[moderation] error — failing open', e)
+    captureError(e, { site: 'moderatePrompt' })
     return { ok: true }
   }
 }

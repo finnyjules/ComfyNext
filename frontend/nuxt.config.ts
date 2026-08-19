@@ -46,6 +46,12 @@ export default defineNuxtConfig({
       comfyOrigin: '',
       // Mirrors server deployMode at build/dev start: hosted iff Clerk keys present.
       hostedMode: !!process.env.NUXT_CLERK_SECRET_KEY,
+      // Client Sentry DSN — present ONLY when NUXT_PUBLIC_SENTRY_DSN is set
+      // (hosted). Conditionally spread so local boot carries no sentry key and
+      // stays byte-identical; sentry.client.config.ts reads it. See below.
+      ...(process.env.NUXT_PUBLIC_SENTRY_DSN
+        ? { sentry: { dsn: process.env.NUXT_PUBLIC_SENTRY_DSN } }
+        : {}),
     },
   },
 
@@ -55,6 +61,12 @@ export default defineNuxtConfig({
     // without keys either 500s every request (keyless disabled) or silently
     // creates a throwaway "keyless" Clerk app with an onboarding popup.
     ...(process.env.NUXT_CLERK_SECRET_KEY ? ['@clerk/nuxt'] : []),
+    // Sentry client instrumentation loads ONLY when NUXT_PUBLIC_SENTRY_DSN is
+    // set (hosted). Absent env ⇒ module never registered ⇒ no init, no resolve
+    // warnings ⇒ local boot byte-identical. Client init lives in
+    // sentry.client.config.ts (module convention); server init is our own
+    // server/plugins/sentry.ts, so no server config file here (no double-init).
+    ...(process.env.NUXT_PUBLIC_SENTRY_DSN ? ['@sentry/nuxt/module'] : []),
     '@nuxtjs/color-mode',
     '@nuxt/fonts',
     // Inline module: proxy WebSocket upgrades on /ws to ComfyUI (dev only).
