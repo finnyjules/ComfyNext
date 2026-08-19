@@ -16,7 +16,7 @@
 import type { SpaceTypeClip } from '~~/shared/timeline/types'
 import { getEffect } from '~/lib/spacetype/effects/index'
 import { loopMultiplier } from '~/lib/spacetype/loop'
-import { texOptsFromState, dimsFromKey } from '~/lib/spacetype/state'
+import { texOptsFromState, dimsFromState } from '~/lib/spacetype/state'
 import { spaceTypeSourceFrameCount } from '~/composables/timelineSpaceTypeClip'
 import { getSpaceTypeEngine, structuralKey, type SpaceTypeEngineHandle } from './spaceTypeEnginePool'
 
@@ -90,7 +90,7 @@ export function renderSpaceTypeClipToCanvas(
   bake = false,
 ): HTMLCanvasElement | null {
   if (!handle) return null
-  const [W, H] = dimsFromKey(clip.state.dimsKey)
+  const [W, H] = dimsFromState(clip.state)
   const engine = getSpaceTypeEngine(handle, W, H)
   if (!engine) return null
 

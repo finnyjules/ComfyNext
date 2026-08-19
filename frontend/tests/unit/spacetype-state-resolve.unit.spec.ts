@@ -40,7 +40,11 @@ describe('texOptsFromState multi-text atlas', () => {
     const s = stateFor('stripes')
     s.params.text = 'World Champion\nChampion du Monde\nRey del Mundo'
     const opts = texOptsFromState(s)
-    expect(opts.labels).toEqual(['WORLD CHAMPION   ', 'CHAMPION DU MONDE   ', 'REY DEL MUNDO   '])
+    // stripes declares textCase with default 'asis' (seeded by defaultsFromControls
+    // here), so the rows keep their typed case — matching the modal, which resolves
+    // an unset param to the CONTROL's default, not a hardcoded 'upper'. The original
+    // expectation predated that control.
+    expect(opts.labels).toEqual(['World Champion   ', 'Champion du Monde   ', 'Rey del Mundo   '])
     expect(opts.label).toBe(opts.labels[0])
   })
 

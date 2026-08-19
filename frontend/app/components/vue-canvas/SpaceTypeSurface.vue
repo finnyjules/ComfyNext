@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
-import { buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
 import { getEffect } from '~/lib/spacetype/effects'
 import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
 import { defaultsFromControls, type Params, type ControlSpec } from '~/lib/spacetype/effect'
@@ -17,7 +16,7 @@ import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
 import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
-import type { SpaceTypeState } from '~/lib/spacetype/state'
+import { texOptsFromState, type SpaceTypeState } from '~/lib/spacetype/state'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { encodeFrames, type EncodeFramesResult } from '~/lib/engine/encodeVideo'
 import { canvasHasAlpha } from '~/lib/engine/hasAlpha'
@@ -748,63 +747,18 @@ async function ensureEffectFonts() {
 }
 
 function texOpts() {
-  const family = displayFontFamily(String(params.font))
-  // Static families have no weight axis — pin to 400 so we don't faux-bold a single cut.
-  const weight = fontHasWeightAxis(family) ? Number(params.typeWeight ?? 700) : 400
-  // Multiple texts (one per line) → an N-row atlas the effect alternates between.
-  // Only effects that DECLARE a `textList` control are multi-text-aware; others collapse
-  // to the first text so an unwired effect never renders a stacked atlas by mistake.
-  const multiAware = effect.value.controls.some(c => c.kind === 'textList')
-  const rawTexts = String(params.text ?? '').split('\n').map(t => t.trim()).filter(Boolean)
-  const texts = rawTexts.length ? rawTexts : ['']
-  // Coil/elastic/echo size to their own text (no tiling), so they take the RAW uppercased
-  // word with NO trailing-gap pad — otherwise the gap is dead space that throws off centering.
-  // Tiling effects (ribbon/stripes/field) keep buildRibbonLabel's trailing gap so repeated
-  // text has space between copies.
-  const rawWords = effectId.value === 'coil' || effectId.value === 'elastic' || effectId.value === 'echo'
-  // Effects may opt out of the suite's force-uppercase default by declaring a `textCase` control.
-  // When the param is unset (defaults aren't seeded onto the load path), fall back to THAT control's
-  // declared default rather than a hardcoded 'upper' — otherwise an effect whose control defaults to
-  // 'asis' still force-uppercases until the user toggles it. Effects with no textCase control keep
-  // 'upper' (backwards compatible).
-  const textCaseDefault = String(effect.value.controls.find(c => c.key === 'textCase')?.default ?? 'upper')
-  const asis = String(params.textCase ?? textCaseDefault) === 'asis'
-  const caseMode = asis ? 'as-typed' : 'upper'
-  const cased = (t: string) => (asis ? t : t.toUpperCase())
-  const labels = multiAware
-    ? texts.map(t => (rawWords ? cased(t) : buildRibbonLabel(t, caseMode)))
-    : [rawWords ? cased(texts[0] ?? '') : buildRibbonLabel(texts[0] ?? '', caseMode)]
-  // Slit Scan renders on a single flat quad that FILLS the frame and stretches the glyphs, so it
-  // magnifies the text far beyond the default ~256px atlas → blur. Supersample its atlas (scale the
-  // glyph AND the row together so the ink proportions — and thus the look — are unchanged, just
-  // higher-res). Other effects keep the default resolution.
-  // Supersample the text atlas 2× so glyph edges stay crisp in the authoring preview when
-  // magnified onto large bands (slit-scan needs even more — it fills the frame with one quad).
-  // Corner Pin stretches ONE word across each full-width band (poster scale), so the source atlas
-  // must out-resolve the on-screen glyph or the magnified ends go soft. Push it high for few bands
-  // (each band is huge) and scale down as bands multiply (each band shrinks → less magnification),
-  // keeping the atlas height bounded (256·SS·N ≈ ≤ 3k) so it never blows the GPU texture cap.
-  const cpSS = texts.length <= 2 ? 5 : texts.length === 3 ? 4 : texts.length <= 5 ? 3 : 2
-  const atlasSS = effectId.value === 'cornerpin' ? cpSS : effectId.value === 'slitscan' ? 3 : 2
-  return {
-    label: labels[0]!,
-    labels,
-    fontFamily: family,
-    // STG-style names (typeWeight/typeYScale/typeXScale) with fallbacks so effects
-    // that still use typeHeight keep working unchanged.
-    fontWeight: weight,
-    axes: { wght: weight, ...fontAxes },
-    typeColor: String(params.typeColor),
-    fontSizePx: Number(params.typeYScale ?? params.typeHeight ?? 180) * atlasSS,
-    heightPx: 256 * atlasSS,
-    scaleX: Number(params.typeXScale ?? 1),
-    tracking: Number(params.tracking),
-    strokeColor: '#000000',
-    strokeWidth: Number(params.typeStroke),
-    gradientStops: gradientStops.map(s => ({ ...s })),
-    gradientOn: String(params.gradientMode) === 'on',
-    uRepeat: Number(params.textRepeat),
-  }
+  // Delegates to the SHARED builder (texOptsFromState — see its doc): the node
+  // card preview, the headless frame source a wired Compositor pulls, and the
+  // timeline clip renderer all rasterize their atlases from the same function,
+  // so the modal can no longer drift from the canvas (the "script font correct
+  // in the modal, Inter on the card/wired frame" bug — this function used to be
+  // an inline copy while state.ts still resolved against the retired
+  // VARIABLE_FONTS list). fontAxes (variable axes beyond weight) are modal-live
+  // state that isn't persisted, passed through as extraAxes.
+  return texOptsFromState(
+    { effectId: effectId.value, params: params as SpaceTypeState['params'], gradientStops },
+    fontAxes,
+  )
 }
 
 function rebuild() {

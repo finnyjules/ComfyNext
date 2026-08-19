@@ -5,7 +5,7 @@ import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { getEffect } from '~/lib/spacetype/effects'
 import {
-  defaultSpaceTypeState, dimsFromKey, ensureSpaceTypeFont, texOptsFromState,
+  defaultSpaceTypeState, dimsFromState, ensureSpaceTypeFont, texOptsFromState,
   type SpaceTypeState,
 } from '~/lib/spacetype/state'
 import { DEFAULT_POST } from '~/lib/spacetype/post'
@@ -15,6 +15,7 @@ import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
 import { makeSpaceTypeFrameSource } from '~/lib/spacetype/frameSource'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
+import { loadGoogleCatalog } from '~/data/google-fonts'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Space Type — a frontend-only config node for the client-side Three.js ribbon
@@ -49,7 +50,7 @@ const state = computed<SpaceTypeState>(
 const hadSavedConfig = !!props.data?.properties?.sailor_spaceType
 
 function previewHeight(s: SpaceTypeState): number {
-  const [cw, ch] = dimsFromKey(s.dimsKey)
+  const [cw, ch] = dimsFromState(s)
   const h = Math.round(PREVIEW_W * ch / cw)
   return Math.max(MIN_H, Math.min(MAX_H, h))
 }
@@ -150,6 +151,10 @@ onMounted(async () => {
   })
   await ensureSpaceTypeFont(String(s.params.font))
   rebuild()
+  // Weight pinning for static families (texOptsFromState) reads the Google
+  // catalog cache; module-cached, one fetch per page. Rebuild both engines when
+  // it lands so a static font drops its faux-bold without opening the modal.
+  void loadGoogleCatalog().then(() => { headlessDirty = true; rebuild() })
   registerStudioBaker(props.id, bakeOutput)
   // Modal-independent live frame source: a directly-wired downstream Shader Studio
   // pulls frames from here even when this node's editor is closed. Uses its OWN
@@ -158,7 +163,7 @@ onMounted(async () => {
   registerStudioFrameSource(props.id, makeSpaceTypeFrameSource({
     getClock: () => {
       const s = state.value
-      const [cw, ch] = dimsFromKey(s.dimsKey)
+      const [cw, ch] = dimsFromState(s)
       return { duration: s.loopDuration, fps: s.fps, width: cw, height: ch }
     },
     renderAt: (t01, w, h) => {
@@ -230,7 +235,7 @@ function ensureHeadless(w: number, h: number): SpaceTypeEngine | null {
 async function bakeOutput(): Promise<Blob | null> {
   if (!engine) return null
   const s = state.value
-  const [cw, ch] = dimsFromKey(s.dimsKey)
+  const [cw, ch] = dimsFromState(s)
   stopPreview()
   try {
     // Item 8 (final review): this is a one-shot render-cascade bake, not the live preview

@@ -1,13 +1,22 @@
-import { ribbonEffect, buildRibbonLabel } from './effects/ribbon'
+import { buildRibbonLabel, ribbonEffect } from './effects/ribbon'
+import { getEffect } from './effects'
 import { defaultsFromControls } from './effect'
-import { VARIABLE_FONTS } from '~/data/variable-fonts'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
+import { parseLibraryFontValue } from '~/lib/scene3d/outlines'
+import { googleFontCssUrl } from '~/data/google-fonts'
+import { useLibraryFonts } from '~/composables/useLibraryFonts'
 import type { SpaceTypeState } from '~~/shared/spacetype/state'
 
 export type { SpaceTypeState } from '~~/shared/spacetype/state'
 
-// Shared Space Type editor/node state. The modal (SpaceTypeSurface) keeps its
-// own inline copy of this logic; this module exists so the node card preview
-// can rebuild the same scene from the saved config without duplicating it.
+// Shared Space Type editor/node state. The modal (SpaceTypeSurface) DELEGATES
+// its texOpts() to texOptsFromState below — one builder, three consumers (modal,
+// node card + headless frame source, timeline clip renderer). It used to keep an
+// inline copy while this module still resolved fonts against the retired
+// VARIABLE_FONTS list, so any font the legacy list didn't know (every plain
+// Google family the FontPicker emits, every `local:` library token) silently
+// fell back to Inter on the card/wired path while the modal rendered it
+// correctly — the render-parity drift class. Do not fork this logic again.
 
 export const DIMS: Record<string, [number, number]> = {
   '1920 × 1080 (16:9)': [1920, 1080],
@@ -31,38 +40,117 @@ export function defaultSpaceTypeState(): SpaceTypeState {
 
 export function dimsFromKey(key: string): [number, number] { return DIMS[key] ?? [960, 540] }
 
-const loadedFontIds = new Set<string>()
-export async function ensureSpaceTypeFont(id: string): Promise<void> {
-  const f = VARIABLE_FONTS.find(v => v.id === id) ?? VARIABLE_FONTS[0]
-  if (!f) return
-  if (!loadedFontIds.has(f.id)) {
-    if (typeof document !== 'undefined' && !document.querySelector(`link[data-stg-font="${f.id}"]`)) {
-      const link = document.createElement('link')
-      link.rel = 'stylesheet'; link.href = f.cssUrl; link.setAttribute('data-stg-font', f.id)
-      document.head.appendChild(link)
-    }
-    loadedFontIds.add(f.id)
-  }
-  try { await document.fonts.load(`700 32px "${f.family}"`) } catch { /* best-effort */ }
+/** Output dims for a saved state. Explicit W/H win — the editor saves them for
+ *  every selection, and for 'Custom' they are the only record of the real size
+ *  (dimsFromKey would silently answer 960×540). Preset-key fallback covers
+ *  configs saved before W/H existed. Completes the a4c55cd51 checkpoint, whose
+ *  spec landed without this implementation. */
+export function dimsFromState(s: Pick<SpaceTypeState, 'dimsKey' | 'W' | 'H'>): [number, number] {
+  const w = Number(s.W), h = Number(s.H)
+  if (Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0) return [Math.round(w), Math.round(h)]
+  return dimsFromKey(s.dimsKey)
 }
 
-export function texOptsFromState(s: SpaceTypeState) {
-  const f = VARIABLE_FONTS.find(v => v.id === String(s.params.font)) ?? VARIABLE_FONTS[0]
+/** Resolve a stored font value (Google family, legacy VARIABLE_FONTS id, or
+ *  `local:` library token) to the CSS family the atlas should rasterize with —
+ *  the same branch the modal's displayFontFamily takes. */
+function familyFromValue(value: string): string {
+  const local = parseLibraryFontValue(value)
+  return local ? local.family : resolveFontFamily(value || 'Inter')
+}
+
+// Families whose CSS has been injected this page load (Google <link> path only;
+// library families are tracked by useLibraryFonts itself).
+const loadedFontFamilies = new Set<string>()
+
+/** Load the CSS face for a stored font value so the text atlas rasterizes with
+ *  the real font. Mirrors the modal's ensureFont: `local:` tokens inject the
+ *  library @font-face block; anything else resolves to a family and injects a
+ *  Google Fonts stylesheet. Legacy VARIABLE_FONTS ids resolve via
+ *  resolveFamily's LEGACY_FONT_IDS, so saved nodes keep working. */
+export async function ensureSpaceTypeFont(value: string): Promise<void> {
+  if (typeof document === 'undefined') return
+  const local = parseLibraryFontValue(value)
+  if (local) {
+    useLibraryFonts().ensure(local.family)
+    try { await document.fonts.load(`700 32px "${local.family}"`) } catch { /* best-effort */ }
+    return
+  }
+  const family = resolveFontFamily(value || 'Inter')
+  if (!loadedFontFamilies.has(family)) {
+    const key = family.replace(/[^a-zA-Z0-9]/g, '_')
+    if (!document.querySelector(`link[data-stg-font="${key}"]`)) {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'; link.href = googleFontCssUrl(family); link.setAttribute('data-stg-font', key)
+      document.head.appendChild(link)
+    }
+    loadedFontFamilies.add(family)
+  }
+  try { await document.fonts.load(`700 32px "${family}"`) } catch { /* best-effort */ }
+}
+
+// Effects whose glyphs size to their own (cased) word with NO trailing-gap pad,
+// rather than the tiled-ribbon label — the gap is dead space that throws off
+// centering. Mirrored (not imported) by lib/embed/surfaces/spacetype.ts, whose
+// bundle must not reach this module's import graph.
+const RAW_WORD_EFFECTS = new Set(['coil', 'elastic', 'echo'])
+
+/**
+ * Text-texture options for one Space Type build — THE shared builder. The modal
+ * passes its live variable-font axes via `extraAxes`; the card/headless/clip
+ * paths have none (axes beyond weight aren't persisted), so they default empty.
+ * Weight pinning for static families depends on the Google catalog cache
+ * (setFontCatalog) — callers that can, should kick loadGoogleCatalog() and
+ * rebuild when it lands (unknown families default to "variable", the same
+ * optimistic default the modal shows).
+ */
+export function texOptsFromState(
+  s: Pick<SpaceTypeState, 'effectId' | 'params' | 'gradientStops'>,
+  extraAxes: Record<string, number> = {},
+) {
+  const effect = getEffect(s.effectId)
+  const p = s.params
+  const family = familyFromValue(String(p.font ?? ''))
+  // Static families have no weight axis — pin to 400 so we don't faux-bold a single cut.
+  const weight = fontHasWeightAxis(family) ? Number(p.typeWeight ?? 700) : 400
+  // Multiple texts (one per line) → an N-row atlas the effect alternates between.
+  // Only effects that DECLARE a `textList` control are multi-text-aware; others collapse
+  // to the first text so an unwired effect never renders a stacked atlas by mistake.
+  const multiAware = effect.controls.some(c => c.kind === 'textList')
+  const rawTexts = String(p.text ?? '').split('\n').map(t => t.trim()).filter(Boolean)
+  const texts = rawTexts.length ? rawTexts : ['']
+  const rawWords = RAW_WORD_EFFECTS.has(effect.id)
+  // Effects may opt out of the suite's force-uppercase default by declaring a `textCase`
+  // control; when the param is unset, fall back to THAT control's declared default (not a
+  // hardcoded 'upper'), otherwise an effect defaulting to 'asis' still force-uppercases.
+  const textCaseDefault = String(effect.controls.find(c => c.key === 'textCase')?.default ?? 'upper')
+  const asis = String(p.textCase ?? textCaseDefault) === 'asis'
+  const caseMode = asis ? 'as-typed' as const : 'upper' as const
+  const cased = (t: string) => (asis ? t : t.toUpperCase())
+  const labels = multiAware
+    ? texts.map(t => (rawWords ? cased(t) : buildRibbonLabel(t, caseMode)))
+    : [rawWords ? cased(texts[0] ?? '') : buildRibbonLabel(texts[0] ?? '', caseMode)]
+  // Atlas supersampling — see the modal's original comments: slit-scan fills the frame with
+  // one quad (needs 3×), corner-pin posters one word per band (scale by band count), others 2×.
+  const cpSS = texts.length <= 2 ? 5 : texts.length === 3 ? 4 : texts.length <= 5 ? 3 : 2
+  const atlasSS = effect.id === 'cornerpin' ? cpSS : effect.id === 'slitscan' ? 3 : 2
   return {
-    label: buildRibbonLabel(String(s.params.text), 'upper'),
-    fontFamily: f?.family ?? 'Inter',
+    label: labels[0]!,
+    labels,
+    fontFamily: family,
     // STG-style names (typeWeight/typeYScale/typeXScale) with fallbacks so effects
     // that still use typeHeight keep working unchanged.
-    fontWeight: Number(s.params.typeWeight ?? 700),
-    axes: { wght: Number(s.params.typeWeight ?? 700) },
-    typeColor: String(s.params.typeColor),
-    fontSizePx: Number(s.params.typeYScale ?? s.params.typeHeight ?? 180),
-    scaleX: Number(s.params.typeXScale ?? 1),
-    tracking: Number(s.params.tracking),
+    fontWeight: weight,
+    axes: { wght: weight, ...extraAxes },
+    typeColor: String(p.typeColor),
+    fontSizePx: Number(p.typeYScale ?? p.typeHeight ?? 180) * atlasSS,
+    heightPx: 256 * atlasSS,
+    scaleX: Number(p.typeXScale ?? 1),
+    tracking: Number(p.tracking),
     strokeColor: '#000000',
-    strokeWidth: Number(s.params.typeStroke),
+    strokeWidth: Number(p.typeStroke),
     gradientStops: s.gradientStops.map(g => ({ ...g })),
-    gradientOn: String(s.params.gradientMode) === 'on',
-    uRepeat: Number(s.params.textRepeat),
+    gradientOn: String(p.gradientMode) === 'on',
+    uRepeat: Number(p.textRepeat),
   }
 }

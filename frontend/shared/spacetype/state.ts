@@ -41,4 +41,9 @@ export interface SpaceTypeState {
   projection?: 'perspective' | 'isometric'
   panX?: number
   panY?: number
+  /** Explicit pixel dims, saved alongside dimsKey by the editor. When dimsKey
+   *  is 'Custom' these are the ONLY record of the real size — resolve dims via
+   *  dimsFromState (app/lib/spacetype/state.ts), never dimsFromKey alone. */
+  W?: number
+  H?: number
 }
