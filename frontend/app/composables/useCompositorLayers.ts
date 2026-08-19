@@ -45,6 +45,7 @@ import { applyDof, dofAvailable, dofShouldRun } from '~/lib/compositor/dofPass'
 import { depthImageFor, requestDepth } from '~/lib/compositor/depthRegistry'
 import { ensureFillBitmaps } from '~/lib/paint/imageFillCache'
 import { applyTornEdge, tornEdgeActive } from '~/lib/compositor/tornEdge'
+import { applyFeather, featherActive } from '~/lib/compositor/feather'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -184,6 +185,9 @@ interface LayerCommon {
   /** Torn-paper edge: raggedizes this layer's alpha boundary + optional white
    *  lip. Absent/inactive ⇒ a clean edge. See lib/compositor/tornEdge. */
   tornEdge?: import('~/lib/compositor/tornEdge').TornEdgeSpec
+  /** Soft alpha falloff at the layer's edges (feather). Absent/inactive ⇒ crisp
+   *  edge. amount is normalized to canvas width. See lib/compositor/feather. */
+  feather?: import('~/lib/compositor/feather').FeatherSpec
 }
 
 /** True when a layer is hidden (visible === false; undefined means visible). */
@@ -1028,6 +1032,7 @@ function paintLayer(
   const inner = fx.find((e): e is InnerShadowEffect => e.type === 'inner_shadow')
   const chain = fx.filter(isChainEffect)
   const tornEdge = tornEdgeActive(layer.tornEdge) ? layer.tornEdge : undefined
+  const feather = featherActive(layer.feather) ? layer.feather : undefined
   // Image layers only — nothing else has a depth map to drive the blur.
   const dof = layer.kind === 'image'
     ? fx.find((e): e is DofEffect => e.type === 'dof')
@@ -1135,7 +1140,7 @@ function paintLayer(
     // composite it with inner shadow / drop shadow / blur. Works identically for
     // text, shapes, vectors and images, and because bakeOverlay() renders through
     // here the effects are baked into generation exactly as previewed.
-    if (shadow || blur || inner || chain.length || tornEdge) {
+    if (shadow || blur || inner || chain.length || tornEdge || feather) {
       // Size the offscreen to the DEVICE canvas and render it through the current
       // transform `t`, exactly like the mask path (drawLocalLayer) and the brush
       // path do. Sizing to logical W×H instead would rasterize the layer at preview
@@ -1169,6 +1174,11 @@ function paintLayer(
         // so grain/adjust sit inside the tear, and before the stamp so drop-shadow
         // and blur (applied below) follow the torn silhouette.
         if (tornEdge) applyTornEdge(off, tornEdge, { scale: s })
+        // Feather softens whatever silhouette exists (including a torn one) by
+        // fading alpha inward. Runs before the drop-shadow/blur stamp below so
+        // those follow the feathered edge. amount is canvas-width-relative, so
+        // pass the logical canvas width W and device scale s.
+        if (feather) applyFeather(off, feather, { scale: s, canvasW: W })
         ctx.save()
         // `off` already holds device pixels — stamp it 1:1 in device space, not under
         // `t` (which would upscale it a second time). Shadow/blur are specified in
