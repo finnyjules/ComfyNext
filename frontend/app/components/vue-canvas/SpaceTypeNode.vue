@@ -4,7 +4,7 @@ import { Pencil, Sparkles } from 'lucide-vue-next'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { getEffect } from '~/lib/spacetype/effects'
-import { loopMultiplier } from '~/lib/spacetype/loop'
+import { loopMultiplier, wiredLoopFrameArg } from '~/lib/spacetype/loop'
 import { effectiveLoopSeconds } from '~/lib/compositor/loopReconcile'
 import {
   defaultSpaceTypeState, dimsFromState, ensureSpaceTypeFont, texOptsFromState,
@@ -199,9 +199,11 @@ onMounted(async () => {
       if (!eng || !headlessCanvas) return null
       const s = state.value
       eng.setSize(w, h)   // covers a scale change between pulls (same aspect, no rebuild)
-      const total = Math.max(1, Math.round(s.fps * s.loopDuration))
-      const frame = ((Math.round(t01 * total) % total) + total) % total
-      eng.renderFrame(frame, s.params)
+      // Match the studio's own export (SpaceTypeSurface bakeSpaceTypeVideo): spans the
+      // FULL seamless k-loop, not just one base loop, so motion plays at native speed
+      // and seams only at the k-loop wrap.
+      const k = s.seamless ? loopMultiplier(getEffect(s.effectId).loopRates?.(s.params) ?? []) : 1
+      eng.renderFrameAt(wiredLoopFrameArg(t01, s.fps, s.loopDuration, k), s.params)
       return headlessCanvas
     },
   }))

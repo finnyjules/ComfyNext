@@ -968,7 +968,7 @@ onUnmounted(() => {
     <div
       v-if="masterClock && masterClock.duration > 0"
       class="absolute top-1 right-1 z-10 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] leading-none text-white/70 tabular-nums pointer-events-none"
-      :title="masterClock.capped ? 'Loop capped at 60s — wired studios don’t share a common length' : `Loops every ${Math.round(masterClock.duration)}s`"
+      :title="`Loops every ${Math.round(masterClock.duration)}s${masterClock.capped ? ' (capped)' : ''}`"
     >
       <span>⟳ {{ Math.round(masterClock.duration) }}s</span>
       <span v-if="masterClock.capped" class="text-amber-400">!</span>

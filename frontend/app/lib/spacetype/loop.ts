@@ -18,3 +18,16 @@ export function loopMultiplier(rates: number[], cap = 60, eps = 1e-3): number {
   }
   return cap
 }
+
+/** renderFrameAt() argument for a wired pull at normalized position `t01` over the FULL
+ *  seamless loop (k base loops). Spans [0, k): motions run at their native per-loop rate
+ *  and seam only at the k-loop wrap — matching the seamless export. k=1 ⇒ [0,1), the
+ *  single-loop behaviour. `t01` is wrapped into [0,1) so callers needn't pre-wrap. */
+export function wiredLoopFrameArg(t01: number, fps: number, loopDuration: number, k: number): number {
+  const base = Math.max(1, Math.round(fps * loopDuration))
+  const kk = Math.max(1, k)
+  const total = base * kk
+  const t = ((t01 % 1) + 1) % 1
+  const frame = ((Math.round(t * total) % total) + total) % total
+  return frame / base   // ∈ [0, k)
+}
