@@ -23,6 +23,7 @@ import { canvasHasAlpha } from '~/lib/engine/hasAlpha'
 import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 import { useStudioAutosave } from '~/lib/studio/autosave'
 import { loopMultiplier, previewFrameAt } from '~/lib/spacetype/loop'
+import { effectiveLoopSeconds } from '~/lib/compositor/loopReconcile'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
@@ -91,6 +92,12 @@ function currentNode() { return props.nodes.find((n: any) => n.id === props.node
 const fps = ref(30)
 const FPS_OPTIONS = ['24', '30', '60']
 const seamlessLoop = ref(false)
+// True loop length shown beside the Seamless-loop toggle: loopDuration × k when
+// seamless is on (k lets fractional-speed motions finish whole cycles), else base.
+const loopLengthLabel = computed(() => {
+  const k = seamlessLoop.value ? loopMultiplier(effect.value.loopRates?.(params) ?? []) : 1
+  return `${effectiveLoopSeconds(loopDuration.value, k).toFixed(1)}s`
+})
 const DIMS: Record<string, [number, number]> = {
   '1920 × 1080 (16:9)': [1920, 1080],
   '1080 × 1920 (9:16)': [1080, 1920],
@@ -951,7 +958,7 @@ function autosaveSignature() {
     params,
     gradientStops,
     post,
-    fps: fps.value, loopDuration: loopDuration.value,
+    fps: fps.value, loopDuration: loopDuration.value, seamless: seamlessLoop.value,
     dimsKey: dimsKey.value, W: W.value, H: H.value, transparent: transparent.value, bgColor: bgColor.value,
     projection: projection.value,
     panX: panX.value, panY: panY.value,
@@ -2162,7 +2169,7 @@ async function exportWebEmbed() {
                 <input type="range" min="1" max="15" step="0.5" v-studio-reset v-model.number="loopDuration" class="studio-range w-full" />
               </div>
               <label data-control class="flex items-center justify-between text-xs text-white/60">
-                <span>Seamless loop</span><StudioSwitch v-model="seamlessLoop" />
+                <span>Seamless loop</span><StudioSwitch v-model="seamlessLoop" /><span class="ml-2 text-white/40 tabular-nums">· {{ loopLengthLabel }}</span>
               </label>
               <label data-control class="flex items-center gap-2 text-xs text-white/60">
                 <input type="checkbox" v-model="transparent" /> Transparent background
