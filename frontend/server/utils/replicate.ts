@@ -4,7 +4,9 @@
  * (SVG generation/vectorize finish in seconds) and returns the raw `output`.
  */
 import { logSpend } from './spendLog'
-import { preflightMeter } from './requestMeter'
+import { preflightMeter, currentMeterContext } from './requestMeter'
+import { recordProviderUsage } from './providerUsage'
+import { costForModel } from './priceBook'
 
 interface Prediction {
   id: string
@@ -91,7 +93,22 @@ async function dispatch(
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Replicate prediction ${pred.status}: ${pred.error || 'unknown error'}` })
   }
-  if (ticket) await ticket.settle('rep:' + pred.id)
+  if (ticket) {
+    await ticket.settle('rep:' + pred.id)
+    // job_id here is `settle:${holdId}` — NOT `rep:${pred.id}`. The
+    // ledger's settle() (ledger.ts) hardcodes the debit's idempotency_key as
+    // `settle:${holdId}`; the jobId string passed to ticket.settle() is used
+    // only for logging (settleHoldOrLog), never persisted. Recording that
+    // string here would make Task 5's reconciliation join
+    // (provider_usage.job_id vs ledger_entries.idempotency_key) never match.
+    void recordProviderUsage({
+      userId: currentMeterContext()?.userId ?? null,
+      provider: 'replicate',
+      model,
+      usd: costForModel(model)?.usd ?? null,
+      jobId: 'settle:' + ticket.holdId,
+    })
+  }
   return pred.output
 }
 

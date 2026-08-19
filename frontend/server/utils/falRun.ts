@@ -11,7 +11,9 @@
  */
 import { getFalToken } from './falStorage'
 import { logSpend } from './spendLog'
-import { preflightMeter } from './requestMeter'
+import { preflightMeter, currentMeterContext } from './requestMeter'
+import { recordProviderUsage } from './providerUsage'
+import { costForModel } from './priceBook'
 
 const FAL_QUEUE_BASE = 'https://queue.fal.run'
 
@@ -97,7 +99,20 @@ async function dispatch<T>(
       // Settle only once the output is genuinely in hand — a body that fails
       // to parse means the caller gets nothing, so it must not be charged.
       const body = await rRes.json() as T
-      if (ticket) await ticket.settle('fal:' + rid)
+      if (ticket) {
+        await ticket.settle('fal:' + rid)
+        // job_id here is `settle:${holdId}` — see replicate.ts's dispatch()
+        // for why (ledger.settle() hardcodes the debit idempotency_key as
+        // `settle:${holdId}`, ignoring the jobId string passed to
+        // ticket.settle()); Task 5's reconciliation join needs this exact key.
+        void recordProviderUsage({
+          userId: currentMeterContext()?.userId ?? null,
+          provider: 'fal',
+          model: app,
+          usd: costForModel(app)?.usd ?? null,
+          jobId: 'settle:' + ticket.holdId,
+        })
+      }
       return body
     }
     logSpend({ provider: 'fal', model: app, ok: false, ms: Date.now() - startedAt })
