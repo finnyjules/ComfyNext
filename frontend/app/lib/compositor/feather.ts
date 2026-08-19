@@ -1,12 +1,12 @@
 import { distanceInside } from '~/lib/compositor/tornEdge'
 
 export interface FeatherSpec {
-  amount: number              // feather depth, normalized to canvas WIDTH (0..1)
+  amount: number              // feather depth, relative to the ELEMENT's own size (0..1); 1 ≈ fade reaches the element's center
   curve: 'linear' | 'smooth'  // alpha falloff shape across the band
 }
 
 export const DEFAULT_FEATHER: FeatherSpec = {
-  amount: 0.03,
+  amount: 0.15,
   curve: 'smooth',
 }
 
@@ -36,11 +36,10 @@ export function sanitizeFeather(raw: unknown, cur?: FeatherSpec): FeatherSpec {
  *  `scale` = device px per logical px; `canvasW` = logical canvas width. Feather
  *  reaches `amount * canvasW * scale` device px inward from the silhouette edge. */
 export function applyFeatherToData(
-  data: Uint8ClampedArray, W: number, H: number, spec: FeatherSpec, scale: number, canvasW: number,
+  data: Uint8ClampedArray, W: number, H: number, spec: FeatherSpec,
 ): void {
-  const s = scale > 0 ? scale : 1
-  const featherDev = Math.max(0, spec.amount * canvasW * s)
-  if (featherDev <= 0) return
+  const amount = Math.max(0, Math.min(1, spec.amount))
+  if (amount <= 0) return
 
   // binary alpha mask + bounding box of opaque content
   const inside = new Uint8Array(W * H)
@@ -53,6 +52,16 @@ export function applyFeatherToData(
     }
   }
   if (maxx < 0) return   // fully transparent — nothing to feather
+
+  // Feather reach is relative to the ELEMENT's own rendered size, not the canvas,
+  // so `amount` behaves the same for a small logo and a full-frame photo. The
+  // reference is half the narrower bbox dimension — the deepest an inward fade can
+  // reach — so amount=1 fades the band all the way to the element's medial axis
+  // (near-full dissolve) and small amounts give a thin edge fade. Measured in the
+  // offscreen's device pixels, so it is inherently dpr- and resize-stable.
+  const refExtent = 0.5 * Math.min(maxx - minx + 1, maxy - miny + 1)
+  const featherDev = amount * refExtent
+  if (featherDev <= 0) return
 
   const band = featherDev + 2
   const x0 = Math.max(0, Math.floor(minx - band)), y0 = Math.max(0, Math.floor(miny - band))
@@ -74,14 +83,12 @@ export function applyFeatherToData(
 }
 
 /** Canvas wrapper — reads device pixels, feathers them, writes them back. */
-export function applyFeather(
-  canvas: HTMLCanvasElement, spec: FeatherSpec, opts: { scale?: number; canvasW: number },
-): void {
+export function applyFeather(canvas: HTMLCanvasElement, spec: FeatherSpec): void {
   const W = canvas.width, H = canvas.height
   if (!W || !H) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const img = ctx.getImageData(0, 0, W, H)
-  applyFeatherToData(img.data, W, H, spec, opts.scale ?? 1, opts.canvasW)
+  applyFeatherToData(img.data, W, H, spec)
   ctx.putImageData(img, 0, 0)
 }

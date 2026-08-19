@@ -43,16 +43,14 @@ function squareBuffer(W: number, H: number, pad: number): Uint8ClampedArray {
 }
 const alphaAt = (d: Uint8ClampedArray, W: number, x: number, y: number) => d[(y * W + x) * 4 + 3]!
 
-describe('applyFeatherToData', () => {
-  const W = 80, H = 80, PAD = 10
-  // amount 0.1 * canvasW 80 * scale 1 = featherDev 8px
-  const spec: FeatherSpec = { amount: 0.1, curve: 'linear' }
+describe('applyFeatherToData (element-relative)', () => {
+  const W = 80, H = 80
 
   it('leaves the deep interior fully opaque but fades edge pixels', () => {
-    const d = squareBuffer(W, H, PAD)
-    applyFeatherToData(d, W, H, spec, 1, W)
+    const d = squareBuffer(W, H, 10)                     // opaque [10,69], refExtent 30
+    applyFeatherToData(d, W, H, { amount: 0.3, curve: 'linear' })  // featherDev 9
     expect(alphaAt(d, W, 40, 40)).toBe(255)              // center untouched
-    const edge = alphaAt(d, W, PAD, 40)                  // left edge column (d≈1)
+    const edge = alphaAt(d, W, 10, 40)                   // left edge column (d≈1)
     expect(edge).toBeGreaterThan(0)
     expect(edge).toBeLessThan(255)                       // faded
   })
@@ -60,23 +58,47 @@ describe('applyFeatherToData', () => {
   it('is a no-op on a fully transparent buffer', () => {
     const d = new Uint8ClampedArray(W * H * 4)
     const before = d.slice()
-    applyFeatherToData(d, W, H, spec, 1, W)
+    applyFeatherToData(d, W, H, { amount: 0.5, curve: 'linear' })
     expect(d).toEqual(before)
   })
 
   it('amount 0 leaves alpha bytes unchanged (identity gate)', () => {
-    const d = squareBuffer(W, H, PAD)
+    const d = squareBuffer(W, H, 10)
     const before = d.slice()
-    applyFeatherToData(d, W, H, { amount: 0, curve: 'smooth' }, 1, W)
+    applyFeatherToData(d, W, H, { amount: 0, curve: 'smooth' })
     expect(d).toEqual(before)
   })
 
   it('smooth and linear curves differ inside the band', () => {
-    const dl = squareBuffer(W, H, PAD)
-    const ds = squareBuffer(W, H, PAD)
-    applyFeatherToData(dl, W, H, { amount: 0.1, curve: 'linear' }, 1, W)
-    applyFeatherToData(ds, W, H, { amount: 0.1, curve: 'smooth' }, 1, W)
-    // x=14 is ~5px inside the left edge → t≈0.625, where the two curves diverge
-    expect(alphaAt(dl, W, 14, 40)).not.toBe(alphaAt(ds, W, 14, 40))
+    const dl = squareBuffer(W, H, 10)
+    const ds = squareBuffer(W, H, 10)
+    applyFeatherToData(dl, W, H, { amount: 0.6, curve: 'linear' })  // featherDev 18
+    applyFeatherToData(ds, W, H, { amount: 0.6, curve: 'smooth' })
+    // x=19 is 10px inside the left edge → t≈0.56, where the two curves diverge
+    expect(alphaAt(dl, W, 19, 40)).not.toBe(alphaAt(ds, W, 19, 40))
+  })
+
+  it('larger amount fades deeper — a fixed interior point goes opaque → faded', () => {
+    // This is the regression: canvas-relative scaling made small and large amounts
+    // both saturate a placed element, so 0.1 and 1.0 looked identical.
+    const dLow = squareBuffer(W, H, 10)
+    const dHigh = squareBuffer(W, H, 10)
+    applyFeatherToData(dLow,  W, H, { amount: 0.1, curve: 'linear' })  // featherDev 3
+    applyFeatherToData(dHigh, W, H, { amount: 1.0, curve: 'linear' })  // featherDev 30
+    // (40,20) is 11px from the top edge — outside the small band, inside the large one
+    expect(alphaAt(dLow,  W, 40, 20)).toBe(255)          // amount 0.1 leaves it opaque
+    expect(alphaAt(dHigh, W, 40, 20)).toBeLessThan(255)  // amount 1.0 fades it
+  })
+
+  it('feather depth is element-relative — same amount, proportional depth on different sizes', () => {
+    const big   = squareBuffer(W, H, 8)   // opaque [8,71],  extent 64, refExtent 32
+    const small = squareBuffer(W, H, 24)  // opaque [24,55], extent 32, refExtent 16
+    applyFeatherToData(big,   W, H, { amount: 0.5, curve: 'linear' })  // featherDev 16
+    applyFeatherToData(small, W, H, { amount: 0.5, curve: 'linear' })  // featherDev 8
+    // A point 8px into `big` (d=8, t=8/16=0.5) and 4px into `small` (d=4, t=4/8=0.5)
+    // are the SAME fraction of the way in — element-relative feather fades them equally.
+    const aBig   = alphaAt(big,   W, 15, 40)
+    const aSmall = alphaAt(small, W, 27, 40)
+    expect(Math.abs(aBig - aSmall)).toBeLessThanOrEqual(2)
   })
 })

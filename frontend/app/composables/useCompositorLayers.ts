@@ -1176,9 +1176,9 @@ function paintLayer(
         if (tornEdge) applyTornEdge(off, tornEdge, { scale: s })
         // Feather softens whatever silhouette exists (including a torn one) by
         // fading alpha inward. Runs before the drop-shadow/blur stamp below so
-        // those follow the feathered edge. amount is canvas-width-relative, so
-        // pass the logical canvas width W and device scale s.
-        if (feather) applyFeather(off, feather, { scale: s, canvasW: W })
+        // those follow the feathered edge. amount is element-relative (derived
+        // from the rendered silhouette's own bbox), so no canvas/scale is passed.
+        if (feather) applyFeather(off, feather)
         ctx.save()
         // `off` already holds device pixels — stamp it 1:1 in device space, not under
         // `t` (which would upscale it a second time). Shadow/blur are specified in
