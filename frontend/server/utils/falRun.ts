@@ -11,9 +11,11 @@
  */
 import { getFalToken } from './falStorage'
 import { logSpend } from './spendLog'
-import { preflightMeter, currentMeterContext } from './requestMeter'
+import { preflightMeter, currentMeterContext, MeterRefusalError } from './requestMeter'
 import { recordProviderUsage } from './providerUsage'
 import { costForModel } from './priceBook'
+import { moderatePrompt } from './moderation'
+import { extractProviderPromptText } from './graphPromptText'
 
 const FAL_QUEUE_BASE = 'https://queue.fal.run'
 
@@ -42,6 +44,15 @@ export async function runFal<T = unknown>(
   opts: FalRunOptions = {},
 ): Promise<T> {
   const ticket = await preflightMeter(app)
+  // Moderate AFTER the hold is placed (preflight) but BEFORE the submit — a
+  // ToS-violating prompt releases the hold and refuses at zero spend.
+  // moderatePrompt fails OPEN (no key / OpenAI outage → ok:true), so this can
+  // never take generation down; local mode has no key → no-op, byte-identical.
+  const mod = await moderatePrompt(extractProviderPromptText(input))
+  if (!mod.ok) {
+    await ticket?.release()
+    throw new MeterRefusalError('This prompt was blocked by content moderation', 400, { categories: mod.categories })
+  }
   try {
     return await dispatch<T>(app, input, opts, ticket)
   } catch (e) {

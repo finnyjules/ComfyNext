@@ -7,6 +7,7 @@ function deps(overrides: Partial<any> = {}) {
   return {
     priceGraph: vi.fn(() => ({ credits: 5, version: 'test-v1', breakdown: [] })),
     validateFileRefs: vi.fn(async () => {}),
+    moderatePrompt: vi.fn(async () => ({ ok: true as const })),
     hold: vi.fn(async () => ({ ok: true as const, holdId: 7 })),
     getAvailable: vi.fn(async () => 3),
     forward: vi.fn(async () => ({ status: 200, body: { prompt_id: 'p1', number: 1, node_errors: {} } })),
@@ -67,6 +68,37 @@ describe('meterGraphSubmit', () => {
     expect(d.hold).not.toHaveBeenCalled()
     expect(d.forward).not.toHaveBeenCalled()
     expect(d.startSettle).not.toHaveBeenCalled()
+  })
+
+  // Stage 7 Task 3: prompt-side moderation runs AFTER file-ref validation and
+  // BEFORE pricing/hold, so a ToS-violating prompt is refused (400) at zero
+  // cost — no price, no hold, no forward, engine never touched.
+  it('refuses a moderation-flagged prompt (400) with NO hold, NO forward, engine untouched', async () => {
+    const d = deps({ moderatePrompt: vi.fn(async () => ({ ok: false as const, categories: ['violence'] })) })
+    await expect(meterGraphSubmit('u1', BODY, d)).rejects.toMatchObject({ statusCode: 400, data: { categories: ['violence'] } })
+    expect(d.moderatePrompt).toHaveBeenCalled()
+    expect(d.priceGraph).not.toHaveBeenCalled()
+    expect(d.hold).not.toHaveBeenCalled()
+    expect(d.forward).not.toHaveBeenCalled()
+    expect(d.registerRun).not.toHaveBeenCalled()
+    expect(d.startSettle).not.toHaveBeenCalled()
+  })
+
+  it('moderates AFTER file-ref validation and BEFORE pricing/hold (order matters)', async () => {
+    const d = deps()
+    await meterGraphSubmit('u1', BODY, d)
+    expect(d.validateFileRefs.mock.invocationCallOrder[0]).toBeLessThan(d.moderatePrompt.mock.invocationCallOrder[0])
+    expect(d.moderatePrompt.mock.invocationCallOrder[0]).toBeLessThan(d.priceGraph.mock.invocationCallOrder[0])
+    expect(d.moderatePrompt.mock.invocationCallOrder[0]).toBeLessThan(d.hold.mock.invocationCallOrder[0])
+  })
+
+  // Local byte-identity: with moderation a no-op (fails open / no key → ok:true,
+  // the deps default), a normal run is completely unaffected.
+  it('a no-op moderation (ok:true) leaves the run unchanged', async () => {
+    const d = deps()
+    const res = await meterGraphSubmit('u1', BODY, d)
+    expect(res).toEqual({ status: 200, body: { prompt_id: 'p1', number: 1, node_errors: {} } })
+    expect(d.hold).toHaveBeenCalledWith('u1', 5)
   })
 
   it('validates file refs BEFORE pricing and holding (order matters)', async () => {

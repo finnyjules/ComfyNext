@@ -4,9 +4,11 @@
  * (SVG generation/vectorize finish in seconds) and returns the raw `output`.
  */
 import { logSpend } from './spendLog'
-import { preflightMeter, currentMeterContext } from './requestMeter'
+import { preflightMeter, currentMeterContext, MeterRefusalError } from './requestMeter'
 import { recordProviderUsage } from './providerUsage'
 import { costForModel } from './priceBook'
+import { moderatePrompt } from './moderation'
+import { extractProviderPromptText } from './graphPromptText'
 
 interface Prediction {
   id: string
@@ -48,6 +50,15 @@ export async function runReplicate(
   opts: { timeoutMs?: number; pollMs?: number } = {},
 ): Promise<unknown> {
   const ticket = await preflightMeter(model)
+  // Moderate AFTER the hold is placed (preflight) but BEFORE any provider HTTP
+  // call — a ToS-violating prompt releases the hold and refuses at zero spend.
+  // moderatePrompt fails OPEN (no key / OpenAI outage → ok:true), so this can
+  // never take generation down; local mode has no key → no-op, byte-identical.
+  const mod = await moderatePrompt(extractProviderPromptText(input))
+  if (!mod.ok) {
+    await ticket?.release()
+    throw new MeterRefusalError('This prompt was blocked by content moderation', 400, { categories: mod.categories })
+  }
   try {
     return await dispatch(model, input, token, opts, ticket)
   } catch (e) {

@@ -21,6 +21,8 @@ import { getLiveLedger } from './ledgerLive'
 import { annotatedFilepath, collectUploadFlaggedInputs } from './engineGate'
 import { canonicalUploadKey, uploadOwner } from './inputUploads'
 import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS, GRAPH_OUTPUT_WRITERS, extractFileRefs, graphFolderOwnedBy, type FileRefSemantics } from './engineFileSurface'
+import { extractGraphPromptText } from './graphPromptText'
+import { moderatePrompt } from './moderation'
 
 export function isPromptPath(path: string): boolean {
   return path === '/prompt' || path.startsWith('/prompt?')
@@ -313,6 +315,14 @@ export interface GraphRunDeps {
    * never takes a hold — see meterGraphSubmit.
    */
   validateFileRefs(prompt: any): Promise<void>
+  /**
+   * Prompt-side content moderation. Runs AFTER file-ref validation and BEFORE
+   * pricing/hold, so a ToS-violating prompt is refused (400) at zero cost —
+   * the hold is never taken and the engine is never touched. Fails OPEN (see
+   * moderation.ts): an OpenAI outage yields { ok: true } and lets the run
+   * through — a moderation blip must not take generation down.
+   */
+  moderatePrompt(text: string): Promise<{ ok: true } | { ok: false; categories: string[] }>
   hold(userId: string, credits: number): Promise<{ ok: true; holdId: number } | { ok: false; reason: 'insufficient' }>
   getAvailable(userId: string): Promise<number>
   forward(body: any): Promise<{ status: number; body: any }>
@@ -331,6 +341,15 @@ export async function meterGraphSubmit(userId: string | null, body: any, deps: G
   // any hold — a graph that reaches for another tenant's input/output is
   // refused (403) at zero cost, and the engine is never touched.
   await deps.validateFileRefs(body.prompt)
+
+  // Prompt-side moderation, AFTER file-ref validation and BEFORE pricing/hold:
+  // a ToS-violating prompt is refused (400) at zero cost — no hold is taken and
+  // the engine is never touched. moderatePrompt fails OPEN, so an OpenAI outage
+  // can never take generation down.
+  const mod = await deps.moderatePrompt(extractGraphPromptText(body.prompt))
+  if (!mod.ok) {
+    throw new MeterRefusalError('This prompt was blocked by content moderation', 400, { categories: mod.categories })
+  }
 
   let price
   try {
@@ -412,6 +431,7 @@ export async function handleMeteredPrompt(event: H3Event): Promise<any> {
     // own, before any hold. userId is non-null here (meterGraphSubmit's 401
     // fires first), but guard anyway so a null can never widen ownership.
     validateFileRefs: prompt => userId ? runGraphFileValidation(prompt, userId, target) : Promise.resolve(),
+    moderatePrompt,
     hold: (u, credits) => holdWithRefusal(ledger, u, credits),
     getAvailable: u => ledger.getAvailable(u),
     forward: async (b) => {

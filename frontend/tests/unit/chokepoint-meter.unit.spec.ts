@@ -22,6 +22,7 @@ import {
   __setLedgerForTests,
   bindMeterContext,
 } from '../../server/utils/requestMeter'
+import { __setModerationFetchForTests } from '../../server/utils/moderation'
 
 const g = globalThis as any
 g.createError = (opts: { statusCode: number, message?: string, statusMessage?: string }) => {
@@ -33,6 +34,7 @@ g.createError = (opts: { statusCode: number, message?: string, statusMessage?: s
 const CLERK_KEY = 'NUXT_CLERK_SECRET_KEY'
 const savedClerkKey = process.env[CLERK_KEY]
 const savedFalKey = process.env.FAL_KEY
+const savedOpenAiKey = process.env.OPENAI_API_KEY
 
 function setHosted(): void {
   process.env[CLERK_KEY] = 'sk_test_hosted'
@@ -136,6 +138,12 @@ beforeEach(() => {
   fakeLedger = makeFakeLedger()
   __setLedgerForTests(fakeLedger as any)
   process.env.FAL_KEY = 'test-fal-key'
+  // Byte-identity for the existing cases: no OPENAI_API_KEY → moderatePrompt is
+  // a no-op that never touches fetch (a real key on the dev box must not make
+  // these assertions hit the OpenAI endpoint). Cases that exercise moderation
+  // set the key + inject a moderation fetch explicitly.
+  delete process.env.OPENAI_API_KEY
+  __setModerationFetchForTests(null)
 })
 
 afterEach(() => {
@@ -143,10 +151,18 @@ afterEach(() => {
   else process.env[CLERK_KEY] = savedClerkKey
   if (savedFalKey === undefined) delete process.env.FAL_KEY
   else process.env.FAL_KEY = savedFalKey
+  if (savedOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+  else process.env.OPENAI_API_KEY = savedOpenAiKey
+  __setModerationFetchForTests(null)
   __setLedgerForTests(null)
   __resetMeterContextForTests()
   vi.unstubAllGlobals()
 })
+
+/** A moderation fetch stub that flags every prompt with the given categories. */
+function flaggedModerationFetch(categories: Record<string, boolean> = { violence: true }): ReturnType<typeof vi.fn> {
+  return vi.fn(async () => jsonResponse({ results: [{ flagged: true, categories }] }))
+}
 
 describe('runReplicate + meter', () => {
   it('local mode: no ledger interaction, output round-trips unchanged', async () => {
@@ -239,6 +255,26 @@ describe('runReplicate + meter', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(fakeLedger.settleHold).not.toHaveBeenCalled()
     expect(fakeLedger.releaseHold).not.toHaveBeenCalled()
+  })
+
+  // Stage 7 Task 3: a moderation-flagged prompt is refused (400) AFTER the hold
+  // is placed but BEFORE any provider HTTP call — the hold is RELEASED (refusal
+  // costs nothing) and dispatch never runs.
+  it('hosted, moderation flags the prompt: RELEASES the hold, dispatch never runs (400)', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    fakeLedger.setAvailable(100)
+    process.env.OPENAI_API_KEY = 'sk-x'
+    __setModerationFetchForTests(flaggedModerationFetch())
+    const fetchMock = makeReplicateFetchMock('succeeded')
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(runReplicate(REPLICATE_MODEL, { prompt: 'a forbidden thing' }, 'tok'))
+      .rejects.toMatchObject({ statusCode: 400, data: { categories: ['violence'] } })
+    expect(fetchMock).not.toHaveBeenCalled() // dispatch never touched the provider
+    expect(fakeLedger.hold).toHaveBeenCalledWith('u1', 5, expect.stringMatching(/^meter:/))
+    expect(fakeLedger.releaseHold).toHaveBeenCalledWith(1)
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
   })
 })
 
@@ -340,6 +376,26 @@ describe('runFal + meter', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(fakeLedger.settleHold).not.toHaveBeenCalled()
     expect(fakeLedger.releaseHold).not.toHaveBeenCalled()
+  })
+
+  // Stage 7 Task 3: a moderation-flagged prompt is refused (400) AFTER the hold
+  // is placed but BEFORE the fal submit — the hold is RELEASED and dispatch
+  // never runs.
+  it('hosted, moderation flags the prompt: RELEASES the hold, submit never runs (400)', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    fakeLedger.setAvailable(100)
+    process.env.OPENAI_API_KEY = 'sk-x'
+    __setModerationFetchForTests(flaggedModerationFetch())
+    const fetchMock = makeFalFetchMock('COMPLETED')
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(runFal(FAL_APP, { prompt: 'a forbidden thing' }, { pollIntervalMs: 1 }))
+      .rejects.toMatchObject({ statusCode: 400, data: { categories: ['violence'] } })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fakeLedger.hold).toHaveBeenCalledWith('u1', 5, expect.stringMatching(/^meter:/))
+    expect(fakeLedger.releaseHold).toHaveBeenCalledWith(1)
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
   })
 })
 
