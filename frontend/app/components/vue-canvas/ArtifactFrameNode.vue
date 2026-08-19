@@ -20,6 +20,7 @@ import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { deriveMasterClock, slotPhase01, masterFrameIndex } from '~/lib/compositor/masterClock'
+import { portOffset } from '~/lib/canvas/portLayout'
 import { onFieldCatalogReady } from '~/lib/shaderfill/field'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
@@ -154,10 +155,13 @@ const layerSlots = computed<number[]>(() => {
   if (next < 16) slots.push(next)
   return slots
 })
-function handleTop(idx: number, count: number): string {
-  if (count <= 1) return '50%'
-  const pad = 14
-  return `calc(${pad}px + ${(idx / (count - 1)) * 100}% - ${(pad * 2 * idx) / (count - 1)}px)`
+// Inputs stack from the node's vertical centre DOWNWARD — the shared port rule
+// (portOffset / PORT_PITCH), so the Frame matches every other node and surface.
+// idx 0 sits dead centre; each later slot is one pitch below. (The old formula
+// spread ports across the full node height, so two slots landed at the very top
+// and bottom instead of near the middle.)
+function handleTop(idx: number): string {
+  return `calc(50% + ${portOffset(idx)}px)`
 }
 
 function wiredOpacity(slot: number): number {
@@ -969,7 +973,7 @@ onUnmounted(() => {
       v-for="(slot, i) in layerSlots" :key="slot" :id="`input-${slot}`"
       type="target" :position="Position.Left"
       class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
-      :style="{ borderColor: imageColor, top: handleTop(i, layerSlots.length) }"
+      :style="{ borderColor: imageColor, top: handleTop(i) }"
     />
     <Handle
       :id="`output-${imageOutIdx}`" type="source" :position="Position.Right"
