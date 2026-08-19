@@ -44,6 +44,10 @@ Moderation fails **OPEN** (OpenAI down → allow + Sentry alert): a moderation b
 - **Deferred (design):** output-side (image) moderation, rich product analytics, Stripe Radar — beta-unnecessary; revisit before public launch.
 - **Riders:** `provider_usage` is Nitro-route-only (training/canvas/bypass spend absent from the per-provider digest breakdown — the ledger TOTAL is complete; widen coverage pre-public-launch if the breakdown matters); moderation gates on `OPENAI_API_KEY` presence only (a local box exporting that var would moderate — add an `isHosted()` check); `disableUser` of a never-signed-in id → FK 500; 30s ceiling memo staleness; `observe.ts` static-imports `@sentry/node` (runtime-inert, ~261ms local boot — lazy import cleaner); scrub is top-level-only (keep captureError context flat).
 
+## Post-deploy observation — Neon connection pressure (scaling rider)
+
+On the shared-Neon **dev** environment (several servers at once — `:3100`, `:3000`, parallel-session worktrees), the reconcile cron hit Neon `53300` "too many connections" 60s after boot. Not a code defect: each hosted util opens its own dedicated DIRECT pg session (ledger + graphRuns + inputUploads + resourceOwners + providerUsage + systemControls + reconcile ≈ 7), and many concurrent dev servers × 7 exhausts the direct-connection cap. On the **real single-machine beta deploy** (~7 sessions, one server) this will not occur. The server itself is up and correctly gated. **Rider (fix before scaling, not a beta blocker):** move the read-mostly hosted utils (graphRuns / resourceOwners / providerUsage / systemControls / reconcile) onto the POOLED Neon URL (`DATABASE_URL_POOLED` — built for many short connections), reserving the DIRECT single-session for the ledger's transactional integrity. Note the correct-but-notable side effect: under connection pressure `assertSpendAllowed` fails CLOSED, so a connection-starved hosted server pauses generation (503) rather than over-spending.
+
 ## Teardown
 
 Hosted `:3100`: kill via open-file discovery — `for p in $(lsof -nP | awk '/sailor-meter-verify/ {print $2}' | sort -u); do kill $p; done`.
