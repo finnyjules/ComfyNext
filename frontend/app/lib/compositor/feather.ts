@@ -1,7 +1,7 @@
 import { distanceInside } from '~/lib/compositor/tornEdge'
 
 export interface FeatherSpec {
-  amount: number              // feather depth, normalized to canvas WIDTH (0..0.5)
+  amount: number              // feather depth, normalized to canvas WIDTH (0..1)
   curve: 'linear' | 'smooth'  // alpha falloff shape across the band
 }
 
@@ -26,7 +26,7 @@ export function sanitizeFeather(raw: unknown, cur?: FeatherSpec): FeatherSpec {
   const r = (raw ?? {}) as Record<string, unknown>
   const curve = r.curve === 'linear' || r.curve === 'smooth' ? r.curve : base.curve
   return {
-    amount: num(r.amount, 0, 0.5, base.amount),
+    amount: num(r.amount, 0, 1, base.amount),
     curve,
   }
 }

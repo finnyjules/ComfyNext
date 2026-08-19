@@ -17,7 +17,7 @@ describe('feather spec helpers', () => {
 
   it('sanitizeFeather clamps amount and rejects a bad curve', () => {
     const s = sanitizeFeather({ amount: 99, curve: 'nope' })
-    expect(s.amount).toBe(0.5)                 // clamped to max
+    expect(s.amount).toBe(1)                   // clamped to max
     expect(s.curve).toBe(DEFAULT_FEATHER.curve) // invalid → default
     const neg = sanitizeFeather({ amount: -5 })
     expect(neg.amount).toBe(0)                  // clamped to min

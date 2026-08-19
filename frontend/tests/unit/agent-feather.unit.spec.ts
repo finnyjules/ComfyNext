@@ -13,7 +13,7 @@ describe('setLayerFeather', () => {
     })
     expect(r.ok).toBe(true)
     const layer = (r as any).template.layers[0]
-    expect(layer.feather.amount).toBe(0.5)   // clamped
+    expect(layer.feather.amount).toBe(1)     // clamped
     expect(layer.feather.curve).toBe('smooth')
   })
 

@@ -13,7 +13,7 @@ const on = computed(() => !!props.value)
 const v = computed<FeatherSpec>(() => props.value ?? DEFAULT_FEATHER)
 const set = (patch: Partial<FeatherSpec>) => emit('update', patch)
 // Slider works in whole percent-of-canvas-width; store as a 0..0.5 fraction.
-const amountPct = computed(() => Math.round(v.value.amount * 100))
+const amountLabel = computed(() => v.value.amount.toFixed(2))
 </script>
 
 <template>
@@ -27,9 +27,9 @@ const amountPct = computed(() => Math.round(v.value.amount * 100))
     <template v-if="on">
       <div class="space-y-2">
         <div>
-          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Amount</span><span class="tabular-nums normal-case">{{ amountPct }}</span></div>
-          <input type="range" min="0" max="50" step="1" :value="amountPct" class="w-full accent-white cursor-pointer"
-            @input="set({ amount: +($event.target as HTMLInputElement).value / 100 })">
+          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Amount</span><span class="tabular-nums normal-case">{{ amountLabel }}</span></div>
+          <input type="range" min="0" max="1" step="0.01" :value="v.amount" class="w-full accent-white cursor-pointer"
+            @input="set({ amount: +($event.target as HTMLInputElement).value })">
         </div>
 
         <div>
