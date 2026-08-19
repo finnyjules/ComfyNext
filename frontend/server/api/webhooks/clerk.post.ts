@@ -10,6 +10,7 @@ import { isHosted } from '~~/server/utils/deployMode'
 import { handleClerkEvent } from '~~/server/utils/clerkEvents'
 import { ensureUserWithBonus } from '~~/server/utils/userSync'
 import { getLiveLedger } from '~~/server/utils/ledgerLive'
+import { parseAllowlist, isEmailAllowed } from '~~/server/utils/betaAccess'
 
 export default defineEventHandler(async (event) => {
   if (!isHosted()) throw createError({ statusCode: 404, message: 'Not found' })
@@ -26,6 +27,7 @@ export default defineEventHandler(async (event) => {
 
   const result = await handleClerkEvent(evt, {
     sync: (userId, email) => ensureUserWithBonus(getLiveLedger(), userId, email),
+    emailAllowed: email => isEmailAllowed(parseAllowlist(process.env.SAILOR_BETA_ALLOWLIST), email),
   })
   return { ok: true, handled: result.handled }
 })
