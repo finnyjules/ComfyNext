@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import type { H3Event } from 'h3'
 import { deployMode } from './deployMode'
 import { currentMeterContext, getLedger, MeterRefusalError } from './requestMeter'
+import { assertSpendAllowed } from './systemControls'
 
 // Flat rate — covers ~$0.01 median at 2x markup; per-token metering is noise at this price
 export const ANTHROPIC_ASSIST_CREDITS = 2
@@ -47,6 +48,12 @@ export async function meterAssist(event: H3Event): Promise<void> {
 
   const ctx = currentMeterContext()
   if (!ctx) throw new MeterRefusalError('unmetered spend refused', 500)
+
+  // Operator safety valves (Stage 7 final review C1, secondary bypass): the
+  // flat-rate assist path debited without ever consulting the kill-switch /
+  // per-user disable / daily ceiling, so a paused system kept spending here.
+  // Refuse (503) BEFORE the debit. assertSpendAllowed is a no-op in local mode.
+  await assertSpendAllowed(ctx.userId)
 
   const ledger = getLedger()
   const available = await ledger.getAvailable(ctx.userId)

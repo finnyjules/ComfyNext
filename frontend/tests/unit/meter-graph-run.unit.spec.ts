@@ -6,6 +6,7 @@ import { UnpricedGraphError } from '../../server/utils/priceBook'
 function deps(overrides: Partial<any> = {}) {
   return {
     priceGraph: vi.fn(() => ({ credits: 5, version: 'test-v1', breakdown: [] })),
+    spendGuard: vi.fn(async () => {}),
     validateFileRefs: vi.fn(async () => {}),
     moderatePrompt: vi.fn(async () => ({ ok: true as const })),
     hold: vi.fn(async () => ({ ok: true as const, holdId: 7 })),
@@ -68,6 +69,41 @@ describe('meterGraphSubmit', () => {
     expect(d.hold).not.toHaveBeenCalled()
     expect(d.forward).not.toHaveBeenCalled()
     expect(d.startSettle).not.toHaveBeenCalled()
+  })
+
+  // Stage 7 final review C1: the operator spend guard (kill-switch + daily
+  // ceiling) MUST gate the canvas-graph chokepoint too — it takes its hold via
+  // holdWithRefusal directly and never passes through preflightForUser, the
+  // only OTHER place the guard is wired. A paused / over-ceiling system throws
+  // 503 from the guard; that must propagate with NO hold, NO forward, engine
+  // never touched, and the guard runs FIRST so a paused system refuses at the
+  // cheapest possible point (before file-ref validation / catalog fetch).
+  it('a paused system (spend guard throws 503) refuses with NO hold, NO forward, engine untouched', async () => {
+    const d = deps({ spendGuard: vi.fn(async () => { throw new MeterRefusalError('Sailor is temporarily paused', 503) }) })
+    await expect(meterGraphSubmit('u1', BODY, d)).rejects.toMatchObject({ statusCode: 503 })
+    expect(d.spendGuard).toHaveBeenCalledWith('u1')
+    expect(d.validateFileRefs).not.toHaveBeenCalled()
+    expect(d.moderatePrompt).not.toHaveBeenCalled()
+    expect(d.priceGraph).not.toHaveBeenCalled()
+    expect(d.hold).not.toHaveBeenCalled()
+    expect(d.forward).not.toHaveBeenCalled()
+    expect(d.registerRun).not.toHaveBeenCalled()
+    expect(d.startSettle).not.toHaveBeenCalled()
+  })
+
+  it('runs the spend guard BEFORE file-ref validation, moderation, pricing and the hold (order matters)', async () => {
+    const d = deps()
+    await meterGraphSubmit('u1', BODY, d)
+    expect(d.spendGuard.mock.invocationCallOrder[0]).toBeLessThan(d.validateFileRefs.mock.invocationCallOrder[0])
+    expect(d.spendGuard.mock.invocationCallOrder[0]).toBeLessThan(d.moderatePrompt.mock.invocationCallOrder[0])
+    expect(d.spendGuard.mock.invocationCallOrder[0]).toBeLessThan(d.priceGraph.mock.invocationCallOrder[0])
+    expect(d.spendGuard.mock.invocationCallOrder[0]).toBeLessThan(d.hold.mock.invocationCallOrder[0])
+  })
+
+  it('never runs the spend guard for a signed-out caller (401 fires first)', async () => {
+    const d = deps()
+    await expect(meterGraphSubmit(null, BODY, d)).rejects.toMatchObject({ statusCode: 401 })
+    expect(d.spendGuard).not.toHaveBeenCalled()
   })
 
   // Stage 7 Task 3: prompt-side moderation runs AFTER file-ref validation and

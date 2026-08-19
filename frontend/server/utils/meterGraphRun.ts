@@ -24,6 +24,7 @@ import { canonicalUploadKey, uploadOwner } from './inputUploads'
 import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS, GRAPH_OUTPUT_WRITERS, extractFileRefs, graphFolderOwnedBy, type FileRefSemantics } from './engineFileSurface'
 import { extractGraphPromptText } from './graphPromptText'
 import { moderatePrompt } from './moderation'
+import { assertSpendAllowed } from './systemControls'
 
 export function isPromptPath(path: string): boolean {
   return path === '/prompt' || path.startsWith('/prompt?')
@@ -311,6 +312,18 @@ export async function holdWithRefusal(
 export interface GraphRunDeps {
   priceGraph: typeof priceGraph
   /**
+   * Operator safety valves (Stage 7 final review C1) — the global kill-switch,
+   * the per-user disable set, and the daily spend ceiling. Runs FIRST, before
+   * file-ref validation / moderation / pricing / hold, so a paused or
+   * over-ceiling system refuses (503) at the cheapest possible point with NO
+   * hold taken and the engine never touched. The canvas graph path takes its
+   * hold via holdWithRefusal directly and never passes through
+   * preflightForUser (requestMeter.ts), the OTHER place this guard is wired, so
+   * without this call flipping the kill-switch would NOT stop canvas runs — the
+   * biggest spend surface. Fails CLOSED (an unreadable control state → 503).
+   */
+  spendGuard(userId: string): Promise<void>
+  /**
    * Refuse (throw MeterRefusalError 403) a graph that references a file the
    * caller does not own. Runs BETWEEN the shape check and pricing so a refusal
    * never takes a hold — see meterGraphSubmit.
@@ -337,6 +350,14 @@ export async function meterGraphSubmit(userId: string | null, body: any, deps: G
   if (!body || typeof body.prompt !== 'object' || body.prompt === null) {
     throw new MeterRefusalError('Missing prompt graph', 400)
   }
+
+  // Operator safety valves FIRST (Stage 7 final review C1): a paused system, a
+  // disabled user, or a tripped daily ceiling refuses (503) here — before any
+  // file-ref validation, moderation, pricing or hold — so a paused system
+  // refuses at the cheapest possible point and NO hold is ever taken. This is
+  // the only enforcement point on the canvas graph surface (it never passes
+  // through preflightForUser). Fails CLOSED.
+  await deps.spendGuard(userId)
 
   // Ownership of every file the graph references is checked BEFORE pricing or
   // any hold — a graph that reaches for another tenant's input/output is
@@ -428,6 +449,11 @@ export async function handleMeteredPrompt(event: H3Event): Promise<any> {
 
   const result = await meterGraphSubmit(userId, body, {
     priceGraph,
+    // Stage 7 final review C1: the operator kill-switch + daily ceiling. Wired
+    // the SAME way moderatePrompt (Task 3) is — the real implementation passed
+    // in here, stubbed in the unit tests. Local mode is a no-op inside
+    // assertSpendAllowed itself, so this is inert off the hosted path.
+    spendGuard: assertSpendAllowed,
     // Stage 6 Task 7: refuse a graph that references a file the caller doesn't
     // own, before any hold. userId is non-null here (meterGraphSubmit's 401
     // fires first), but guard anyway so a null can never widen ownership.

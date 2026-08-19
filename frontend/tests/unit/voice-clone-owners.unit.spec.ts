@@ -32,6 +32,7 @@ import {
 import {
   __resetMeterContextForTests,
   __setLedgerForTests,
+  __setSpendGuardForTests,
   bindMeterContext,
 } from '../../server/utils/requestMeter'
 import { VOICE_CLONE_MODEL, MODEL_COSTS } from '../../server/utils/priceBook'
@@ -209,6 +210,11 @@ describe('voice-clone routes: the hold spans the async clone', () => {
     __resetVoiceCloneOwnersForTests()
     fakeLedger = makeFakeLedger(CLONE_CREDITS) // exactly ONE clone's worth
     __setLedgerForTests(fakeLedger as any)
+    // Stage 7 final review C2: the voice-clone start route runs preflightMeter,
+    // which now calls the operator spend guard. Inject a no-op — no live
+    // controls db — so these hosted cases exercise the hold path, not a
+    // fail-closed 503 on a missing DATABASE_URL.
+    __setSpendGuardForTests(async () => {})
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
@@ -217,6 +223,7 @@ describe('voice-clone routes: the hold spans the async clone', () => {
     if (savedClerkKey === undefined) delete process.env[CLERK_KEY]
     else process.env[CLERK_KEY] = savedClerkKey
     __setLedgerForTests(null)
+    __setSpendGuardForTests(null)
     __resetMeterContextForTests()
     errorSpy.mockRestore()
     warnSpy.mockRestore()

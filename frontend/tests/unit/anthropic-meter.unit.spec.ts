@@ -21,6 +21,14 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ANTHROPIC_ASSIST_CREDITS, meterAssist } from '../../server/utils/anthropicMeter'
 import { MeterRefusalError, __resetMeterContextForTests, __setLedgerForTests, bindMeterContext } from '../../server/utils/requestMeter'
+import { __setSystemControlsDbForTests } from '../../server/utils/systemControls'
+
+// A permissive controls db: not paused, no disabled users, no ceiling — so the
+// operator spend guard (Stage 7 final review C1) is a pass-through and the
+// existing hosted assertions exercise only the ledger path. Hosted meterAssist
+// now calls assertSpendAllowed before the debit; without this seam it would hit
+// the real db() and 503 on a missing DATABASE_URL.
+const allowAllControlsDb = { query: async () => ({ rows: [] as any[] }) }
 
 const serverRoot = fileURLToPath(new URL('../../server', import.meta.url))
 
@@ -95,12 +103,14 @@ beforeEach(() => {
   __resetMeterContextForTests()
   fakeLedger = makeFakeLedger()
   __setLedgerForTests(fakeLedger as any)
+  __setSystemControlsDbForTests(allowAllControlsDb)
 })
 
 afterEach(() => {
   if (savedKey === undefined) delete process.env[KEY]
   else process.env[KEY] = savedKey
   __setLedgerForTests(null)
+  __setSystemControlsDbForTests(null)
   __resetMeterContextForTests()
 })
 
@@ -124,6 +134,19 @@ describe('meterAssist', () => {
   it('the no-context rejection is a MeterRefusalError instance', async () => {
     setHosted()
     await expect(meterAssist(fakeEvent)).rejects.toBeInstanceOf(MeterRefusalError)
+  })
+
+  // Stage 7 final review C1 (secondary bypass): the flat-rate assist path
+  // debited without ever consulting the operator spend guard, so the
+  // kill-switch never stopped it. A paused system must refuse (503) BEFORE the
+  // debit — no ledger charge at all.
+  it('hosted, system paused: refuses 503 BEFORE debiting (spend guard)', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    __setSystemControlsDbForTests({ query: async () => ({ rows: [{ global_paused: true }] }) })
+
+    await expect(meterAssist(fakeEvent)).rejects.toMatchObject({ statusCode: 503 })
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 
   it('hosted, insufficient balance: throws 402 with {required, available} and never debits', async () => {

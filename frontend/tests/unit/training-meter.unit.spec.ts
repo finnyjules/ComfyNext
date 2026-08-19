@@ -34,6 +34,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetMeterContextForTests,
   __setLedgerForTests,
+  __setSpendGuardForTests,
   MeterRefusalError,
   preflightMeterFor,
 } from '~~/server/utils/requestMeter'
@@ -86,11 +87,17 @@ beforeEach(() => {
   __resetMeterContextForTests()
   fakeLedger = makeFakeLedger()
   __setLedgerForTests(fakeLedger as any)
+  // Stage 7 final review C2: preflightMeterFor now runs the operator spend
+  // guard first. Inject a no-op — no live controls db here — so the guard's
+  // own behavior stays covered by system-controls.unit.spec.ts and these
+  // hosted cases don't fail-close to 503 on a missing DATABASE_URL.
+  __setSpendGuardForTests(async () => {})
 })
 afterEach(() => {
   if (savedKey === undefined) delete process.env[KEY]
   else process.env[KEY] = savedKey
   __setLedgerForTests(null)
+  __setSpendGuardForTests(null)
   __resetMeterContextForTests()
   vi.unstubAllGlobals()
 })

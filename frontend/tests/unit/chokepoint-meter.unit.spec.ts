@@ -20,6 +20,7 @@ import { runFal } from '../../server/utils/falRun'
 import {
   __resetMeterContextForTests,
   __setLedgerForTests,
+  __setSpendGuardForTests,
   bindMeterContext,
 } from '../../server/utils/requestMeter'
 import { __setModerationFetchForTests } from '../../server/utils/moderation'
@@ -137,6 +138,12 @@ beforeEach(() => {
   __resetMeterContextForTests()
   fakeLedger = makeFakeLedger()
   __setLedgerForTests(fakeLedger as any)
+  // Stage 7 Task 4 + final review C2: preflight now calls the operator
+  // safety-valve guard first. These hosted tests run with no live controls db,
+  // so inject a no-op — the guard's own behavior is covered in
+  // system-controls.unit.spec.ts. Without this the real assertSpendAllowed
+  // hits db() and fail-closes to 503 on a missing DATABASE_URL.
+  __setSpendGuardForTests(async () => {})
   process.env.FAL_KEY = 'test-fal-key'
   // Byte-identity for the existing cases: no OPENAI_API_KEY → moderatePrompt is
   // a no-op that never touches fetch (a real key on the dev box must not make
@@ -155,6 +162,7 @@ afterEach(() => {
   else process.env.OPENAI_API_KEY = savedOpenAiKey
   __setModerationFetchForTests(null)
   __setLedgerForTests(null)
+  __setSpendGuardForTests(null)
   __resetMeterContextForTests()
   vi.unstubAllGlobals()
 })

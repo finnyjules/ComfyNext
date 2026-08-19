@@ -25,7 +25,7 @@
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __setResourceOwnersDbForTests, ownerOf } from '../../server/utils/resourceOwners'
-import { __resetMeterContextForTests, __setLedgerForTests, bindMeterContext } from '../../server/utils/requestMeter'
+import { __resetMeterContextForTests, __setLedgerForTests, __setSpendGuardForTests, bindMeterContext } from '../../server/utils/requestMeter'
 import { _resetRateLimits } from '../../server/lib/rateLimit'
 
 const g = globalThis as any
@@ -155,6 +155,10 @@ beforeEach(() => {
   _resetRateLimits()
   __resetMeterContextForTests()
   __setLedgerForTests(makeFakeLedger() as any)
+  // Stage 7 final review C2: cloud-train/start runs preflightMeter, which now
+  // calls the operator spend guard. Inject a no-op — no live controls db — so
+  // these hosted cases don't fail-close to 503 on a missing DATABASE_URL.
+  __setSpendGuardForTests(async () => {})
   fakeOwnersDb = makeFakeOwnersDb()
   __setResourceOwnersDbForTests(fakeOwnersDb)
 })
@@ -163,6 +167,7 @@ afterEach(() => {
   if (savedClerkKey === undefined) delete process.env[CLERK_KEY]
   else process.env[CLERK_KEY] = savedClerkKey
   __setLedgerForTests(null)
+  __setSpendGuardForTests(null)
   __resetMeterContextForTests()
   __setResourceOwnersDbForTests(null)
   vi.unstubAllGlobals()
