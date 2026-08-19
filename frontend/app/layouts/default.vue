@@ -36,6 +36,7 @@ import { formatCostBadge, formatEstimateBadge, formatEstimateLong } from '~/lib/
 import { hostedModeEnabled, engineOrigin } from '~/lib/hostedMode'
 import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
+import { isBetaGateError } from '~/lib/betaGate'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
 import { extractCoverImages } from '~/lib/projectCover'
@@ -2857,12 +2858,19 @@ const credits = ref<number | null>(null)
 // API nodes later.
 // (`hostedShell` itself is declared at the top of setup — see the note there.)
 const hostedWallet = ref<number | null>(null)
+// Set when the wallet fetch comes back as the auth middleware's private-beta
+// refusal (Stage 8) — a signed-in account that isn't on the beta allowlist.
+// Drives the full-screen <BetaGate /> mounted in the template below.
+const betaGated = ref(false)
 async function refreshHostedWallet() {
   if (!hostedShell) return
   try {
     const w = await $fetch<{ mode: string; available?: number }>('/api/wallet')
     hostedWallet.value = w.mode === 'hosted' && typeof w.available === 'number' ? w.available : null
-  } catch { hostedWallet.value = null /* signed out or transient — pill shows em dash */ }
+  } catch (e) {
+    if (isBetaGateError(e)) betaGated.value = true
+    hostedWallet.value = null /* signed out, gated, or transient — pill shows em dash */
+  }
 }
 // The pill DISPLAYS this trailing value: on a balance change it counts from
 // the old number to the new one (~700ms, easeOutCubic) instead of snapping,
@@ -4835,6 +4843,10 @@ function dismissRunResult() {
       @studio="onStartModalStudio"
       @skip="onStartModalSkip"
     />
+
+    <!-- Private-beta gate: overlays everything (fixed inset-0 z-[200]) when
+         the wallet fetch reports a signed-in, non-invited account. -->
+    <BetaGate v-if="betaGated" />
   </div>
 </template>
 
