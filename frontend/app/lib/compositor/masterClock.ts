@@ -25,6 +25,18 @@ export function deriveMasterClock(
   }
 }
 
+/**
+ * Quantized frame index for the LIVE PREVIEW at `fps` after `elapsedSec` of wall
+ * clock. The Frame's rAF loop renders once per DISTINCT index — not once per display
+ * repaint — so a 30fps scene isn't pull+composited 4× on a 120Hz (ProMotion) display.
+ * Monotonic (no wrap): it only feeds a "did the frame change since last render?"
+ * comparison, so a later time always yields a >= index. `fps` is floored to 1 so a
+ * missing/zero fps degrades to 1fps rather than falling back to the refresh rate.
+ */
+export function masterFrameIndex(elapsedSec: number, fps: number): number {
+  return Math.floor(elapsedSec * Math.max(1, fps))
+}
+
 /** Native-speed loop phase in [0,1): where this slot is at `masterTimeSec`. */
 export function slotPhase01(masterTimeSec: number, slotDuration: number): number {
   if (slotDuration <= 0) return 0

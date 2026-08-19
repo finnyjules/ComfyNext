@@ -104,6 +104,7 @@ import { useCharacters } from '~/composables/useCharacters'
 import { defaultState, identityRefs, normalizeStateId } from '#shared/characters/types'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
 import { runStudioCascade, planStudiosToBakeForRun, hasStudioBaker, isStudioNode, isArtifactNode, type CascadeDeps } from '~/lib/studio/cascade'
+import { emitCanvasOcclusion } from '~/lib/studio/occlusion'
 import { getScene3DRebaker } from '~/lib/scene3d/rebake'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
@@ -4675,6 +4676,28 @@ const anyEditorModalOpen = computed(() => !!(
 // Vue Flow's delete-key whenever a modal owns the keyboard.
 const vfDeleteKeyCode = computed<string[] | null>(() =>
   anyEditorModalOpen.value ? null : ['Backspace', 'Delete'])
+
+// Canvas-occlusion contract (single source of truth). A modal counts as OCCLUDING
+// only if it covers the WHOLE canvas (fixed/absolute inset-0 or StudioModalShell),
+// so canvas-preview render loops (Frame, Space Type, …) can safely pause behind it —
+// see ~/lib/studio/occlusion.ts. This list is intentionally NARROWER than
+// `anyEditorModalOpen`: the Ascii glyph drawer (right, 340px), the Collection drawer
+// (bottom, 320px) and the Inpaint/Crossfade panels leave the canvas partially visible
+// beside them, so freezing a card the user can still see would be wrong — they're
+// excluded. Every entry here has been checked to render a full-canvas backdrop.
+const anyCanvasOccludingModalOpen = computed(() => !!(
+  compositorOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
+  moodboardOpenForId.value || textureStudioOpenForId.value || shaderStudioOpenForId.value ||
+  shapeStudioOpenForId.value || vectorTypeOpenForId.value || scene3dStudioOpenForId.value ||
+  shotDirectorOpenForId.value || lipSyncOpenForId.value || poseOpenForId.value ||
+  timelineOpenForId.value || smartLayoutOpenForId.value || batchExportOpenForId.value ||
+  batchGalleryPayload.value || sketchStackPayload.value || modelGalleryOpenForId.value ||
+  videoModelGalleryOpenForId.value || textEffectGalleryOpenForId.value ||
+  shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value || voiceGalleryOpenForId.value
+))
+// Emit the one canonical signal every gate component subscribes to. `flush: 'post'`
+// so the emit lands after the modal has actually mounted/torn down this tick.
+watch(anyCanvasOccludingModalOpen, (open) => emitCanvasOcclusion(open), { flush: 'post' })
 
 function handleOpenModelGallery(e: Event) {
   const detail = (e as CustomEvent).detail

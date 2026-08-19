@@ -13,6 +13,7 @@ import { loadSpaceDefaults, spaceDefaultFor } from '~/composables/useSpaceDefaul
 import { applySceneToState } from '~/lib/spacetype/scene'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
+import { onCanvasOcclusion } from '~/lib/studio/occlusion'
 import { makeSpaceTypeFrameSource } from '~/lib/spacetype/frameSource'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { loadGoogleCatalog } from '~/data/google-fonts'
@@ -74,18 +75,17 @@ const webglOk = ref(true)
 
 let io: IntersectionObserver | null = null
 let onVisibility: (() => void) | null = null
-let onOpen: ((e: Event) => void) | null = null
-let onClose: (() => void) | null = null
-let onCompositorOpen: (() => void) | null = null
-let onCompositorClose: (() => void) | null = null
-// `occluded` is separate from `editing`: a fullscreen Compositor modal covers every
-// card (no nodeId filter), and closeSpaceType clearing `editing` must not wrongly
-// clear it. While the modal is open the wired consumer pulls from the HEADLESS
-// engine, so pausing this card preview loses nothing visible.
-const gate = { visible: true, tabActive: true, editing: false, occluded: false, hovered: false }
+let unsubOcclusion: (() => void) | null = null
+// `occluded` covers ANY fullscreen studio modal over the canvas — including this
+// node's OWN Space Type modal AND every other card's, via the one canonical signal
+// (~/lib/studio/occlusion.ts). That's what fixes the old bug where OTHER Space Type
+// cards kept rendering behind a Space Type modal: the nodeId-filtered `editing` flag
+// only paused the one being edited. While a modal is open the wired consumer pulls
+// from the HEADLESS engine, so pausing this card preview loses nothing visible.
+const gate = { visible: true, tabActive: true, occluded: false, hovered: false }
 
 function applyGate() {
-  const shouldRun = gate.visible && gate.tabActive && !gate.editing && !gate.occluded && gate.hovered && !!engine && webglOk.value
+  const shouldRun = gate.visible && gate.tabActive && !gate.occluded && gate.hovered && !!engine && webglOk.value
   if (shouldRun && !raf) startPreview()
   else if (!shouldRun && raf) stopPreview()
 }
@@ -189,14 +189,7 @@ onMounted(async () => {
   if (canvasEl.value?.parentElement) io.observe(canvasEl.value.parentElement)
   onVisibility = () => { gate.tabActive = !document.hidden; applyGate() }
   document.addEventListener('visibilitychange', onVisibility)
-  onOpen = (e: Event) => { if ((e as CustomEvent).detail?.nodeId === props.id) { gate.editing = true; applyGate() } }
-  onClose = () => { gate.editing = false; applyGate() }
-  window.addEventListener('sailor:openSpaceType', onOpen as EventListener)
-  window.addEventListener('sailor:closeSpaceType', onClose as EventListener)
-  onCompositorOpen = () => { gate.occluded = true; applyGate() }
-  onCompositorClose = () => { gate.occluded = false; applyGate() }
-  window.addEventListener('sailor:openCompositor', onCompositorOpen)
-  window.addEventListener('sailor:closeCompositor', onCompositorClose)
+  unsubOcclusion = onCanvasOcclusion((open) => { gate.occluded = open; applyGate() })
   applyGate()
 })
 
@@ -281,10 +274,7 @@ onBeforeUnmount(() => {
   stopPreview()
   io?.disconnect(); io = null
   if (onVisibility) document.removeEventListener('visibilitychange', onVisibility)
-  if (onOpen) window.removeEventListener('sailor:openSpaceType', onOpen as EventListener)
-  if (onClose) window.removeEventListener('sailor:closeSpaceType', onClose as EventListener)
-  if (onCompositorOpen) window.removeEventListener('sailor:openCompositor', onCompositorOpen)
-  if (onCompositorClose) window.removeEventListener('sailor:closeCompositor', onCompositorClose)
+  unsubOcclusion?.()
   unregisterStudioBaker(props.id)
   unregisterStudioFrameSource(props.id)
   engine?.dispose()

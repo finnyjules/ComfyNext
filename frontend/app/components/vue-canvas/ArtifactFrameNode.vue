@@ -15,10 +15,11 @@ import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToo
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 import AddImageSourcePopover from '~/components/vue-canvas/compositor/AddImageSourcePopover.vue'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import { onCanvasOcclusion } from '~/lib/studio/occlusion'
 import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
-import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
+import { deriveMasterClock, slotPhase01, masterFrameIndex } from '~/lib/compositor/masterClock'
 import { onFieldCatalogReady } from '~/lib/shaderfill/field'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
@@ -468,11 +469,23 @@ const stackCanvas = ref<HTMLCanvasElement | null>(null)
 // live shader fill there is nothing time-dependent to paint, so `paintLayerStack`
 // defaulting to t=0 is byte-identical to "no clock needed" — see `hasAnimatedFill` below
 // for the predicate that decides whether that default is actually being exercised.
-function renderStack(t?: number) {
+function renderStack(t?: number, live = false) {
   const cv = stackCanvas.value
   if (!cv) return
   const W = box.value.w, H = box.value.h
-  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+  const deviceDpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+  // Live-preview cost cap. A device-resolution composite with visible post-effects
+  // (bloom especially) costs ~5ms on a small Frame and ~17-40ms on a large retina one —
+  // enough to blow the frame budget during hover-play even at content fps. While
+  // ANIMATING with post-effects on, cap the composite's backing store to a pixel budget
+  // so each paint stays cheap (bloom's radius is width-normalized, so it scales down with
+  // it and stays correct). The idle poster, static repaints, and every bake/export are
+  // never `live`, so they keep full device resolution — exported quality is unchanged.
+  // Trade-off: post-effects look slightly softer WHILE the card is playing, sharp at rest.
+  const hasPost = !!editor.postEffects.value?.some((e: any) => e?.visible)
+  const dpr = (live && hasPost)
+    ? Math.max(1, Math.min(deviceDpr, Math.sqrt(LIVE_PREVIEW_MAXPX / Math.max(1, W * H))))
+    : deviceDpr
   cv.width = Math.max(1, Math.round(W * dpr))
   cv.height = Math.max(1, Math.round(H * dpr))
   const ctx = cv.getContext('2d')!
@@ -502,7 +515,15 @@ const hasAnimatedSlot = computed(() => wiredLayers.value.some(l => l.live && l.l
 // to be pure/shared rather than re-derived per host.
 const hasAnimatedFill = computed(() => hasAnimatedShaderFill(buildStackItems(), editor.background.value))
 const needsClock = computed(() => hasAnimatedSlot.value || hasAnimatedFill.value)
-let animRaf = 0, animStart = 0, animInFlight = false, cappedWarned = false
+// Preview fps for a shader-fill-only Frame (no animated slot ⇒ no master clock fps).
+// Matches the Space Type surface's default preview cadence — smooth, and far below a
+// 120Hz repaint rate.
+const SHADER_PREVIEW_FPS = 30
+// Backing-store pixel budget for a LIVE composite when post-effects are on (see
+// renderStack). ~0.64MP keeps a post-processed paint ≈6ms even on a large retina Frame;
+// small Frames stay at full device resolution.
+const LIVE_PREVIEW_MAXPX = 640_000
+let animRaf = 0, animStart = 0, animInFlight = false, cappedWarned = false, lastRenderedFrame = -1
 function animateFrame(ts: number) {
   if (!animStart) animStart = ts
   const mc = masterClock.value
@@ -515,26 +536,42 @@ function animateFrame(ts: number) {
   // This SAME clock feeds shader fills (via renderStack(t)) so a fill and an animated
   // slot in the same Frame agree on what time it is — one clock, not two.
   const t = (ts - animStart) / 1000
-  // getFrame is async — skip a tick rather than queue, so a slow slot lowers the frame
-  // rate instead of piling up. Draws land in owned canvases; then renderStack paints.
-  if (!animInFlight && mc && mc.duration > 0) {
-    animInFlight = true
-    let animated = wiredLayers.value.filter(l => l.live && l.live.duration > 0)
-    if (animated.length > MAX_LIVE_SLOTS) {
-      if (!cappedWarned) { console.warn(`[Frame] ${animated.length} animated slots > cap ${MAX_LIVE_SLOTS}; extras shown as stills`); cappedWarned = true }
-      animated = animated.slice(0, MAX_LIVE_SLOTS)
+  // Render at CONTENT fps, not display refresh rate. rAF fires once per repaint (up to
+  // 120Hz on ProMotion), but a pull+device-res composite is expensive and the content
+  // only has `fps` distinct frames — repainting the same frame 2-4× is the janky-preview
+  // bug (same class the Space Type surface fixed in b5377cb1e). Skip any tick that maps
+  // to the already-rendered frame index; edits still show within one frame.
+  const previewFps = mc && mc.duration > 0 ? mc.fps : SHADER_PREVIEW_FPS
+  const frameIdx = masterFrameIndex(t, previewFps)
+  const frameChanged = frameIdx !== lastRenderedFrame
+  // Two mutually-exclusive paths keyed on whether an animated slot exists, so the
+  // frame-index bookkeeping belongs to exactly one path per tick.
+  if (mc && mc.duration > 0) {
+    // Animated-slot path OWNS the render; a live shader fill just rides along in
+    // renderStack(t). getFrame is async — skip a tick rather than queue, so a slow slot
+    // lowers the frame rate instead of piling up. Draws land in owned canvases; then
+    // renderStack paints.
+    if (!animInFlight && frameChanged) {
+      lastRenderedFrame = frameIdx
+      animInFlight = true
+      let animated = wiredLayers.value.filter(l => l.live && l.live.duration > 0)
+      if (animated.length > MAX_LIVE_SLOTS) {
+        if (!cappedWarned) { console.warn(`[Frame] ${animated.length} animated slots > cap ${MAX_LIVE_SLOTS}; extras shown as stills`); cappedWarned = true }
+        animated = animated.slice(0, MAX_LIVE_SLOTS)
+      }
+      Promise.all(animated.map(l => pullLiveFrame(l, slotPhase01(t, l.live!.duration))))
+        .then(() => renderStack(t, true))
+        .finally(() => { animInFlight = false })
     }
-    Promise.all(animated.map(l => pullLiveFrame(l, slotPhase01(t, l.live!.duration))))
-      .then(() => renderStack(t))
-      .finally(() => { animInFlight = false })
-  } else if (hasAnimatedFill.value) {
-    // No animated wired slot to pull frames for (mc is null/idle), but a shader fill
-    // still needs a fresh paint every tick to advance — no async work to gate on here.
-    renderStack(t)
+  } else if (hasAnimatedFill.value && frameChanged) {
+    // No animated wired slot (mc idle), but a shader fill still needs a fresh paint to
+    // advance — throttled to SHADER_PREVIEW_FPS, not the repaint rate. No async work here.
+    lastRenderedFrame = frameIdx
+    renderStack(t, true)
   }
   animRaf = requestAnimationFrame(animateFrame)
 }
-function startAnim() { cancelAnimationFrame(animRaf); animStart = 0; animInFlight = false; if (needsClock.value && gateOk()) animRaf = requestAnimationFrame(animateFrame) }
+function startAnim() { cancelAnimationFrame(animRaf); animStart = 0; animInFlight = false; lastRenderedFrame = -1; if (needsClock.value && gateOk()) animRaf = requestAnimationFrame(animateFrame) }
 function stopAnim() { cancelAnimationFrame(animRaf); animRaf = 0 }
 // Pause the live loop whenever its frames can't be seen: the card scrolled out of the
 // viewport, the tab hidden, or a fullscreen Compositor modal covering the canvas. The
@@ -542,8 +579,9 @@ function stopAnim() { cancelAnimationFrame(animRaf); animRaf = 0 }
 // doubles every full-res WebGL readback + stack composite for pixels nobody sees —
 // measured ~2× per-tick main-thread cost with one animated wired studio, which is what
 // pushed a 60fps wired scene over the 16.7ms frame budget (the "janky playback" bug).
-// Same gate pattern as SpaceTypeNode's applyGate. No nodeId filter on the modal events:
-// the modal is fullscreen, so it occludes every Frame card, not just its own.
+// Same gate pattern as SpaceTypeNode's applyGate. `editorOpen` tracks the ONE
+// canonical canvas-occlusion signal (any fullscreen studio modal covering the
+// canvas), so this Frame pauses behind every such modal — not just the Compositor.
 const gate = { visible: true, tabActive: true, editorOpen: false, hovered: false }
 function gateOk() { return gate.visible && gate.tabActive && !gate.editorOpen && gate.hovered }
 function applyGate() {
@@ -697,40 +735,26 @@ const unsubFieldCatalog = onFieldCatalogReady(() => renderStack())
 const rootEl = ref<HTMLElement | null>(null)
 let gateIo: IntersectionObserver | null = null
 let onGateVisibility: (() => void) | null = null
-let onCompositorOpen: (() => void) | null = null
-let onCompositorClose: (() => void) | null = null
-let onSpaceTypeOpen: (() => void) | null = null
-let onSpaceTypeClose: (() => void) | null = null
+let unsubOcclusion: (() => void) | null = null
 onMounted(() => {
   registerStudioBaker(props.id, bakeOutput)
   gateIo = new IntersectionObserver(([entry]) => { gate.visible = !!entry?.isIntersecting; applyGate() }, { threshold: 0.01 })
   if (rootEl.value) gateIo.observe(rootEl.value)
   onGateVisibility = () => { gate.tabActive = !document.hidden; applyGate() }
   document.addEventListener('visibilitychange', onGateVisibility)
-  onCompositorOpen = () => { gate.editorOpen = true; applyGate() }
-  onCompositorClose = () => { gate.editorOpen = false; applyGate() }
-  window.addEventListener('sailor:openCompositor', onCompositorOpen)
-  window.addEventListener('sailor:closeCompositor', onCompositorClose)
-  // The Space Type / Expressive Studio modal is ALSO fullscreen and covers every Frame
-  // card, but dispatches its own open/close events (no nodeId filter — it occludes ALL
-  // frames, not one). Without this the Frame keeps rendering the wired scene behind the
-  // modal, and that per-frame render competes with the studio preview for the main thread
-  // (the studio preview goes to ~13fps). Only one fullscreen modal is open at a time, so
-  // sharing the editorOpen flag with the Compositor handlers is safe.
-  onSpaceTypeOpen = () => { gate.editorOpen = true; applyGate() }
-  onSpaceTypeClose = () => { gate.editorOpen = false; applyGate() }
-  window.addEventListener('sailor:openSpaceType', onSpaceTypeOpen)
-  window.addEventListener('sailor:closeSpaceType', onSpaceTypeClose)
+  // One canonical signal for "a fullscreen studio modal now covers the canvas" (any of
+  // ~20 studios, not just the Compositor/Space Type). Without this the Frame keeps
+  // rendering the wired scene behind the modal, and that per-frame render competes with
+  // the studio preview for the main thread (measured ~13fps). Fires immediately with the
+  // current state, so a Frame dropped onto the canvas mid-modal starts out paused.
+  unsubOcclusion = onCanvasOcclusion((open) => { gate.editorOpen = open; applyGate() })
   applyGate()
 })
 onBeforeUnmount(() => {
   unregisterStudioBaker(props.id); stopAnim(); unsubFieldCatalog()
   gateIo?.disconnect(); gateIo = null
   if (onGateVisibility) document.removeEventListener('visibilitychange', onGateVisibility)
-  if (onCompositorOpen) window.removeEventListener('sailor:openCompositor', onCompositorOpen)
-  if (onCompositorClose) window.removeEventListener('sailor:closeCompositor', onCompositorClose)
-  if (onSpaceTypeOpen) window.removeEventListener('sailor:openSpaceType', onSpaceTypeOpen)
-  if (onSpaceTypeClose) window.removeEventListener('sailor:closeSpaceType', onSpaceTypeClose)
+  unsubOcclusion?.()
 })
 
 // Record the baked composite as a project asset so saved frames show up in the
