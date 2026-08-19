@@ -131,3 +131,17 @@ CREATE TABLE IF NOT EXISTS resource_owners (
 );
 
 CREATE INDEX IF NOT EXISTS resource_owners_user ON resource_owners (user_id, kind);
+
+-- Operator safety valves (Stage 7). A single-row global flag table + a
+-- per-user disable set. Read at preflight before every paid action.
+CREATE TABLE IF NOT EXISTS system_controls (
+  id            int PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  global_paused boolean NOT NULL DEFAULT false,
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO system_controls (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS disabled_users (
+  user_id    text PRIMARY KEY REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);

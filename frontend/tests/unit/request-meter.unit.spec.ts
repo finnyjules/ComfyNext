@@ -19,6 +19,7 @@ import {
   MeterRefusalError,
   __resetMeterContextForTests,
   __setLedgerForTests,
+  __setSpendGuardForTests,
   bindMeterContext,
   clearMeterContext,
   currentMeterContext,
@@ -29,6 +30,7 @@ import {
   setMeterPriceHint,
 } from '../../server/utils/requestMeter'
 import { LORA_RENDER_CREDITS, MODEL_COSTS } from '../../server/utils/priceBook'
+import { __setSystemControlsDbForTests } from '../../server/utils/systemControls'
 
 const KEY = 'NUXT_CLERK_SECRET_KEY'
 const savedKey = process.env[KEY]
@@ -80,12 +82,17 @@ beforeEach(() => {
   __resetMeterContextForTests()
   fakeLedger = makeFakeLedger()
   __setLedgerForTests(fakeLedger as any)
+  // Stage 7 Task 4: preflight now calls the operator safety-valve guard first.
+  // Existing hosted tests run with no live controls db, so inject a no-op —
+  // the guard's own behavior is covered in system-controls.unit.spec.ts.
+  __setSpendGuardForTests(async () => {})
 })
 
 afterEach(() => {
   if (savedKey === undefined) delete process.env[KEY]
   else process.env[KEY] = savedKey
   __setLedgerForTests(null)
+  __setSpendGuardForTests(null)
   __resetMeterContextForTests()
 })
 
@@ -196,6 +203,29 @@ describe('preflightMeter', () => {
     expect(fakeLedger.settleHold).not.toHaveBeenCalled()
     expect(fakeLedger.releaseHold).not.toHaveBeenCalled()
     expect(fakeLedger.debit).not.toHaveBeenCalled()
+  })
+
+  it('(a2) hosted, a paused system: preflight throws 503 and NO hold is taken', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    // The real safety-valve guard, backed by a paused controls db — proves the
+    // wire-up refuses BEFORE the ledger hold.
+    __setSpendGuardForTests(null)
+    __setSystemControlsDbForTests({
+      query: async (sql: string) => {
+        if (/FROM system_controls/i.test(sql)) return { rows: [{ global_paused: true }] }
+        return { rows: [] }
+      },
+    })
+    try {
+      const err = await preflightMeter('black-forest-labs/flux-dev').then(() => null, e => e)
+      expect(err).toBeInstanceOf(MeterRefusalError)
+      expect(err.statusCode).toBe(503)
+      expect(fakeLedger.hold).not.toHaveBeenCalled()
+      expect(fakeLedger.getAvailable).not.toHaveBeenCalled()
+    } finally {
+      __setSystemControlsDbForTests(null)
+    }
   })
 
   it('(b) hosted, no bound context: throws a 500 refusal', async () => {

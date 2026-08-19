@@ -58,6 +58,18 @@ import { randomUUID } from 'node:crypto'
 import { deployMode } from './deployMode'
 import { costForModel, LORA_RENDER_CREDITS, LORA_SLUG_OWNERS, MODEL_COSTS } from './priceBook'
 import { getLiveLedger } from './ledgerLive'
+import { assertSpendAllowed } from './systemControls'
+
+/**
+ * Operator safety-valve guard (Stage 7 Task 4), injected behind a seam so the
+ * request-meter unit tests can run in hosted mode without a live controls db.
+ * Defaults to the real assertSpendAllowed; a null override restores the real
+ * one. Referenced only at call time to avoid any circular-init ordering.
+ */
+let spendGuardOverride: ((userId: string) => Promise<void>) | null = null
+export function __setSpendGuardForTests(fn: ((userId: string) => Promise<void>) | null): void {
+  spendGuardOverride = fn
+}
 
 export interface MeterContext { userId: string; priceHintCredits?: number }
 
@@ -332,6 +344,11 @@ export async function releaseRecordedHold(
  */
 async function preflightForUser(userId: string, model: string, priceHintCredits?: number): Promise<MeterTicket | null> {
   if (deployMode() === 'local') return null
+
+  // Operator safety valves (Stage 7 Task 4) — BEFORE pricing/hold, so a
+  // paused system or a tripped ceiling refuses with NO hold taken. Fails
+  // closed on an unreadable control state.
+  await (spendGuardOverride ?? assertSpendAllowed)(userId)
 
   const credits = resolveCredits(model, priceHintCredits)
   if (credits === null) throw new MeterRefusalError(`unpriced model refused: ${model}`, 500)
