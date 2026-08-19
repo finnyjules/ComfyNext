@@ -89,7 +89,7 @@ function makeNoise(seed: number) {
 
 /** Approx Euclidean distance (chamfer 1 / √2) from each inside pixel to the
  *  nearest background pixel, computed only within [x0..x1]×[y0..y1]. */
-function distanceInside(
+export function distanceInside(
   inside: Uint8Array, W: number, x0: number, y0: number, x1: number, y1: number,
 ): Float32Array {
   const INF = 1e9, a = 1, b = Math.SQRT2
