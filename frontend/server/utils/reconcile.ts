@@ -7,8 +7,11 @@
  * falRun.ts), so they match by construction — the join below can only catch
  * a CODE REGRESSION that writes one without the other. The genuinely useful
  * output is the daily totals: `chargedCredits` (SUM of today's ledger
- * debits) is the COMPLETE spend picture across every surface, including
- * training/canvas/bypass routes that never touch provider_usage.
+ * debits, excluding reason='expiry') is the COMPLETE spend picture across
+ * every surface, including training/canvas/bypass routes that never touch
+ * provider_usage. Expiry debits (ledger.ts's expireCredits) are lapsed
+ * credits, not provider spend — systemControls.ts's ceiling sum makes the
+ * SAME exclusion; keep them identical.
  * `providerUsd`/`byProvider` (SUM of today's provider_usage.usd, per
  * provider) is DIRECT-PROVIDER-ROUTE detail only — narrower by design, not a
  * bug — it exists to show where direct-route USD actually goes. A TRUE
@@ -69,7 +72,7 @@ export async function reconcileDay(deps: ReconcileDayDeps): Promise<ReconcileRes
 
   const ledgerRes = await query(
     `SELECT COALESCE(SUM(amount), 0) AS c FROM ledger_entries
-     WHERE kind = 'debit' AND created_at >= date_trunc('day', $1::timestamptz)`,
+     WHERE kind = 'debit' AND reason <> 'expiry' AND created_at >= date_trunc('day', $1::timestamptz)`,
     [today])
   const chargedCredits = Number(ledgerRes.rows[0]?.c ?? 0)
 

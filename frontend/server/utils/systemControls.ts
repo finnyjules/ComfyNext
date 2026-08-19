@@ -20,6 +20,12 @@
  * signal for a runaway-bug budget backstop. Env is a daily CREDIT ceiling —
  * SAILOR_DAILY_CREDIT_CEILING, integer; unset/0 means no ceiling.
  *
+ * The sum excludes reason='expiry' debits (ledger.ts's expireCredits — a
+ * lapsed-credit batch posts a normal 'debit' row, NOT provider spend). Left
+ * in, a big expiry batch could trip a spurious global pause with zero real
+ * spend. reconcile.ts's chargedCredits sum makes the SAME exclusion — keep
+ * them identical.
+ *
  * Local mode (no Clerk key) is a pure no-op — no query issued at all, so the
  * pre-accounts single-tenant behavior is byte-identical.
  */
@@ -62,7 +68,7 @@ async function dailyDebitCredits(d: DbLike): Promise<number> {
   if (ceilingMemo && now - ceilingMemo.at < CEILING_TTL_MS) return ceilingMemo.value
   const { rows } = await d.query(
     `SELECT COALESCE(SUM(amount), 0) AS c FROM ledger_entries
-     WHERE kind = 'debit' AND created_at >= date_trunc('day', now())`)
+     WHERE kind = 'debit' AND reason <> 'expiry' AND created_at >= date_trunc('day', now())`)
   const value = Number(rows[0]?.c ?? 0)
   ceilingMemo = { value, at: now }
   return value

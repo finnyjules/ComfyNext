@@ -87,6 +87,33 @@ describe('reconcileDay', () => {
     expect(result.byProvider).toEqual({ replicate: 1 })
   })
 
+  it('excludes expiry debits from chargedCredits — only real spend counts', async () => {
+    // A day with a 15-credit real spend debit and a separate 25-credit
+    // credit-expiry debit (ledger.ts expireCredits, reason='expiry'). Expiry
+    // is credits lapsing worthless, not provider spend — it must not inflate
+    // the digest's chargedCredits total. See systemControls.ts's identical
+    // exclusion on the ceiling sum.
+    const debitRows = [
+      { reason: 'settle:1', amount: 15 },
+      { reason: 'expiry', amount: 25 },
+    ]
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (/FROM ledger_entries/i.test(sql) && /SUM\(amount\)/i.test(sql)) {
+        const excludesExpiry = /reason\s*<>\s*'expiry'/i.test(sql)
+        const rows = excludesExpiry ? debitRows.filter(r => r.reason !== 'expiry') : debitRows
+        const sum = rows.reduce((s, r) => s + r.amount, 0)
+        return { rows: [{ c: sum }] }
+      }
+      if (/FROM provider_usage/i.test(sql)) return { rows: [] }
+      if (/FROM ledger_entries/i.test(sql) && /idempotency_key/i.test(sql)) return { rows: [] }
+      throw new Error(`unexpected query: ${sql}`)
+    })
+
+    const result = await reconcileDay({ query })
+
+    expect(result.chargedCredits).toBe(15)
+  })
+
   it('accepts an injected now() without needing it to affect the fake', async () => {
     const query = makeQuery({ ledgerCredits: 5, usageRows: [], matchedKeys: [] })
     const now = vi.fn(() => new Date('2026-08-18T00:00:00Z'))

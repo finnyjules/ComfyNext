@@ -118,6 +118,34 @@ describe('assertSpendAllowed', () => {
   })
 })
 
+describe('daily ceiling excludes expiry debits', () => {
+  it('a credit-expiry batch does not trip a ceiling that would trip if expiry were counted', async () => {
+    process.env[CEIL] = '100'
+    // Real spend today is 40 credits — comfortably under the 100 ceiling.
+    // A separate batch of lapsed bonus credits posts a 70-credit 'expiry'
+    // debit (see ledger.ts expireCredits, reason='expiry'). Only counting
+    // that debit too (110) would trip the ceiling — expiry is credits
+    // lapsing worthless, not provider spend, so it must not count.
+    const debitRows = [
+      { reason: 'provider:flux', amount: 40 },
+      { reason: 'expiry', amount: 70 },
+    ]
+    const q = vi.fn(async (sql: string) => {
+      if (/FROM system_controls/i.test(sql)) return { rows: [{ global_paused: false }] }
+      if (/FROM disabled_users/i.test(sql)) return { rows: [] }
+      if (/SUM\(amount\)/i.test(sql)) {
+        const excludesExpiry = /reason\s*<>\s*'expiry'/i.test(sql)
+        const rows = excludesExpiry ? debitRows.filter(r => r.reason !== 'expiry') : debitRows
+        const sum = rows.reduce((s, r) => s + r.amount, 0)
+        return { rows: [{ c: sum }] }
+      }
+      return { rows: [] }
+    })
+    __setSystemControlsDbForTests({ query: q })
+    await expect(assertSpendAllowed('u1')).resolves.toBeUndefined()
+  })
+})
+
 describe('admin setters + reads', () => {
   it('getControls returns paused flag + disabled user list', async () => {
     const q = vi.fn(async (sql: string) => {
