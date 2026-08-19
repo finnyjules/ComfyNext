@@ -82,10 +82,10 @@ let onCompositorClose: (() => void) | null = null
 // card (no nodeId filter), and closeSpaceType clearing `editing` must not wrongly
 // clear it. While the modal is open the wired consumer pulls from the HEADLESS
 // engine, so pausing this card preview loses nothing visible.
-const gate = { visible: true, tabActive: true, editing: false, occluded: false }
+const gate = { visible: true, tabActive: true, editing: false, occluded: false, hovered: false }
 
 function applyGate() {
-  const shouldRun = gate.visible && gate.tabActive && !gate.editing && !gate.occluded && !!engine && webglOk.value
+  const shouldRun = gate.visible && gate.tabActive && !gate.editing && !gate.occluded && gate.hovered && !!engine && webglOk.value
   if (shouldRun && !raf) startPreview()
   else if (!shouldRun && raf) stopPreview()
 }
@@ -103,7 +103,15 @@ function rebuild() {
   // Honor a config effectId change (the deep watch on `state` calls rebuild()).
   engine.setEffect(getEffect(s.effectId))
   engine.build(s.params, texOptsFromState(s))
+  if (!raf) renderPoster()   // idle card shows a static first frame (hover-to-play)
 }
+
+// Hover-to-play: the card animates only while the pointer is over the node (gate.hovered);
+// otherwise it holds frame 0. renderPoster paints that first frame; startPreview resets the
+// clock so hovering always plays from the start.
+function renderPoster() { engine?.renderFrame(0, state.value.params) }
+function onNodeHoverEnter() { gate.hovered = true; applyGate() }
+function onNodeHoverLeave() { gate.hovered = false; applyGate(); renderPoster() }
 
 function startPreview() {
   previewStart = 0
@@ -319,7 +327,7 @@ function openEditor() {
        which would otherwise cut the port dots and their hit areas in half — the bug
        that stopped Type Studio connecting. As siblings they tuck in behind it.
        Mirrors GradientStudioNode / the shared port migration. -->
-  <div class="relative w-fit">
+  <div class="relative w-fit" @pointerenter="onNodeHoverEnter" @pointerleave="onNodeHoverLeave">
     <!-- Variables input: a Collection's VARS output wires here. Rendering this port
          lets the VARS edge anchor so it survives reload (fixes edge-lost-on-restart). -->
     <VueCanvasNodePort

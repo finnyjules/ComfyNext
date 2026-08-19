@@ -544,14 +544,25 @@ function stopAnim() { cancelAnimationFrame(animRaf); animRaf = 0 }
 // pushed a 60fps wired scene over the 16.7ms frame budget (the "janky playback" bug).
 // Same gate pattern as SpaceTypeNode's applyGate. No nodeId filter on the modal events:
 // the modal is fullscreen, so it occludes every Frame card, not just its own.
-const gate = { visible: true, tabActive: true, editorOpen: false }
-function gateOk() { return gate.visible && gate.tabActive && !gate.editorOpen }
+const gate = { visible: true, tabActive: true, editorOpen: false, hovered: false }
+function gateOk() { return gate.visible && gate.tabActive && !gate.editorOpen && gate.hovered }
 function applyGate() {
   const shouldRun = needsClock.value && gateOk()
   if (shouldRun && !animRaf) startAnim()
   else if (!shouldRun && animRaf) stopAnim()
 }
 watch(needsClock, applyGate)
+// Hover-to-play: a canvas scene animates only while the pointer is over its card
+// (gate.hovered). On leave, snap the composite back to its first frame (t=0) so the idle
+// card shows a stable poster instead of freezing mid-motion. Nothing loops until hovered,
+// so the whole canvas's ambient render load collapses to just the card you're pointing at.
+function renderPosterFrame() {
+  const animated = wiredLayers.value.filter(l => l.live && l.live.duration > 0).slice(0, MAX_LIVE_SLOTS)
+  if (animated.length) Promise.all(animated.map(l => pullLiveFrame(l, 0))).then(() => renderStack(0)).catch(() => {})
+  else renderStack(hasAnimatedFill.value ? 0 : undefined)
+}
+function onFrameHoverEnter() { gate.hovered = true; applyGate() }
+function onFrameHoverLeave() { gate.hovered = false; applyGate(); renderPosterFrame() }
 // Declared BEFORE the `{ immediate: true }` watch below — that watch's getter reads
 // wiredTreatments during setup, so a later `const` would throw a TDZ ReferenceError
 // (which cascaded into VueFlow and broke adding any node).
@@ -921,6 +932,7 @@ onUnmounted(() => {
     :style="{ width: box.w + 'px', '--port-color': imageColor } as any"
     :data-running="data.running || undefined"
     @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
+    @pointerenter="onFrameHoverEnter" @pointerleave="onFrameHoverLeave"
   >
     <VueCanvasNodeReadyBadge :node-id="id" />
     <Handle

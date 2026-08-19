@@ -78,6 +78,16 @@ let rafId = 0
 let inited = false
 let ctxHandle: WebGLContextHandle | null = null
 let visObserver: IntersectionObserver | null = null
+// Hover-to-play gate: the orbit/damping render loop runs only while the card is on-screen
+// (g3d.visible) AND the pointer is over it (g3d.hovered) — or an orbit drag is in progress
+// (dragging3d), so a drag that slips off the small card via pointer-capture isn't cut short.
+// apply3DGate / renderOnce are assigned in initViewer (they capture the local `tick`).
+const g3d = { visible: true, hovered: false }
+let dragging3d = false
+let apply3DGate: () => void = () => {}
+let renderOnce: () => void = () => {}
+function on3DHoverEnter() { g3d.hovered = true; apply3DGate() }
+function on3DHoverLeave() { g3d.hovered = false; apply3DGate() }
 
 async function initViewer() {
   const el = stageRef.value
@@ -100,18 +110,28 @@ async function initViewer() {
 
   orbit = new OrbitControls(camera, renderer.domElement)
   orbit.enableDamping = true
+  // Keep the loop alive across an orbit drag even if the pointer leaves the card
+  // (OrbitControls captures the pointer); on 'end' the gate re-applies and pauses if the
+  // pointer has since left. On leave we freeze the last view (WebGL buffer persists) rather
+  // than snap the camera back mid-inspection.
+  orbit.addEventListener('start', () => { dragging3d = true; apply3DGate() })
+  orbit.addEventListener('end', () => { dragging3d = false; apply3DGate() })
 
   const tick = () => { rafId = requestAnimationFrame(tick); orbit.update(); renderer.render(scene, camera) }
-  tick()
-  // Pause the render loop while the node is scrolled off the canvas viewport:
-  // an off-screen orbit preview has nothing to animate, so a 60fps render loop
-  // per hidden GLB node is pure wasted GPU work (and memory pressure that helps
-  // push the tab toward the WebGL-context cap). The context itself is kept so
-  // scrolling back is instant — no reload thrash. Resumes on re-entry.
+  renderOnce = () => { if (renderer && scene && camera) renderer.render(scene, camera) }
+  apply3DGate = () => {
+    const run = g3d.visible && (g3d.hovered || dragging3d)
+    if (run && !rafId) tick()
+    else if (!run && rafId) { cancelAnimationFrame(rafId); rafId = 0; renderOnce() }
+  }
+  renderOnce()  // one static frame so a never-hovered card isn't blank
+  // Pause the loop while the node is scrolled off the canvas viewport too (existing
+  // behavior): an off-screen preview has nothing to show, so a 60fps render loop per hidden
+  // GLB node is pure wasted GPU work (and memory pressure toward the WebGL-context cap). The
+  // context is kept so scrolling back / hovering is instant — no reload thrash.
   visObserver = new IntersectionObserver((entries) => {
-    const visible = entries[0]?.isIntersecting ?? true
-    if (visible && !rafId) tick()
-    else if (!visible && rafId) { cancelAnimationFrame(rafId); rafId = 0 }
+    g3d.visible = entries[0]?.isIntersecting ?? true
+    apply3DGate()
   })
   visObserver.observe(el)
   if (glbUrl.value) loadModel(glbUrl.value)
@@ -138,6 +158,7 @@ async function loadModel(url: string) {
     camera.position.set(0, size.y * 0.1, dist)
     camera.near = dist / 100; camera.far = dist * 100; camera.updateProjectionMatrix()
     orbit.target.set(0, 0, 0); orbit.update()
+    renderOnce()   // show the framed model even before first hover (loop is hover-gated)
   } catch (err: any) {
     loadError.value = err?.message?.includes('CORS') ? 'Could not load (CORS). Use Download.' : 'Could not load the 3D model.'
     console.error('[Artifact3D] load failed:', err)
@@ -178,6 +199,7 @@ onBeforeUnmount(() => {
     :class="{ 'opacity-45 grayscale': isMuted, 'opacity-85': isBypassed }"
     :style="{ '--port-color': stringColor } as any"
     :data-running="data.running || undefined"
+    @pointerenter="on3DHoverEnter" @pointerleave="on3DHoverLeave"
   >
     <VueCanvasNodeReadyBadge :node-id="id" />
     <Handle :id="`input-${glbInIdx}`" type="target" :position="Position.Left"
