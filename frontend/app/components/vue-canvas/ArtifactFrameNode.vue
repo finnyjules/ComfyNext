@@ -688,6 +688,8 @@ let gateIo: IntersectionObserver | null = null
 let onGateVisibility: (() => void) | null = null
 let onCompositorOpen: (() => void) | null = null
 let onCompositorClose: (() => void) | null = null
+let onSpaceTypeOpen: (() => void) | null = null
+let onSpaceTypeClose: (() => void) | null = null
 onMounted(() => {
   registerStudioBaker(props.id, bakeOutput)
   gateIo = new IntersectionObserver(([entry]) => { gate.visible = !!entry?.isIntersecting; applyGate() }, { threshold: 0.01 })
@@ -698,6 +700,16 @@ onMounted(() => {
   onCompositorClose = () => { gate.editorOpen = false; applyGate() }
   window.addEventListener('sailor:openCompositor', onCompositorOpen)
   window.addEventListener('sailor:closeCompositor', onCompositorClose)
+  // The Space Type / Expressive Studio modal is ALSO fullscreen and covers every Frame
+  // card, but dispatches its own open/close events (no nodeId filter — it occludes ALL
+  // frames, not one). Without this the Frame keeps rendering the wired scene behind the
+  // modal, and that per-frame render competes with the studio preview for the main thread
+  // (the studio preview goes to ~13fps). Only one fullscreen modal is open at a time, so
+  // sharing the editorOpen flag with the Compositor handlers is safe.
+  onSpaceTypeOpen = () => { gate.editorOpen = true; applyGate() }
+  onSpaceTypeClose = () => { gate.editorOpen = false; applyGate() }
+  window.addEventListener('sailor:openSpaceType', onSpaceTypeOpen)
+  window.addEventListener('sailor:closeSpaceType', onSpaceTypeClose)
   applyGate()
 })
 onBeforeUnmount(() => {
@@ -706,6 +718,8 @@ onBeforeUnmount(() => {
   if (onGateVisibility) document.removeEventListener('visibilitychange', onGateVisibility)
   if (onCompositorOpen) window.removeEventListener('sailor:openCompositor', onCompositorOpen)
   if (onCompositorClose) window.removeEventListener('sailor:closeCompositor', onCompositorClose)
+  if (onSpaceTypeOpen) window.removeEventListener('sailor:openSpaceType', onSpaceTypeOpen)
+  if (onSpaceTypeClose) window.removeEventListener('sailor:closeSpaceType', onSpaceTypeClose)
 })
 
 // Record the baked composite as a project asset so saved frames show up in the
