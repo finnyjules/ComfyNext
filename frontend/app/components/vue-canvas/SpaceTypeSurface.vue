@@ -22,7 +22,7 @@ import { encodeFrames, type EncodeFramesResult } from '~/lib/engine/encodeVideo'
 import { canvasHasAlpha } from '~/lib/engine/hasAlpha'
 import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 import { useStudioAutosave } from '~/lib/studio/autosave'
-import { loopMultiplier } from '~/lib/spacetype/loop'
+import { loopMultiplier, previewFrameAt } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
@@ -431,6 +431,10 @@ let raf = 0
 // rates) keeps it in [0,1), identical to the old single-loop behavior.
 let previewT01 = 0
 let previewStart = 0
+// Last quantized frame actually rendered by the preview loop — lets tick() skip repaints
+// that map to the same frame (render at content fps, not display refresh rate). Reset on
+// each startPreview so a fresh start always paints frame 0.
+let lastPreviewFrame = -1
 const baking = ref(false)
 const renderError = ref<string | null>(null)
 const webglOk = ref(true)
@@ -838,6 +842,7 @@ function startPreview() {
   // 60Hz, ~4x on 120Hz) and faster than the baked export. The rAF timestamp
   // keeps it frame-rate independent and matched to what export produces.
   previewStart = 0
+  lastPreviewFrame = -1
   const tick = (ts: number) => {
     if (!previewStart) previewStart = ts
     // Extend the loop to k loops so fractional spin/wave rates seam at the wrap (same logic the
@@ -845,11 +850,20 @@ function startPreview() {
     // at their per-loop rate across loops instead of re-wrapping each loop (which caused the jump).
     const base = Math.max(1, Math.round(fps.value * loopDuration.value))
     const k = loopMultiplier(effect.value.loopRates?.(params) ?? [])
-    const frame = Math.floor(((ts - previewStart) / 1000) * fps.value) % (base * k)
-    previewT01 = frame / base
-    engine?.renderFrameAt(previewT01, effectiveRenderParams())
-    renderError.value = engine?.lastError ?? null
-    frozenFieldCount.value = engine?.frozenFieldCount ?? 0
+    const frame = previewFrameAt(ts - previewStart, fps.value, base, k)
+    // Render at the content's FPS, not the display refresh rate. rAF fires per repaint
+    // (60/120Hz), but glyph motion AND live shader fills are both driven by this quantized
+    // `frame`, so repaints that map to the same frame would re-render a byte-identical scene.
+    // Skipping them cuts up to 4x redundant renders/sec on a ProMotion display — the source of
+    // the playback lag. `frame` always advances with wall-clock time, so edits still show within
+    // one frame (structural edits repaint via rebuild()/the immediate-render watchers).
+    if (frame !== lastPreviewFrame) {
+      lastPreviewFrame = frame
+      previewT01 = frame / base
+      engine?.renderFrameAt(previewT01, effectiveRenderParams())
+      renderError.value = engine?.lastError ?? null
+      frozenFieldCount.value = engine?.frozenFieldCount ?? 0
+    }
     raf = requestAnimationFrame(tick)
   }
   raf = requestAnimationFrame(tick)
