@@ -965,14 +965,6 @@ onUnmounted(() => {
     @pointerenter="onFrameHoverEnter" @pointerleave="onFrameHoverLeave"
   >
     <VueCanvasNodeReadyBadge :node-id="id" />
-    <div
-      v-if="masterClock && masterClock.duration > 0"
-      class="absolute top-1 right-1 z-10 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] leading-none text-white/70 tabular-nums pointer-events-none"
-      :title="`Loops every ${Math.round(masterClock.duration)}s${masterClock.capped ? ' (capped)' : ''}`"
-    >
-      <span>⟳ {{ Math.round(masterClock.duration) }}s</span>
-      <span v-if="masterClock.capped" class="text-amber-400">!</span>
-    </div>
     <Handle
       v-for="(slot, i) in layerSlots" :key="slot" :id="`input-${slot}`"
       type="target" :position="Position.Left"
@@ -1001,6 +993,11 @@ onUnmounted(() => {
           <option value="custom" disabled hidden>Custom</option>
         </select>
         <span class="flex-1" />
+        <span
+          v-if="masterClock && masterClock.duration > 0"
+          class="flex items-center gap-0.5 text-[10px] text-white/40 tabular-nums whitespace-nowrap shrink-0"
+          :title="`Loops every ${Math.round(masterClock.duration)}s${masterClock.capped ? ' (capped)' : ''}`"
+        >⟲ {{ Math.round(masterClock.duration) }}s<span v-if="masterClock.capped" class="text-amber-400">!</span></span>
         <div class="flex items-center gap-1 text-[10px] text-white/40 tabular-nums">
           <input type="number" min="0" :value="frameW || ''" placeholder="W"
             class="nopan nodrag w-14 bg-white/[0.04] rounded px-1.5 py-0.5 text-right text-white/70 outline-none focus:bg-white/[0.08] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
