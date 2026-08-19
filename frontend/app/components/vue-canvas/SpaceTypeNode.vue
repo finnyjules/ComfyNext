@@ -109,7 +109,24 @@ function rebuild() {
 // Hover-to-play: the card animates only while the pointer is over the node (gate.hovered);
 // otherwise it holds frame 0. renderPoster paints that first frame; startPreview resets the
 // clock so hovering always plays from the start.
-function renderPoster() { engine?.renderFrame(0, state.value.params) }
+//
+// The text texture is baked (synchronously) inside engine.build(); a bake that runs in the
+// window after document.fonts.load() resolves but before the font is active in the canvas
+// text rasterizer captures the FALLBACK face. The old always-on preview loop hid this — it
+// re-rendered forever, and any later rebuild (e.g. loadGoogleCatalog) re-baked and was shown.
+// A single idle poster gets no such second chance, so re-bake + repaint once document.fonts
+// guarantees the face is ready. Guarded so a font change, hover, or unmount mid-wait wins.
+function renderPoster() {
+  if (raf || !engine) return
+  engine.renderFrame(0, state.value.params)
+  if (typeof document === 'undefined' || !document.fonts?.ready) return
+  const font = String(state.value.params.font)
+  document.fonts.ready.then(() => {
+    if (raf || !engine || String(state.value.params.font) !== font) return
+    engine.build(state.value.params, texOptsFromState(state.value))
+    engine.renderFrame(0, state.value.params)
+  })
+}
 function onNodeHoverEnter() { gate.hovered = true; applyGate() }
 function onNodeHoverLeave() { gate.hovered = false; applyGate(); renderPoster() }
 

@@ -486,8 +486,14 @@ function renderStack(t?: number, live = false) {
   const dpr = (live && hasPost)
     ? Math.max(1, Math.min(deviceDpr, Math.sqrt(LIVE_PREVIEW_MAXPX / Math.max(1, W * H))))
     : deviceDpr
-  cv.width = Math.max(1, Math.round(W * dpr))
-  cv.height = Math.max(1, Math.round(H * dpr))
+  // Resize ONLY when the size actually changes. Assigning canvas.width/height reallocates
+  // and clears the backing store every time — doing it each animation frame (renderStack
+  // runs per tick) is a classic source of playback jank. clearRect below handles the
+  // per-frame clear. During steady playback `dpr` is constant so this never reallocates;
+  // it changes once when the live cap engages/releases on hover enter/leave.
+  const dw = Math.max(1, Math.round(W * dpr)), dh = Math.max(1, Math.round(H * dpr))
+  if (cv.width !== dw) cv.width = dw
+  if (cv.height !== dh) cv.height = dh
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
