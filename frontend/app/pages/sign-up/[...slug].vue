@@ -8,7 +8,12 @@ if (!hosted) navigateTo('/', { replace: true })
 </script>
 
 <template>
-  <div v-if="hosted" class="flex min-h-screen items-center justify-center bg-background">
+  <div v-if="hosted" class="relative flex min-h-screen flex-col items-center justify-center bg-background">
     <SignUp />
+    <div class="absolute bottom-6 flex gap-4 text-xs opacity-50">
+      <NuxtLink to="/terms" class="hover:underline">Terms</NuxtLink>
+      <NuxtLink to="/privacy" class="hover:underline">Privacy</NuxtLink>
+      <NuxtLink to="/content-policy" class="hover:underline">Content policy</NuxtLink>
+    </div>
   </div>
 </template>
