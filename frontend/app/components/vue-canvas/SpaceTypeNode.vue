@@ -4,6 +4,8 @@ import { Pencil, Sparkles } from 'lucide-vue-next'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { getEffect } from '~/lib/spacetype/effects'
+import { loopMultiplier } from '~/lib/spacetype/loop'
+import { effectiveLoopSeconds } from '~/lib/compositor/loopReconcile'
 import {
   defaultSpaceTypeState, dimsFromState, ensureSpaceTypeFont, texOptsFromState,
   type SpaceTypeState,
@@ -189,7 +191,8 @@ onMounted(async () => {
     getClock: () => {
       const s = state.value
       const [cw, ch] = dimsFromState(s)
-      return { duration: s.loopDuration, fps: s.fps, width: cw, height: ch }
+      const k = s.seamless ? loopMultiplier(getEffect(s.effectId).loopRates?.(s.params) ?? []) : 1
+      return { duration: effectiveLoopSeconds(s.loopDuration, k), fps: s.fps, width: cw, height: ch }
     },
     renderAt: (t01, w, h) => {
       const eng = ensureHeadless(w, h)

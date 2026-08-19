@@ -900,6 +900,7 @@ function loadConfig() {
   if (c.post && typeof c.post === 'object') Object.assign(post, c.post)
   if (typeof c.fps === 'number') fps.value = c.fps
   if (typeof c.loopDuration === 'number') loopDuration.value = c.loopDuration
+  if (typeof c.seamless === 'boolean') seamlessLoop.value = c.seamless
   if (typeof c.transparent === 'boolean') transparent.value = c.transparent
   if (typeof c.bgColor === 'string') bgColor.value = c.bgColor
   if (c.projection === 'perspective' || c.projection === 'isometric') projection.value = c.projection
@@ -930,7 +931,7 @@ function saveConfig() {
     params: { ...params },
     gradientStops: gradientStops.map(s => ({ ...s })),
     post: { ...post },
-    fps: fps.value, loopDuration: loopDuration.value,
+    fps: fps.value, loopDuration: loopDuration.value, seamless: seamlessLoop.value,
     dimsKey: dimsKey.value, W: W.value, H: H.value, transparent: transparent.value, bgColor: bgColor.value,
     projection: projection.value,
     panX: panX.value, panY: panY.value,

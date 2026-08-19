@@ -34,6 +34,9 @@ export interface SpaceTypeState {
   gradientStops: { color: string; on: boolean }[]
   fps: number
   loopDuration: number
+  /** Seamless-loop toggle. When true the true loop length is loopDuration × k
+   *  (k = whole-cycle multiplier for the effect's motion). Absent ⇒ false ⇒ base. */
+  seamless?: boolean
   dimsKey: string
   transparent: boolean
   bgColor: string
