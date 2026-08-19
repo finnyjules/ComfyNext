@@ -7,9 +7,10 @@ describe('deriveMasterClock', () => {
     expect(deriveMasterClock([{ duration: 0, fps: 0 }, { duration: 0, fps: 30 }])).toBeNull()
   })
 
-  it('derives max duration and max fps across animated slots', () => {
+  it('reconciles animated slots into the LCM master loop (max fps)', () => {
+    // animated: 4s@30 and 6s@24 → frame base 30; frames 120 & 180; lcm 360 → 12s.
     expect(deriveMasterClock([{ duration: 4, fps: 30 }, { duration: 6, fps: 24 }, { duration: 0, fps: 60 }]))
-      .toEqual({ duration: 6, fps: 30 })
+      .toEqual({ duration: 12, fps: 30 })
   })
 
   it('ignores still slots (duration <= 0) in the derivation', () => {

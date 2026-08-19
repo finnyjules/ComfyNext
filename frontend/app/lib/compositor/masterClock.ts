@@ -1,11 +1,14 @@
 // frontend/app/lib/compositor/masterClock.ts
 // The Frame owns one master timeline. It cannot defer to any single upstream (up to
-// 16 slots), so it derives its clock from the longest animated slot (max fps),
-// unless a manual override is set. Animated slots play at native speed and loop
-// within the master timeline (slotPhase01); still slots (duration <= 0) are constant.
+// 16 slots), so it reconciles the animated slots' loop periods via LCM (capped at 60s,
+// see reconcileLoops) into one seamless master loop, unless a manual override is set.
+// Animated slots play at native speed and loop within the master timeline (slotPhase01);
+// still slots (duration <= 0) are constant.
+
+import { reconcileLoops } from './loopReconcile'
 
 export interface SlotClock { duration: number; fps: number }
-export type MasterClock = { duration: number; fps: number } | null
+export type MasterClock = { duration: number; fps: number; capped?: boolean } | null
 
 /**
  * Master clock from the animated slots. Override wins when present. Null when there
@@ -19,10 +22,9 @@ export function deriveMasterClock(
   if (override) return { duration: override.duration, fps: override.fps }
   const animated = slots.filter(s => s.duration > 0)
   if (!animated.length) return null
-  return {
-    duration: Math.max(...animated.map(s => s.duration)),
-    fps: Math.max(...animated.map(s => s.fps)),
-  }
+  const r = reconcileLoops(animated.map(s => ({ seconds: s.duration, fps: s.fps })))
+  // Only surface `capped` when true so unchanged results stay {duration,fps} (existing shape).
+  return r.capped ? { duration: r.duration, fps: r.fps, capped: true } : { duration: r.duration, fps: r.fps }
 }
 
 /**
