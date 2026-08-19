@@ -33,6 +33,7 @@ const controls: ControlSpec[] = [
   { key: 'waveSlope', label: 'Wave slope', kind: 'slider', min: 0.2, max: 4, step: 0.1, default: 1, group: 'Wave' },
   { key: 'rowPhase', label: 'Row phase', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.12, group: 'Wave' },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.5, group: 'Motion' },
+  { key: 'reverse', label: 'Reverse scroll', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Motion' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1.2, group: 'Transform' },
   { key: 'rotateX', label: 'Scene rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: -0.4, group: 'Transform' },
   { key: 'rotateY', label: 'Scene rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
@@ -273,10 +274,14 @@ export const stripesEffect: SpaceTypeEffect = {
     // below ~0.5 speed. Floor the seamless loop to 1 word-period/loop whenever speed>0 so any
     // nonzero speed scrolls (0 still = frozen). Repeat mode keeps the exact original quantization.
     const spanMode = String(params.textLayout) === 'span'
+    // Global scroll direction flip. Multiplies each stripe's own dir (alternating bands
+    // still alternate — they just all travel the opposite way). Default 'off' ⇒ +1, so
+    // saved nodes without this field are unchanged.
+    const scrollSign = String(params.reverse) === 'on' ? -1 : 1
     for (const s of stripes) {
       // Text scrolls along the band; integer tiles/loop keep it seamless.
       const tiles = spanMode && speed > 0 ? Math.max(1, Math.round(speed * s.uRepeat)) : loopTiles(speed, s.uRepeat)
-      s.tex.offset.x = -(t01 * tiles) * s.dir
+      s.tex.offset.x = -(t01 * tiles) * s.dir * scrollSign
       // Grid/noise fill drifts with the text (same offset → same direction & pace).
       s.uFillScroll.value = s.tex.offset.x
       // Per-stripe in-place rotation (each band around its own sub-group origin).
