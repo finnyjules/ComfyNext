@@ -2169,7 +2169,7 @@ async function exportWebEmbed() {
                 <input type="range" min="1" max="15" step="0.5" v-studio-reset v-model.number="loopDuration" class="studio-range w-full" />
               </div>
               <label data-control class="flex items-center justify-between text-xs text-white/60">
-                <span>Seamless loop</span><StudioSwitch v-model="seamlessLoop" /><span class="ml-2 text-white/40 tabular-nums">· {{ loopLengthLabel }}</span>
+                <span>Seamless loop <span class="ml-1 text-white/40 tabular-nums">· {{ loopLengthLabel }}</span></span><StudioSwitch v-model="seamlessLoop" />
               </label>
               <label data-control class="flex items-center gap-2 text-xs text-white/60">
                 <input type="checkbox" v-model="transparent" /> Transparent background
