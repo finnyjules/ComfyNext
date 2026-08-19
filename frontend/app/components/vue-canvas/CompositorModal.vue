@@ -55,6 +55,8 @@ import AddImageSourcePopover from '~/components/vue-canvas/compositor/AddImageSo
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
 import CompositorTornEdgePanel from '~/components/vue-canvas/compositor/CompositorTornEdgePanel.vue'
 import { DEFAULT_TORN_EDGE } from '~/lib/compositor/tornEdge'
+import CompositorFeatherPanel from '~/components/vue-canvas/compositor/CompositorFeatherPanel.vue'
+import { DEFAULT_FEATHER } from '~/lib/compositor/feather'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
@@ -2197,6 +2199,17 @@ function toggleBgBlur(l: any) {
   if (!l) return
   if (bgBlur(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'background_blur') })
   else setBgBlur(l, 0.02)
+}
+
+// ── Feather (soften layer edges to transparent) ──────────────────────────────
+function setFeather(l: any, patch: Record<string, any>) {
+  if (!l) return
+  const cur = l.feather || { ...DEFAULT_FEATHER }
+  setLocal(l.id, { feather: { ...cur, ...patch } })
+}
+function toggleFeather(l: any, on: boolean) {
+  if (!l) return
+  setLocal(l.id, { feather: on ? { ...DEFAULT_FEATHER } : undefined })
 }
 
 // ── Torn paper edge ─────────────────────────────────────────────────────────
@@ -5254,6 +5267,11 @@ onUnmounted(() => {
               :value="(selectedLocal as any).tornEdge"
               @update="(patch) => setTornEdge(selectedLocal!, patch)"
               @toggle="(on) => toggleTornEdge(selectedLocal!, on)"
+            />
+            <CompositorFeatherPanel
+              :value="(selectedLocal as any).feather"
+              @update="(patch) => setFeather(selectedLocal!, patch)"
+              @toggle="(on) => toggleFeather(selectedLocal!, on)"
             />
           </div>
 
