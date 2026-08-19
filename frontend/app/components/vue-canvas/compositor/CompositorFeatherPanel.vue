@@ -28,7 +28,7 @@ const amountPct = computed(() => Math.round(v.value.amount * 100))
       <div class="space-y-2">
         <div>
           <div class="flex items-center justify-between panel-sublabel mb-1"><span>Amount</span><span class="tabular-nums normal-case">{{ amountPct }}</span></div>
-          <input type="range" min="0" max="40" step="1" :value="amountPct" class="w-full accent-white cursor-pointer"
+          <input type="range" min="0" max="50" step="1" :value="amountPct" class="w-full accent-white cursor-pointer"
             @input="set({ amount: +($event.target as HTMLInputElement).value / 100 })">
         </div>
 
