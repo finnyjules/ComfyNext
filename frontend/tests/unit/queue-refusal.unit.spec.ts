@@ -18,4 +18,8 @@ describe('describeQueueRefusal', () => {
     expect(describeQueueRefusal({ message: 'The workflow failed validation.', node_errors: { '5': {} } })).toBeNull()
     expect(describeQueueRefusal({})).toBeNull()
   })
+  it('400 refusal that is NOT moderation (e.g. missing prompt graph) → plain message, no policy link', () => {
+    const d = describeQueueRefusal({ refusal: true, statusCode: 400, message: 'Missing prompt graph' })
+    expect(d).toEqual({ title: 'Missing prompt graph', description: undefined, policyLink: false })
+  })
 })

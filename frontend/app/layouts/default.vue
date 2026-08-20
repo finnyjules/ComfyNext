@@ -502,15 +502,31 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 // 'queue_error' postMessage does — per-node summary toast + clear run state so
 // spinners never hang. Shared by the bridge handler and the direct-execution
 // path (whose queue() resolves with { node_errors } on a /prompt 400).
-function surfaceQueueError(nodeErrors: any, fallbackMessage?: string, opts?: { silent?: boolean }) {
+//
+// `refusal`/`statusCode` (direct-exec path only — QueueResult.refusal) route
+// through the SAME describeQueueRefusal() the bridge's queue_error handler
+// uses (VueNodeCanvas.vue), so a metering refusal (moderation/credits/
+// ownership/paused) gets the server's own sentence + the moderation
+// policy-link action here too, instead of the generic "Couldn't start run"
+// fallback (Stage 8 fix — direct execution is the ONLY path hosted mode
+// actually takes, per useDirectExecutionEnabled.ts).
+function surfaceQueueError(nodeErrors: any, fallbackMessage?: string, opts?: { silent?: boolean; refusal?: boolean; statusCode?: number }) {
   clearQueueWatchdog()
   if (!opts?.silent) {
-    const { description } = summarizeNodeErrors(nodeErrors)
-    if (description) {
-      toast.error('Workflow validation failed', { description })
+    const refusal = describeQueueRefusal({ refusal: opts?.refusal, statusCode: opts?.statusCode, message: fallbackMessage })
+    if (refusal) {
+      toast.error(refusal.title, {
+        description: refusal.description,
+        ...(refusal.policyLink ? { action: { label: 'Content policy', onClick: () => window.open('/content-policy', '_blank') } } : {}),
+      })
     } else {
-      const msg = fallbackMessage || 'The canvas could not start this run.'
-      toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+      const { description } = summarizeNodeErrors(nodeErrors)
+      if (description) {
+        toast.error('Workflow validation failed', { description })
+      } else {
+        const msg = fallbackMessage || 'The canvas could not start this run.'
+        toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+      }
     }
   }
   // Clear any pending run state so spinners don't hang.
@@ -1003,7 +1019,7 @@ async function runVueWorkflow(
         }))
         const results = await direct.queueParallel(items, { objectInfo: objectInfo.value })
         const failed = results.find((r) => (r.node_errors && Object.keys(r.node_errors).length) || r.error)
-        if (failed) surfaceQueueError(failed.node_errors, failed.error)
+        if (failed) surfaceQueueError(failed.node_errors, failed.error, { refusal: failed.refusal, statusCode: failed.statusCode })
         for (const res of results) {
           if ((res.node_errors && Object.keys(res.node_errors).length) || res.error) continue
           registerResult(res)
@@ -1019,7 +1035,7 @@ async function runVueWorkflow(
           // 400/5xx/network drop) surfaces immediately through the same path the
           // bridge 'queue_error' takes — red-ring + toast — and clears run state,
           // instead of resolving silently and only tripping the ~15s watchdog.
-          surfaceQueueError(res.node_errors, res.error)
+          surfaceQueueError(res.node_errors, res.error, { refusal: res.refusal, statusCode: res.statusCode })
         } else {
           // Cold-boot spill fallback (audit R2): the run wanted a pool worker
           // but /api/pool/ensure rejected/timed out (wedged --cpu boot), so it
@@ -1036,10 +1052,16 @@ async function runVueWorkflow(
       }
     } catch (err) {
       console.error('[Run] direct queue failed', err)
-      clearQueueWatchdog()
-      toast.error("Couldn't start run", { description: String((err as any)?.message || err).slice(0, 160) })
-      if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
-      currentRunSilent.value = false
+      // Backstop for a throw that escapes queueSmart/queueParallel's own
+      // internal catch (queue()'s /prompt POST failure normally resolves as a
+      // QueueResult, handled above) — route it through the same
+      // surfaceQueueError() so a metering refusal shape here ALSO gets the
+      // server's message + policy-link instead of a generic ofetch summary.
+      const body = (err as any)?.data
+      const refusal = !!(body && !body.error && !body.node_errors && typeof body.message === 'string' && body.message)
+      const statusCode = refusal && typeof body.statusCode === 'number' ? body.statusCode : undefined
+      const message = refusal ? body.message : String((err as any)?.message || err)
+      surfaceQueueError(null, message, { refusal, statusCode })
     }
   }
 

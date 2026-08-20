@@ -10,7 +10,9 @@ export interface QueueRefusalNotice {
 
 export function describeQueueRefusal(data: { refusal?: boolean; statusCode?: number | null; message?: string }): QueueRefusalNotice | null {
   if (!data?.refusal || typeof data.message !== 'string' || !data.message) return null
-  const moderation = data.statusCode === 400
+  // statusCode 400 alone isn't enough — the chokepoint also 400s non-moderation
+  // failures (e.g. 'Missing prompt graph'), which must NOT get the policy link.
+  const moderation = data.statusCode === 400 && /moderation/i.test(data.message)
   return {
     title: data.message,
     description: moderation ? 'See our content policy for what’s allowed.' : undefined,

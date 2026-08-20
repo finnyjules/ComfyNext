@@ -128,3 +128,13 @@ flyctl secrets set SAILOR_BETA_ALLOWLIST="julien@example.com,beta-tester@example
 (replace `vessell` with the real Fly app name once `flyctl launch` names it, and use real invited emails — never commit real beta-tester emails into this doc or any tracked file; they belong only in `frontend/.env.hosted` locally and in Fly secrets remotely, per the Stage 8 plan's Component A note.)
 
 If the app boots without this secret set, expect: every sign-in succeeds at Clerk but every subsequent app request 403s with `beta_not_invited` — that's the fail-closed default working as designed, not a bug. Setting the secret and letting the app pick up the new env (Fly secrets trigger a restart of the machine) resolves it without a redeploy.
+
+## `OPENAI_API_KEY` Fly secret — set at deploy, or the moderation claim on `/content-policy` is false
+
+`frontend/server/utils/moderation.ts` reads `process.env.OPENAI_API_KEY` and fails **OPEN**: no key means every prompt skips moderation entirely and is treated as allowed (a deliberate choice — a moderation-provider blip must not take down all generation for a watched beta). The `/content-policy` page tells users their prompts are screened; that sentence is only true when this key is actually set. Set it alongside the other Fly secrets before deploy:
+
+```bash
+flyctl secrets set OPENAI_API_KEY="sk-..." -a vessell
+```
+
+(replace `vessell` with the real Fly app name; never commit the real key into this doc or any tracked file.)

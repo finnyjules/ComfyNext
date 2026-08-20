@@ -64,6 +64,16 @@ export interface QueueResult {
    *  Unset on the ordinary main-idle fast path and the plain no-pool-ready
    *  fallback (that one is expected and quiet). */
   fellBackToMain?: boolean
+  /** Set when `error` is a Nuxt-proxy metering refusal (moderation/credits/
+   *  ownership/paused) rather than a ComfyUI /prompt validation failure —
+   *  mirrors bridge.js's `isRefusal` tag on the bridge's `queue_error`
+   *  postMessage, so callers can route both through `describeQueueRefusal`
+   *  for the same toast quality (Stage 8 fix: direct-exec refusals were
+   *  falling through to a generic "Couldn't start run" toast). */
+  refusal?: boolean
+  /** The refusal's HTTP status code (400 moderation, 402 credits, 403
+   *  ownership, 503 paused), when `refusal` is set. */
+  statusCode?: number
 }
 
 /** Client-side ceiling on the `/api/pool/ensure` cold-boot probe. The server
@@ -421,11 +431,23 @@ export function useDirectExecution(): DirectExecution {
       // let live runs fail with zero feedback). node_errors when present drives
       // the per-node red rings; `error` is the fallback human message.
       const node_errors = err?.data?.node_errors ?? null
-      const error = err?.data?.error?.message ?? err?.message ?? String(err)
+      // An h3-shaped body (top-level `message` + `statusCode`, no `error`/
+      // `node_errors` keys) is a Nuxt-proxy METERING REFUSAL (moderation,
+      // insufficient credits, file ownership, paused) rather than ComfyUI's
+      // /prompt validation body (`{ error: {...}, node_errors: {...} }`).
+      // Mirrors bridge.js's `isRefusal` check so the direct path tags the
+      // same shape the bridge path already does (Stage 8 fix — the direct
+      // path was extracting `err.message`, the generic ofetch summary
+      // like `[POST] "/prompt": 400 Bad Request`, instead of the clean
+      // server sentence at `err.data.message`).
+      const body = err?.data
+      const refusal = !!(body && !body.error && !body.node_errors && typeof body.message === 'string' && body.message)
+      const error = refusal ? body.message : (err?.data?.error?.message ?? err?.message ?? String(err))
+      const statusCode = refusal && typeof body.statusCode === 'number' ? body.statusCode : undefined
       // Dispatch failed: no run will ever registerRun this reservation, so free
       // the reserved slot now (otherwise inFlight over-counts forever).
       if (reservationId !== undefined) releaseReservation(reservationId)
-      return { node_errors, error, worker }
+      return { node_errors, error, worker, refusal, statusCode }
     } finally {
       // Release the reservation whether the POST succeeded or failed. On
       // failure, no promptWorker entry was recorded for this item, so this may
