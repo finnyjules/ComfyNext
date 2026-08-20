@@ -3,6 +3,7 @@
 // Hosted mode only: in local mode there is no login (deployMode contract),
 // so this page sends you home instead of rendering a dead Clerk widget.
 import { hostedModeEnabled } from '~/lib/hostedMode'
+definePageMeta({ layout: false })
 const hosted = hostedModeEnabled(useRuntimeConfig().public)
 if (!hosted) navigateTo('/', { replace: true })
 </script>
