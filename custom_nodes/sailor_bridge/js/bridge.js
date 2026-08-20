@@ -1170,7 +1170,7 @@ app.registerExtension({
               const isComfyShapedResp = !!(resp && ((resp.error && typeof resp.error === "object") || resp.node_errors !== undefined));
               const isRefusal = !!(resp && !isComfyShapedResp && typeof resp.message === "string" && resp.message);
               const message =
-                (resp?.error && (resp.error.message || String(resp.error))) ||
+                (resp?.error && typeof resp.error === "object" && (resp.error.message || String(resp.error))) ||
                 (isRefusal && resp.message) ||
                 "The workflow failed validation.";
               console.error("[Sailor Bridge] prompt refused/failed:", message, nodeErrors);
