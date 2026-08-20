@@ -3,6 +3,7 @@
 import { VueFlow, useVueFlow, type NodeTypesObject, type EdgeTypesObject } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
+import { describeQueueRefusal } from '~/lib/queueRefusal'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import { matchStylesInText, type CanvasSnapshot, type StyleLite } from '~/lib/agent/surfaces/canvas'
@@ -2635,6 +2636,17 @@ function handleBridgeMessage(event: MessageEvent) {
   // next 'executing' event resets error state below. Handled before the
   // worker/scope gates: no run started, so no run scope or worker applies.
   if (evt === 'queue_error') {
+    // Nuxt-proxy metering refusal (moderation / credits / ownership /
+    // paused): no node ids exist, so without this toast the refusal is
+    // completely silent. (Stage 8.)
+    const refusal = describeQueueRefusal(event.data)
+    if (refusal) {
+      toast.error(refusal.title, {
+        description: refusal.description,
+        ...(refusal.policyLink ? { action: { label: 'Content policy', onClick: () => window.open('/content-policy', '_blank') } } : {}),
+      })
+      return
+    }
     const { perNode } = summarizeNodeErrors(event.data.node_errors)
     for (const [id, msg] of Object.entries(perNode)) {
       const target = (nodes.value as any[]).find((n: any) => n.id === String(id))

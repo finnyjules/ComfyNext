@@ -1156,11 +1156,24 @@ app.registerExtension({
               // JSON.stringify succeeds — so sanitize before posting, or the
               // clone failure masks the real validation error.
               const nodeErrors = toCloneable(resp?.node_errors) || (hasNodeErrors ? toCloneable(lastErrs) : null);
+              // An h3-shaped body (top-level message + statusCode, no
+              // error/node_errors) is a Nuxt-proxy METERING REFUSAL —
+              // moderation, insufficient credits, file ownership, paused.
+              // Tag it so the parent shows a toast instead of hunting for
+              // node ids that don't exist. (Stage 8.)
+              const isRefusal = !!(resp && !resp.error && !resp.node_errors && typeof resp.message === "string" && resp.message);
               const message =
                 (resp?.error && (resp.error.message || String(resp.error))) ||
+                (isRefusal && resp.message) ||
                 "The workflow failed validation.";
-              console.error("[Sailor Bridge] prompt validation failed:", message, nodeErrors);
-              postToParent({ event: "queue_error", message, node_errors: nodeErrors });
+              console.error("[Sailor Bridge] prompt refused/failed:", message, nodeErrors);
+              postToParent({
+                event: "queue_error",
+                message,
+                node_errors: nodeErrors,
+                refusal: isRefusal,
+                statusCode: (resp && typeof resp.statusCode === "number") ? resp.statusCode : null,
+              });
             } else if (!window._sailorLastPromptOk) {
               // No error evidence AND no success evidence: the /prompt request
               // never reached the server (network failure, ComfyUI restarting).
