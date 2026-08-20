@@ -1,5 +1,6 @@
 <!-- frontend/app/pages/content-policy.vue -->
 <script setup lang="ts">
+definePageMeta({ layout: false })
 </script>
 
 <template>

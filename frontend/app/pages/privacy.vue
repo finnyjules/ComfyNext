@@ -1,5 +1,6 @@
 <!-- frontend/app/pages/privacy.vue -->
 <script setup lang="ts">
+definePageMeta({ layout: false })
 </script>
 
 <template>
