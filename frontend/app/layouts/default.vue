@@ -36,6 +36,7 @@ import { formatCostBadge, formatEstimateBadge, formatEstimateLong } from '~/lib/
 import { hostedModeEnabled, engineOrigin } from '~/lib/hostedMode'
 import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
+import { describeQueueRefusal } from '~/lib/queueRefusal'
 import { isBetaGateError } from '~/lib/betaGate'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
@@ -501,14 +502,16 @@ function sendToActiveProjectIframe(action: string, payload?: any) {
 // 'queue_error' postMessage does — per-node summary toast + clear run state so
 // spinners never hang. Shared by the bridge handler and the direct-execution
 // path (whose queue() resolves with { node_errors } on a /prompt 400).
-function surfaceQueueError(nodeErrors: any, fallbackMessage?: string) {
+function surfaceQueueError(nodeErrors: any, fallbackMessage?: string, opts?: { silent?: boolean }) {
   clearQueueWatchdog()
-  const { description } = summarizeNodeErrors(nodeErrors)
-  if (description) {
-    toast.error('Workflow validation failed', { description })
-  } else {
-    const msg = fallbackMessage || 'The canvas could not start this run.'
-    toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+  if (!opts?.silent) {
+    const { description } = summarizeNodeErrors(nodeErrors)
+    if (description) {
+      toast.error('Workflow validation failed', { description })
+    } else {
+      const msg = fallbackMessage || 'The canvas could not start this run.'
+      toast.error('Couldn’t start run', { description: String(msg).slice(0, 160) })
+    }
   }
   // Clear any pending run state so spinners don't hang.
   if (activeTab.value?.type === 'project') updateTabStatus(activeTab.value.id, 'idle')
@@ -3336,7 +3339,12 @@ function handleBridgeEvent(data: any, source?: Window | null) {
   // listens to the same bridge postMessage directly (the exact path
   // execution_error events take — no re-dispatch needed).
   if (data.event === 'queue_error') {
-    surfaceQueueError(data.node_errors, data.message)
+    // Metering refusals get their own specific toast in VueNodeCanvas's
+    // bridge handler (same postMessage, listened to directly) — suppress
+    // the generic fallback here so the user doesn't see two toasts, but
+    // still run the state cleanup (watchdog, tab status, silent flag).
+    const refusal = describeQueueRefusal(data)
+    surfaceQueueError(data.node_errors, data.message, { silent: !!refusal })
     return
   }
 
