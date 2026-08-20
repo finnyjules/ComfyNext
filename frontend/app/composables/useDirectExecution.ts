@@ -39,6 +39,7 @@ import { mapWsEvent, type BridgeShapedEvent } from '~/lib/graph/wsEventMap'
 import { inFlight, reserve, releaseReservation } from '~/lib/graph/runRegistry'
 import { isPoolEligible } from '~/lib/graph/cloudOnly'
 import { pickWorker, routeSingleRun } from '~/lib/graph/pickWorker'
+import { isH3RefusalBody } from '~/lib/queueRefusal'
 
 export interface QueueResult {
   prompt_id?: string
@@ -431,17 +432,20 @@ export function useDirectExecution(): DirectExecution {
       // let live runs fail with zero feedback). node_errors when present drives
       // the per-node red rings; `error` is the fallback human message.
       const node_errors = err?.data?.node_errors ?? null
-      // An h3-shaped body (top-level `message` + `statusCode`, no `error`/
-      // `node_errors` keys) is a Nuxt-proxy METERING REFUSAL (moderation,
+      // An h3-shaped body (top-level `message` + `statusCode`, `error` as a
+      // BOOLEAN not an object) is a Nuxt-proxy METERING REFUSAL (moderation,
       // insufficient credits, file ownership, paused) rather than ComfyUI's
-      // /prompt validation body (`{ error: {...}, node_errors: {...} }`).
-      // Mirrors bridge.js's `isRefusal` check so the direct path tags the
-      // same shape the bridge path already does (Stage 8 fix — the direct
-      // path was extracting `err.message`, the generic ofetch summary
-      // like `[POST] "/prompt": 400 Bad Request`, instead of the clean
-      // server sentence at `err.data.message`).
+      // /prompt validation body (`{ error: {...}, node_errors: {...} }`,
+      // `error` an OBJECT). Nitro serializes thrown h3 errors with `error:
+      // true`, so a plain truthiness check on `body.error` can't tell the two
+      // apart — isH3RefusalBody checks the TYPE of `error`. Mirrors bridge.js's
+      // `isRefusal` check so the direct path tags the same shape the bridge
+      // path already does (Stage 8 fix — the direct path was extracting
+      // `err.message`, the generic ofetch summary like
+      // `[POST] "/prompt": 400 Bad Request`, instead of the clean server
+      // sentence at `err.data.message`).
       const body = err?.data
-      const refusal = !!(body && !body.error && !body.node_errors && typeof body.message === 'string' && body.message)
+      const refusal = isH3RefusalBody(body)
       const error = refusal ? body.message : (err?.data?.error?.message ?? err?.message ?? String(err))
       const statusCode = refusal && typeof body.statusCode === 'number' ? body.statusCode : undefined
       // Dispatch failed: no run will ever registerRun this reservation, so free

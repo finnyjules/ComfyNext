@@ -1156,12 +1156,19 @@ app.registerExtension({
               // JSON.stringify succeeds — so sanitize before posting, or the
               // clone failure masks the real validation error.
               const nodeErrors = toCloneable(resp?.node_errors) || (hasNodeErrors ? toCloneable(lastErrs) : null);
-              // An h3-shaped body (top-level message + statusCode, no
-              // error/node_errors) is a Nuxt-proxy METERING REFUSAL —
+              // An h3-shaped body (top-level message + statusCode, `error` a
+              // BOOLEAN not an object) is a Nuxt-proxy METERING REFUSAL —
               // moderation, insufficient credits, file ownership, paused.
               // Tag it so the parent shows a toast instead of hunting for
-              // node ids that don't exist. (Stage 8.)
-              const isRefusal = !!(resp && !resp.error && !resp.node_errors && typeof resp.message === "string" && resp.message);
+              // node ids that don't exist. (Stage 8.) Nitro serializes thrown
+              // h3 errors with a top-level `error: true`, so a plain
+              // truthiness check on resp.error can't distinguish that from
+              // ComfyUI's own `/prompt` validation body (`error` an OBJECT,
+              // `{ error: {...}, node_errors: {...} }`) — both are truthy.
+              // Check the TYPE of `error` instead (mirrors
+              // frontend/app/lib/queueRefusal.ts's isH3RefusalBody).
+              const isComfyShapedResp = !!(resp && ((resp.error && typeof resp.error === "object") || resp.node_errors !== undefined));
+              const isRefusal = !!(resp && !isComfyShapedResp && typeof resp.message === "string" && resp.message);
               const message =
                 (resp?.error && (resp.error.message || String(resp.error))) ||
                 (isRefusal && resp.message) ||

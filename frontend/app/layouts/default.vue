@@ -36,7 +36,7 @@ import { formatCostBadge, formatEstimateBadge, formatEstimateLong } from '~/lib/
 import { hostedModeEnabled, engineOrigin } from '~/lib/hostedMode'
 import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
-import { describeQueueRefusal } from '~/lib/queueRefusal'
+import { describeQueueRefusal, isH3RefusalBody } from '~/lib/queueRefusal'
 import { isBetaGateError } from '~/lib/betaGate'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
@@ -1057,8 +1057,12 @@ async function runVueWorkflow(
       // QueueResult, handled above) — route it through the same
       // surfaceQueueError() so a metering refusal shape here ALSO gets the
       // server's message + policy-link instead of a generic ofetch summary.
+      // isH3RefusalBody checks the TYPE of `error` (object = ComfyUI
+      // validation, boolean `true` = Nitro-serialized h3 refusal) rather than
+      // its truthiness — a plain `!body.error` check is truthy for both
+      // shapes and misclassifies a real refusal as a ComfyUI failure.
       const body = (err as any)?.data
-      const refusal = !!(body && !body.error && !body.node_errors && typeof body.message === 'string' && body.message)
+      const refusal = isH3RefusalBody(body)
       const statusCode = refusal && typeof body.statusCode === 'number' ? body.statusCode : undefined
       const message = refusal ? body.message : String((err as any)?.message || err)
       surfaceQueueError(null, message, { refusal, statusCode })

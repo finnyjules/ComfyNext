@@ -1,3 +1,26 @@
+/** True iff `body` is a Nuxt/h3 error body (a metering refusal — moderation,
+ * insufficient credits, file ownership, paused) rather than a ComfyUI
+ * `/prompt` validation body.
+ *
+ * Nitro serializes thrown h3 errors with a top-level **boolean** `error: true`
+ * (e.g. `{ error: true, statusCode: 401, message: "Sign in required", ... }`
+ * from the auth middleware, or the same shape with `message: "Sailor is
+ * temporarily paused"` from a `/prompt` refusal). ComfyUI's own `/prompt`
+ * validation body instead carries `error` as an OBJECT
+ * (`{ error: { message, ... }, node_errors: {...} }`). A prior version of
+ * this check used `!body.error`, which is false for BOTH shapes (a truthy
+ * object and a truthy boolean `true` are both truthy) — so a real hosted
+ * refusal was misclassified as a ComfyUI validation failure and fell through
+ * to a generic ofetch toast instead of the clean refusal toast. Distinguish
+ * by the TYPE of `error`, not its truthiness. */
+export function isH3RefusalBody(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false
+  const b = body as Record<string, unknown>
+  const comfyShaped = (typeof b.error === 'object' && b.error !== null) || b.node_errors !== undefined
+  if (comfyShaped) return false
+  return typeof b.message === 'string' && b.message.length > 0
+}
+
 /** Toast copy for a bridge `queue_error` that is a Nuxt-proxy metering
  * refusal (moderation / credits / ownership / paused) rather than a
  * ComfyUI validation error. Returns null for the latter — those are
