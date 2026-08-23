@@ -3267,6 +3267,16 @@ function handleGlobalKeydown(e: KeyboardEvent) {
 }
 
 function handleSignOut() {
+  // Hosted has no bridge iframe (direct execution forced), so the bridge
+  // 'signOut' message goes nowhere — end the Clerk session directly and
+  // land signed out on the homepage. window.Clerk avoids a setup-context
+  // composable in a layout that must also compile in local mode.
+  const clerk = (window as any).Clerk
+  if (hostedShell && clerk?.signOut) {
+    userPopupOpen.value = false
+    void clerk.signOut().then(() => window.location.assign('/'))
+    return
+  }
   sendToBridgeIframe('signOut')
 }
 
