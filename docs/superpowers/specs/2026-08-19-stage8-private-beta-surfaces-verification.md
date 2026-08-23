@@ -26,6 +26,7 @@
 
 - **Fresh-account no-provisioning PROVEN:** real signup through the real form (consent checkbox required) → Clerk account created with `legal_accepted_at` stamped → Neon: 0 user rows, 0 wallet rows, 0 ledger rows → gate screen with the right email. Then added to the allowlist + restart → app opens, pill shows 100 → Neon: exactly ONE `signup_bonus` credit of 100 (`signup:<userId>` key), wallet balance 100. Both halves of the gate watched live.
 - **Tenant wall eyeballed:** the fresh account's Projects page is empty — none of the operator's projects visible.
+- **FIRST REAL PAID GENERATION PROVEN (2026-08-23, with Julien):** image gen on the main account — hold 9cr taken pre-dispatch → provider ran (~9s) → settle debit 9cr (`settle:6`) → balance 8,993→8,984 exact, zero dangling holds. The full Stage 4/5 money chain (hold→provider→settle→wallet) has now run live for the first time. Two finds: the account-menu Sign out was bridge-only (dead in hosted) — fixed `281e625ff`; the node filmstrip thumbnail 403s (the known Stage-6 temp-type `/view` rider — deferred). UserPopup also shows placeholder identity + em-dash credits in hosted (cosmetic rider).
 - Rider: on the cold dev server the gate takes a while to appear (page compile + wallet fetch); production build is fast — note, not a fix.
 
 ## NOT yet verified (remaining pre-invite gaps)
