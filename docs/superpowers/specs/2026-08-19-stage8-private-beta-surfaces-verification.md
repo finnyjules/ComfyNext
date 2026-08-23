@@ -22,17 +22,20 @@
 - **Consent checkbox:** signed-out `/sign-up` shows Clerk's "I agree to the Terms of Service and Privacy Policy" checkbox + the Sailor legal footer; `/v1/environment` on the dev instance confirms `legal_consent_enabled: true` with both URLs.
 - Evidence: `.superpowers/sdd/` task reports + progress ledger.
 
-## NOT yet verified (honest gaps — fold into the pre-invite pass)
+## VERIFIED with Julien live (2026-08-20, real fresh signup `hello+signuptest@`)
 
-- **Fresh-account no-provisioning:** proving a brand-new non-listed signup gets NO user row / NO bonus ledger row needs a second account; unit tests cover the logic, the live proof is owed (Julien checklist #2).
-- **`legal_accepted_at` stamp on a real signup** (config is live; the stamp on a fresh consent-checked signup is unexercised).
+- **Fresh-account no-provisioning PROVEN:** real signup through the real form (consent checkbox required) → Clerk account created with `legal_accepted_at` stamped → Neon: 0 user rows, 0 wallet rows, 0 ledger rows → gate screen with the right email. Then added to the allowlist + restart → app opens, pill shows 100 → Neon: exactly ONE `signup_bonus` credit of 100 (`signup:<userId>` key), wallet balance 100. Both halves of the gate watched live.
+- **Tenant wall eyeballed:** the fresh account's Projects page is empty — none of the operator's projects visible.
+- Rider: on the cold dev server the gate takes a while to appear (page compile + wallet fetch); production build is fast — note, not a fix.
+
+## NOT yet verified (remaining pre-invite gaps)
 - The Stage 4–7 signed-in checklists remain owed as before.
 
 ## Julien's checklist (hosted :3100, or post-deploy)
 
-1. **Gate:** remove your email from `SAILOR_BETA_ALLOWLIST` (or boot without it), sign in → the private-beta screen; restore email, restart → normal app.
-2. **No free credits for strangers:** sign up with a throwaway email not on the list → gate screen; then in Neon: no `users` row, no `signup_bonus` ledger row for it. Add it to the list, revisit → provisioned with 100 credits.
-3. **Consent:** fresh sign-up requires the checkbox; the Terms/Privacy links open your real pages.
+1. ~~**Gate**~~ DONE 2026-08-19 (operator locked out with list unset, restored with it set).
+2. ~~**No free credits for strangers**~~ DONE 2026-08-20 live with Julien (see above).
+3. ~~**Consent**~~ DONE 2026-08-20 (checkbox required; `legal_accepted_at` stamped on the real signup).
 4. **Refusal notice:** with `OPENAI_API_KEY` set, submit an obviously violating prompt → one toast citing content moderation + Content policy button, nothing charged.
 5. **Legal pages** read them once — they are honest drafts of how the product actually works; correct anything that reads wrong before inviting.
 
