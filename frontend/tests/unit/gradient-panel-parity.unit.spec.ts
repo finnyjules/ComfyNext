@@ -7,6 +7,13 @@ import {
   type GradientControl,
 } from '~/lib/gradientfx/controls'
 import { groupIntoSections } from '~/lib/studio/sections'
+import {
+  GRADIENT_PANEL_ORDER,
+  PANEL_ANCHORS,
+  PANEL_ANCHOR_KEYS,
+  gradientPanelControls,
+  panelSectionTitle,
+} from '~/lib/gradientfx/panelPresentation'
 import { ASPECTS, BLEND_MODES, LAYOUTS, ensureConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
 import { defaultConfig, stripeConfig } from '~/lib/gradientfx/randomize'
 
@@ -611,5 +618,75 @@ describe('documented divergences stay documented', () => {
   it('the bespoke-widget keys are real controls', () => {
     const keys = new Set(GRADIENT_CONTROLS.map((c) => c.key))
     for (const k of [...BESPOKE_WIDGETS, ...DEDUPLICATED_ROWS]) expect(keys, k).toContain(k)
+  })
+})
+
+// ── the SHIPPED PANEL's own shape: card titles + within-card order ────────────
+
+/**
+ * The block above pins the schema derivation, and it groups by SCHEMA group — so it
+ * says nothing about what the cards are CALLED on screen or what order their rows
+ * come out in. Those are exactly the two things `panelPresentation.ts` exists to fix,
+ * and green there was not the same thing as visual parity.
+ *
+ * This block runs the remap the surface runs and asserts the shipped truth: the card
+ * titles, their order, and the row order inside each — INCLUDING Relief, Shape and
+ * Layer, whose schema order diverges (KNOWN_ORDER_DIVERGENCES) and which the remap is
+ * what corrects.
+ */
+function shippedPanel(cfg: GradientConfig, activeLayer = 0): Array<{ title: string; key: string }> {
+  const tree = groupIntoSections(gradientPanelControls(cfg, activeLayer), GRADIENT_PANEL_ORDER)
+  const out: Array<{ title: string; key: string }> = []
+  const walk = (nodes: typeof tree) => nodes.forEach((n) => {
+    for (const c of n.controls) if (!PANEL_ANCHOR_KEYS.has(c.key)) out.push({ title: n.title, key: c.key })
+    walk(n.sections)
+  })
+  walk(tree)
+  return out
+}
+
+describe('the derived panel reproduces the SHIPPED cards, not the schema groups', () => {
+  for (const s of SCENARIOS) {
+    describe(s.state, () => {
+      it('draws exactly the cards the old panel drew, in the old order', () => {
+        const got = shippedPanel(s.cfg(), s.activeLayer ?? 0)
+        const want = new Set(s.rows.map((r) => r.onScreen))
+        const titles = [...new Set(got.map((r) => r.title))]
+        expect(new Set(titles)).toEqual(want)
+        expect(titles).toEqual(GRADIENT_PANEL_ORDER.filter((t) => want.has(t)))
+      })
+
+      it('keeps the shipped row order inside every card', () => {
+        const got = shippedPanel(s.cfg(), s.activeLayer ?? 0)
+        for (const title of new Set(s.rows.map((r) => r.onScreen))) {
+          const want: string[] = []
+          for (const r of s.rows) if (r.onScreen === title && !want.includes(r.key)) want.push(r.key)
+          expect(got.filter((r) => r.title === title).map((r) => r.key), `${title} order`).toEqual(want)
+        }
+      })
+
+      it('gives every row the shipped card title', () => {
+        const byKey = new Map(shippedPanel(s.cfg(), s.activeLayer ?? 0).map((r) => [r.key, r.title]))
+        for (const r of s.rows) expect(byKey.get(r.key), `${r.key} card`).toBe(r.onScreen)
+      })
+    })
+  }
+
+  it('routes every schema group to the title SECTION_TITLE_MAP records', () => {
+    for (const c of GRADIENT_CONTROLS) {
+      const declared = SECTION_TITLE_MAP[String(c.group)]
+      if (declared === undefined) continue
+      const got = panelSectionTitle(c)
+      expect(Array.isArray(declared) ? declared : [declared], `${c.key}`).toContain(got)
+    }
+  })
+
+  it('gives every card a chrome entry and every chrome entry a card', () => {
+    expect([...GRADIENT_PANEL_ORDER].sort()).toEqual(Object.keys(SECTION_CHROME).sort())
+  })
+
+  it('anchors the bespoke blocks the schema never described', () => {
+    for (const k of PANEL_ANCHOR_KEYS) expect(GRADIENT_PANEL_ORDER).toContain(PANEL_ANCHORS.find(a => a.key === k)!.group)
+    expect([...PANEL_ANCHOR_KEYS].every((k) => k.startsWith('ui.'))).toBe(true)
   })
 })
