@@ -694,34 +694,12 @@ function removeNormalMap() {
   applyMaterial((mat) => { mat.normalImage = undefined })
 }
 
-// Decal field proxies (flat on the object, defaults from DECAL_DEFAULTS so a
-// slider always has a number).
-function decalParam<K extends 'size' | 'depth' | 'spin' | 'opacity'>(key: K) {
-  return computed<number>({
-    get: () => selectedDecal.value?.[key] ?? DECAL_DEFAULTS[key],
-    set: (v) => { if (selectedDecal.value) selectedDecal.value[key] = v },
-  })
-}
-const decalSize = decalParam('size')
-const decalDepth = decalParam('depth')
-const decalOpacity = decalParam('opacity')
-// Spin is stored in RADIANS on the doc (the engine feeds it straight to the
-// projector) but a degrees slider is the only readable form of "rotate the
-// sticker on the surface" — convert at the boundary, both ways.
-const decalSpinDeg = computed<number>({
-  get: () => Math.round(((selectedDecal.value?.spin ?? 0) * 180) / Math.PI),
-  set: (v) => { if (selectedDecal.value) selectedDecal.value.spin = (v * Math.PI) / 180 },
-})
 const decalText = computed<string>({
   get: () => (selectedDecal.value?.content.type === 'text' ? selectedDecal.value.content.text : ''),
   set: (v) => { const c = selectedDecal.value?.content; if (c?.type === 'text') c.text = v },
 })
 const decalFont = computed<string>(() =>
   selectedDecal.value?.content.type === 'text' ? selectedDecal.value.content.font : DECAL_DEFAULTS.font)
-const decalColor = computed<string>({
-  get: () => (selectedDecal.value?.content.type === 'text' ? selectedDecal.value.content.color : DECAL_DEFAULTS.color),
-  set: (v) => { const c = selectedDecal.value?.content; if (c?.type === 'text') c.color = v },
-})
 // Decal text is rasterised to a canvas by decals.ts, which routes every token
 // kind: google → css2 stylesheet, library/pinned → FontFace from the font
 // file (canvasFontPlanFor). Mirrors onFontPick's per-kind handling so the
@@ -1343,7 +1321,9 @@ function setControl(key: string, value: string | number | boolean): void {
   if (key.startsWith('object.')) {
     const o = selected.value
     if (!o) return
-    setByPath(o, key.slice('object.'.length), value)
+    // A decal's spin is degrees on screen and radians on disk — the same split
+    // `object.rotation.*` has, and `readSceneControl` is this line's exact inverse.
+    setByPath(o, key.slice('object.'.length), key === 'object.spin' ? (Number(value) * Math.PI) / 180 : value)
     return
   }
   // Generic fallback: any key the branches above don't special-case (a novel Camera/
@@ -3840,45 +3820,6 @@ async function onClose() {
         </StudioControlPanel>
       </div>
 
-      <!-- Decal: content (text or image) then the four projection params. There is no
-           gizmo for a decal (see the selection watch) — "Reposition" re-arms the same
-           click-to-place flow the toolbar uses. -->
-      <StudioSection v-if="selectedIsDecal" title="Decal" @pointerdown.capture="onControlsPointerDown">
-        <div class="space-y-3">
-          <template v-if="selectedDecal?.content.type === 'text'">
-            <div>
-              <label class="mb-1 block text-[11px] text-white/55">Label</label>
-              <input v-model="decalText" type="text" placeholder="Label" aria-label="Decal label"
-                class="w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-[12px] text-white/85 outline-none focus:border-white/25" />
-            </div>
-            <div>
-              <label class="mb-1 block text-[11px] text-white/55">Font</label>
-              <FontPicker
-                :model-value="fontDisplayName(decalFont)"
-                :show-variable-toggle="false"
-                @select="onDecalFontPick"
-              />
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-[11px] text-white/55">Color</span>
-              <StudioColor v-model="decalColor" />
-            </div>
-          </template>
-          <template v-else-if="selectedDecal?.content.type === 'image'">
-            <img :src="texViewUrl(selectedDecal.content.image)" alt=""
-              class="h-16 w-full rounded bg-white/5 object-contain" />
-            <StudioButton class="w-full" @click="triggerDecalReplace">Replace image</StudioButton>
-          </template>
-          <StudioSlider v-model="decalSize" label="Size" hint="Sticker width on the surface" :min="0.05" :max="3" :step="0.01" />
-          <StudioSlider v-model="decalSpinDeg" label="Spin" hint="Rotation around the surface normal" :min="-180" :max="180" :step="1" />
-          <StudioSlider v-model="decalDepth" label="Wrap" hint="How far the sticker wraps around curved surfaces" :min="0.05" :max="2" :step="0.01" />
-          <StudioSlider v-model="decalOpacity" label="Opacity" hint="How solid the sticker sits on the surface" :min="0" :max="1" :step="0.01" />
-          <StudioButton class="w-full" :disabled="!!placingDecal" @click="beginDecalPlacement({ decalId: selectedDecal!.id })">
-            {{ placingDecal ? 'Click a surface…' : 'Reposition' }}
-          </StudioButton>
-        </div>
-      </StudioSection>
-
       <!-- Material / Camera / Lighting / Background — DRAWN FROM SCENE_CONTROLS, not
            hand-written. `panelControls` is the presentation-remapped copy built by
            lib/scene3d/panelPresentation.ts: same rows, same order, same captions the
@@ -3902,6 +3843,40 @@ async function onClose() {
           :value="readControl"
           @set="setControl"
         >
+          <!-- Decal content. There is no gizmo for a decal (see the selection watch), so
+               "Reposition" re-arms the same click-to-place flow the toolbar uses. -->
+          <template #control-ui.decal.text>
+            <div class="space-y-3">
+              <div>
+                <label class="mb-1 block text-[11px] text-white/55">Label</label>
+                <input v-model="decalText" type="text" placeholder="Label" aria-label="Decal label"
+                  class="w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-[12px] text-white/85 outline-none focus:border-white/25" />
+              </div>
+              <div>
+                <label class="mb-1 block text-[11px] text-white/55">Font</label>
+                <FontPicker
+                  :model-value="fontDisplayName(decalFont)"
+                  :show-variable-toggle="false"
+                  @select="onDecalFontPick"
+                />
+              </div>
+            </div>
+          </template>
+
+          <template #control-ui.decal.image>
+            <div class="space-y-3">
+              <img v-if="selectedDecal?.content.type === 'image'" :src="texViewUrl(selectedDecal.content.image)" alt=""
+                class="h-16 w-full rounded bg-white/5 object-contain" />
+              <StudioButton class="w-full" @click="triggerDecalReplace">Replace image</StudioButton>
+            </div>
+          </template>
+
+          <template #control-ui.decal.reposition>
+            <StudioButton class="w-full" :disabled="!!placingDecal" @click="beginDecalPlacement({ decalId: selectedDecal!.id })">
+              {{ placingDecal ? 'Click a surface…' : 'Reposition' }}
+            </StudioButton>
+          </template>
+
           <!-- Imported models keep their baked materials until overridden. -->
           <template #control-ui.material.override>
             <div class="flex items-center justify-between">

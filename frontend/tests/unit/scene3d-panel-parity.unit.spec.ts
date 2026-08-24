@@ -213,6 +213,10 @@ const ANCHOR_LABEL: Record<string, string> = {
   'ui.cloner.axis': 'Around',
   'ui.cloner.step': 'Step',
   'ui.cloner.cost': 'Clone cost',
+  // Decal
+  'ui.decal.text': 'Label',
+  'ui.decal.image': 'Sticker',
+  'ui.decal.reposition': 'Reposition',
 }
 
 // ── scenarios ────────────────────────────────────────────────────────────────
@@ -515,7 +519,7 @@ describe('Scene3D panel parity — selection states', () => {
   it('a selected decal draws no migrated Material card either', () => {
     const doc = defaultDoc()
     const cards = designCards(doc, imageDecal())
-    expect(cards.map((s) => s.title)).toEqual(Object.keys(DOC_SCENARIO))
+    expect(cards.map((s) => s.title)).toEqual(['Decal', ...Object.keys(DOC_SCENARIO)])
     expect(panel(doc, imageDecal()).some((c) => c.key.startsWith(M))).toBe(false)
   })
 
@@ -924,6 +928,65 @@ describe('Scene3D panel parity — Light', () => {
   })
 })
 
+/** The Decal card. Content comes first (a text sticker's Label/Font/Colour, or an image
+ *  sticker's thumbnail + Replace), then the four projection sliders, then Reposition —
+ *  a decal has no gizmo, so re-placing it re-arms the click-to-place flow. */
+const DECAL_ROW: Record<string, Row> = {
+  'object.content.color': { label: 'Color', kind: 'color' },
+  'object.size': { label: 'Size', kind: 'slider', min: 0.05, max: 3, step: 0.01, hint: 'Sticker width on the surface' },
+  'object.spin': { label: 'Spin', kind: 'slider', min: -180, max: 180, step: 1, hint: 'Rotation around the surface normal' },
+  'object.depth': { label: 'Wrap', kind: 'slider', min: 0.05, max: 2, step: 0.01, hint: 'How far the sticker wraps around curved surfaces' },
+  'object.opacity': { label: 'Opacity', kind: 'slider', min: 0, max: 1, step: 0.01, hint: 'How solid the sticker sits on the surface' },
+}
+
+const DECAL_TAIL = ['object.size', 'object.spin', 'object.depth', 'object.opacity', 'ui.decal.reposition'] as const
+
+describe('Scene3D panel parity — Decal', () => {
+  it('a text sticker draws Label/Font, its colour, the four sliders and Reposition', () => {
+    const doc = defaultDoc()
+    const card = designCards(doc, textDecal()).find((s) => s.title === 'Decal')!
+    expect(card.keys).toEqual(['ui.decal.text', 'object.content.color', ...DECAL_TAIL])
+  })
+
+  it('an image sticker swaps that block for the thumbnail and Replace button', () => {
+    const doc = defaultDoc()
+    const card = designCards(doc, imageDecal()).find((s) => s.title === 'Decal')!
+    expect(card.keys).toEqual(['ui.decal.image', ...DECAL_TAIL])
+  })
+
+  it('every decal row carries the shipped label, bounds and tooltip', () => {
+    const doc = defaultDoc()
+    const rows = byKey(doc, textDecal())
+    for (const [key, want] of Object.entries(DECAL_ROW)) expectRow(rows.get(key), key, want)
+  })
+
+  it('Spin reads and writes in degrees though the document stores radians', () => {
+    const doc = defaultDoc()
+    const d = textDecal() as SceneObject & { spin: number }
+    d.spin = Math.PI / 2
+    expect(readSceneControl(doc, d, 'object.spin')).toBe(90)
+    d.spin = -Math.PI
+    expect(readSceneControl(doc, d, 'object.spin')).toBe(-180)
+  })
+
+  it('the other three sliders read the stored value straight', () => {
+    const doc = defaultDoc()
+    const d = imageDecal() as SceneObject & { size: number; depth: number; opacity: number }
+    expect(readSceneControl(doc, d, 'object.size')).toBe(0.6)
+    expect(readSceneControl(doc, d, 'object.depth')).toBe(0.25)
+    expect(readSceneControl(doc, d, 'object.opacity')).toBe(1)
+    d.size = 1.25
+    expect(readSceneControl(doc, d, 'object.size')).toBe(1.25)
+  })
+
+  it('no decal row is offered to a primitive, a GLB, a light or an empty selection', () => {
+    const doc = defaultDoc()
+    for (const obj of [prim('standard'), createGlbObject('x.glb', []), createLight('point', []), null]) {
+      expect(designCards(doc, obj).some((s) => s.title === 'Decal')).toBe(false)
+    }
+  })
+})
+
 describe('Scene3D panel parity — reading values', () => {
   it('rotation reads in degrees though the document stores radians', () => {
     const doc = defaultDoc()
@@ -1031,7 +1094,9 @@ describe('Scene3D panel contract', () => {
     for (const type of MATERIAL_TYPES) {
       for (const c of panel(doc, prim(type))) expect(allowed.has(String(c.group)), c.key).toBe(true)
     }
-    for (const c of panel(doc, primOf('gem'))) expect(allowed.has(String(c.group)), c.key).toBe(true)
+    for (const obj of [createLight('spot', []), textDecal(), primOf('gem')]) {
+      for (const c of panel(doc, obj)) expect(allowed.has(String(c.group)), c.key).toBe(true)
+    }
   })
 
   it('evaluates showIf against the ACTIVE object, so Unlit withholds Roughness', () => {
@@ -1188,6 +1253,33 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     expect(rows).toEqual([...LIGHT_SCENARIO.point, 'object.zzLightProbe'])
   })
 
+  it('draws an unmapped Decal-group key in the Decal card', () => {
+    const doc = defaultDoc()
+    const novelDecal: SceneControl = {
+      key: 'object.zzDecalProbe', label: 'Probe', kind: 'slider',
+      min: 0, max: 1, step: 0.01, default: 0, group: 'Decal',
+      agent: false, animatable: false,
+    } as SceneControl
+    const controls = [...SCENE_CONTROLS, novelDecal]
+    const rows = scenePanelControls(doc, imageDecal(), controls)
+      .filter((c) => c.group === 'Decal')
+      .map((c) => c.key)
+    expect(rows).toEqual(['ui.decal.image', ...DECAL_TAIL, 'object.zzDecalProbe'])
+  })
+
+  it('draws an unmapped Transform-group key in the Transform card', () => {
+    const doc = defaultDoc()
+    const novelTransform: SceneControl = {
+      key: 'object.zzTransformProbe', label: 'Probe', kind: 'slider',
+      min: 0, max: 1, step: 0.01, default: 0, group: 'Transform',
+    } as SceneControl
+    const controls = [...SCENE_CONTROLS, novelTransform]
+    const rows = scenePanelControls(doc, prim('standard'), controls)
+      .filter((c) => c.group === 'Transform')
+      .map((c) => c.key)
+    expect(rows).toEqual([...TRANSFORM_ROWS, 'object.zzTransformProbe'])
+  })
+
   it('an unmapped Material key writes through the exact seam setMaterialControl uses, and reads back', () => {
     // `writeMaterialField` IS `setMaterialControl`'s generic fallback in
     // Scene3DStudioSurface.vue (`applyMaterial((m) => writeMaterialField(m, field,
@@ -1245,14 +1337,12 @@ describe('Scene3D surface wiring', () => {
   })
 
   it('no longer hand-writes any migrated section', () => {
-    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background', 'Geometry', 'Light']) {
+    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background', 'Geometry', 'Light', 'Decal']) {
       expect(src, title).not.toContain(`<StudioSection title="${title}"`)
       expect(src, title).not.toContain(`title="${title}" @pointerdown`)
     }
     // The sections that genuinely stay hand-written — editors, not control rows.
     expect(src).toContain('title="Motion"')
-    // …and the one still on its way (its own commit follows this one).
-    expect(src).toContain('title="Decal"')
   })
 
   /**
@@ -1260,18 +1350,20 @@ describe('Scene3D surface wiring', () => {
    * exactly that card (and nothing else in the column) while a stroke session is open,
    * and one StudioControlPanel cannot have a sibling swapped out of its middle.
    */
-  it('migrates Geometry and Light — their rows come from the one row list', () => {
+  it('migrates Geometry, Light and Decal — three panels, one row list', () => {
     expect(src).toContain('SCENE_GEOMETRY_SECTIONS')
     // The per-row proxies that fed only the deleted markup are gone.
-    for (const proxy of ['geoSpecs', 'paramOf', 'MODIFIER_GROUPS', 'CLONER_KEYS', 'lightParam']) {
+    for (const proxy of ['geoSpecs', 'paramOf', 'MODIFIER_GROUPS', 'CLONER_KEYS', 'lightParam', 'decalParam']) {
       expect(src, proxy).not.toContain(`const ${proxy} `)
       expect(src, proxy).not.toContain(`function ${proxy}(`)
     }
     // …and the write branches the new rows dispatch on exist.
     expect(src).toContain("key.startsWith('object.params.')")
     expect(src).toContain("key.startsWith('object.modifiers.')")
-    // …and the flat-leaf branch a light's colour/intensity/… writes through.
-    expect(src).toContain("setByPath(o, key.slice('object.'.length), value)")
+    // …and the flat-leaf branch a light's colour/intensity and a decal's size/wrap
+    // write through, with the decal's degrees→radians conversion on the way in.
+    expect(src).toContain("setByPath(o, key.slice('object.'.length),")
+    expect(src).toContain("key === 'object.spin' ? (Number(value) * Math.PI) / 180 : value")
   })
 
   /**

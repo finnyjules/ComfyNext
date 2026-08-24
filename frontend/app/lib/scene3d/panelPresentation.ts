@@ -83,6 +83,7 @@ export const SCENE_GEOMETRY_SECTIONS = [
  *  so no state ever shows two of the three, whatever the order says. */
 export const SCENE_PANEL_ORDER = [
   'Light',
+  'Decal',
   'Material',
   'Material/Coat & sheen',
   'Material/Glow',
@@ -412,6 +413,12 @@ const SCENE_PANEL_ANCHORS: readonly ScenePanelAnchor[] = [
   { key: 'ui.cloner.axis', label: modLabel('cloneAxis'), visible: (_d, o) => isPrim(o) && cloneModeOf(o) === 1 },
   { key: 'ui.cloner.step', label: 'Step', visible: (_d, o) => isPrim(o) },
   { key: 'ui.cloner.cost', label: 'Clone cost', visible: (_d, o) => isPrim(o) },
+  // Decal card — a text sticker's label + font picker, an image sticker's thumbnail +
+  // Replace button, and Reposition (a decal has no gizmo; re-placing it re-arms the
+  // click-to-place flow).
+  { key: 'ui.decal.text', label: 'Label', visible: (_d, o) => isDecalContent(o, 'text') },
+  { key: 'ui.decal.image', label: 'Sticker', visible: (_d, o) => isDecalContent(o, 'image') },
+  { key: 'ui.decal.reposition', label: 'Reposition', visible: (_d, o) => o?.kind === 'decal' },
   // Camera / Background
   { key: 'ui.camera.output', label: 'Output', visible: () => true },
   { key: 'ui.background.transparent', label: 'Transparent', visible: () => true },
