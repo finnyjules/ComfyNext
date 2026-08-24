@@ -39,9 +39,9 @@ import {
  * `material.unlit` now joins the schema too (`object.material.unlit`, gated to
  * shaderFill exactly like the surface's own Unlit switch) — so the agent can flip
  * lit↔unlit on a shaderFill material, not just tune its roughness while stuck one way.
- * `material.relief.invert` has since joined too (Task 5's characterization pass found
- * the inspector drew it), as an `agent: false` switch — declared for the inspector, still
- * withheld from the agent. `GlbObject.materialOverride` remains hand-omitted.
+ * `material.relief.invert` has since joined too — the inspector always drew it — as an
+ * `agent: false` switch: declared for the inspector, still withheld from the agent.
+ * `GlbObject.materialOverride` remains hand-omitted.
  *
  * `showFloor` (scene-level, doc.showFloor) also joins here, under a new 'Background'
  * group — the grid + shadow-catcher ground toggle from the surface's Background panel.
@@ -81,8 +81,8 @@ export const SCENE_SECTIONS = ['Material', 'Lighting', 'Camera', 'Background', '
 // Material controls only make sense on an object that actually renders `.material`:
 // a primitive always does, a GLB only once `materialOverride` is on, and a light never
 // does (LightObject carries a dummy DEFAULT_MATERIAL — see config.ts's sceneHasShaderFill
-// doc — that is never fed to a real THREE material). Mirrors the Selection UI's own
-// `matEditable` computed (Scene3DStudioSurface.vue). No active object (`obj` undefined,
+// doc — that is never fed to a real THREE material). Mirrors the inspector panel's own
+// `editable` rule (lib/scene3d/panelPresentation.ts). No active object (`obj` undefined,
 // e.g. a Collection binding evaluated without a live selection) defaults to visible —
 // the schema still needs to describe what the control WOULD do.
 const isEditableMaterial = (_doc: SceneDoc, obj?: SceneObject): boolean =>
@@ -92,24 +92,23 @@ const materialTypeOf = (obj?: SceneObject): MaterialType =>
   obj && obj.kind !== 'light' ? obj.material.type : DEFAULT_MATERIAL.type
 
 // Mirrors the Surface/Coat/Glow/Transparency/Iridescence/Reflection block, which the
-// surface only renders for standard + glass (Scene3DStudioSurface.vue:1959).
+// inspector only renders for standard + glass.
 const isPhysicalMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && (materialTypeOf(obj) === 'standard' || materialTypeOf(obj) === 'glass')
 
 // Phong's own specular/shininess model — deliberately distinct from the PBR types, see
-// MaterialType's doc in config.ts. Mirrors Scene3DStudioSurface.vue:2031.
+// MaterialType's doc in config.ts.
 const isPhongMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'phong'
 
-// The Unlit switch itself only exists inside the shaderFill branch (Scene3DStudioSurface.vue's
-// `matEditable && matType === 'shaderFill'` template block, ~line 4210) — every other material
+// The Unlit switch itself only exists inside the shaderFill branch — every other material
 // type has no MeshBasicMaterial-vs-MeshStandardMaterial choice at all.
 const isShaderFillMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'shaderFill'
 
 // roughness/metalness apply to standard, glass and image (all PBR-lit) and to shaderFill
 // only while it isn't unlit (a MeshBasicMaterial has no roughness/metalness slot at all).
-// Mirrors the surface's per-branch StudioSlider calls for these two keys.
+// Mirrors the inspector's per-branch rows for these two keys.
 const hasPbrSurface = (doc: SceneDoc, obj?: SceneObject): boolean => {
   if (!isEditableMaterial(doc, obj)) return false
   const t = materialTypeOf(obj)
@@ -118,8 +117,8 @@ const hasPbrSurface = (doc: SceneDoc, obj?: SceneObject): boolean => {
   return false
 }
 
-// Opalescent (thin-film / holographic) — its own spectral block. Mirrors the surface's
-// `matType === 'opalescent'` branch.
+// Opalescent (thin-film / holographic) — its own spectral block. Mirrors the inspector's
+// opalescent branch.
 const isOpalMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'opalescent'
 
@@ -138,17 +137,17 @@ const hasBaseColor = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && COLOR_TYPES.includes(materialTypeOf(obj))
 
 // Relief sits after the per-type chain and applies to every branch EXCEPT an unlit
-// shaderFill (a MeshBasicMaterial has no bump slot at all — Scene3DStudioSurface.vue's
-// `reliefAvailable`).
+// shaderFill (a MeshBasicMaterial has no bump slot at all — the panel draws a "turn off
+// Unlit to use it" notice in that state instead).
 const reliefApplies = (doc: SceneDoc, obj?: SceneObject): boolean => {
   if (!isEditableMaterial(doc, obj)) return false
   if (materialTypeOf(obj) === 'shaderFill' && obj && obj.kind !== 'light' && obj.material.unlit === true) return false
   return true
 }
 
-// Per-type branches the shipped inspector drew but the schema had never described
-// (Task 5's characterization pass found them). Each is `agent: false` — declaring a
-// control for the INSPECTOR must not silently widen what the model may change.
+// Per-type branches the inspector draws but the schema had never described. Each is
+// `agent: false` — declaring a control for the INSPECTOR must not silently widen what
+// the model may change.
 const isToonMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'toon'
 
@@ -194,8 +193,8 @@ export const SCENE_CONTROLS: SceneControl[] = [
   slider('object.material.roughness', 'Roughness', 0, 1, 0.01, 'Material', DEFAULT_MATERIAL.roughness,
     'How matte or glossy the surface is', {
       when: hasPbrSurface, summary: 2,
-      // Mirrors the template's `v-if="!matUnlit"` on the shaderFill branch's Roughness row
-      // (Scene3DStudioSurface.vue:4222). `notEquals: true`, NOT `equals: false`: `unlit` is
+      // Mirrors the inspector's own withholding of the Roughness row once Unlit is on.
+      // `notEquals: true`, NOT `equals: false`: `unlit` is
       // absent (undefined) on every material type but shaderFill, and showIfVisible compares
       // with `===` — `equals: false` would read undefined !== false and wrongly hide this row
       // for standard/glass/image/opalescent, which `hasPbrSurface` already keeps visible and

@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import {
   SCENE_PANEL_ANCHOR_KEYS, SCENE_PANEL_ORDER, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
-  ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls,
+  ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls, scenePanelVisible,
 } from '~/lib/scene3d/panelPresentation'
 import { groupIntoSections } from '~/lib/studio/sections'
 import { POST_SECTIONS } from '~/lib/studio/post/controls'
+import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
 import {
   createDecal, createGlbObject, createLight, createPrimitive, defaultDoc,
   LIGHTING_PRESETS, MATERIAL_TYPES,
@@ -593,6 +594,21 @@ describe('Scene3D panel contract', () => {
     }
   })
 
+  it('evaluates showIf against the ACTIVE object, so Unlit withholds Roughness', () => {
+    const doc = defaultDoc()
+    const lit = prim('shaderFill')
+    const unlit = prim('shaderFill')
+    unlit.material.unlit = true
+    const roughness = SCENE_CONTROLS.find((c) => c.key === `${M}roughness`)!
+    expect(roughness.showIf, 'the Task 4 gate is the thing under test').toBeTruthy()
+    expect(scenePanelVisible(roughness, doc, lit)).toBe(true)
+    expect(scenePanelVisible(roughness, doc, unlit)).toBe(false)
+    // `unlit` is absent, not false, on every other type — the row must survive that.
+    expect(scenePanelVisible(roughness, doc, prim('standard'))).toBe(true)
+    // …and no object at all means no object row, whatever the schema's `when` says.
+    expect(scenePanelVisible(roughness, doc, null)).toBe(false)
+  })
+
   it('the panel order is the design cards plus the shared post stack, in that order', () => {
     expect(SCENE_PANEL_SECTIONS).toEqual([...SCENE_PANEL_ORDER, ...POST_SECTIONS])
     expect(SCENE_TRANSFORM_SECTIONS).toEqual(['Transform'])
@@ -604,6 +620,17 @@ describe('Scene3D panel contract', () => {
       Transparency: { open: false }, Iridescence: { open: false }, Reflection: { open: false },
     })
     expect(scenePanelChrome('glass').Transparency).toEqual({ open: true })
+  })
+
+  it('no chrome key collides with a post card title — chrome is keyed by title alone', () => {
+    // StudioSectionTree looks the chrome map up by the section's rendered title (the last
+    // path segment), so a shared title would leak a Material sub-block's collapsed default
+    // onto a post effect's card.
+    const last = (path: string) => path.split('/').pop()!
+    const postTitles = new Set(POST_SECTIONS.map(last))
+    for (const key of Object.keys(scenePanelChrome('standard'))) {
+      expect(postTitles.has(key), key).toBe(false)
+    }
   })
 
   it('post rows pass through untouched, with their own Effects groups', () => {

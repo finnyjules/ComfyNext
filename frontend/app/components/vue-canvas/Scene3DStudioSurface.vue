@@ -479,8 +479,8 @@ const bgColorProxy = computed<string>({
 // (postControls({ host: 'three-depth' })), replacing the old hand-written Effects
 // section. Panel keys are `post.<field>`; doc.post is a plain PostSettings object
 // (no makeConfigParams proxy exists for this surface yet — see scene3d/controls.ts's
-// doc), so these two functions ARE the path resolver, mirroring the panel wiring
-// every other schema-driven control on this surface (lightingPresetProxy, etc.) uses.
+// doc), so these two functions ARE the path resolver `readControl`/`setControl` delegate
+// to for the `post.*` half of the panel's key space.
 function postField(key: string): keyof PostSettings {
   return key.slice('post.'.length) as keyof PostSettings
 }

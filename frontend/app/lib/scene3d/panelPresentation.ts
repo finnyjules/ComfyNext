@@ -88,7 +88,7 @@ export function scenePanelChrome(matType: MaterialType | null): Record<string, {
 }
 
 const POST_GROUPS = new Set<string>(POST_SECTIONS)
-export const isScenePostGroup = (group: string | undefined): boolean => POST_GROUPS.has(String(group ?? ''))
+const isScenePostGroup = (group: string | undefined): boolean => POST_GROUPS.has(String(group ?? ''))
 
 // ── reading a control's value off the document ───────────────────────────────
 
@@ -161,7 +161,7 @@ export const ENV_OPTIONS = ['room', 'dark', 'softbox', 'gels'] as const
 export const ENV_BY_LABEL: Record<string, SceneDoc['lighting']['environment']> = {
   room: 'room', dark: 'darkStrips', softbox: 'softbox', gels: 'colorGels',
 }
-export const ENV_LABEL: Record<string, string> = {
+const ENV_LABEL: Record<string, string> = {
   room: 'room', darkStrips: 'dark', softbox: 'softbox', colorGels: 'gels',
 }
 
@@ -173,7 +173,7 @@ export const ENV_LABEL: Record<string, string> = {
  * `#control-<key>` slot that lands at the exact position the shipped card had it.
  * `#section-<Title>` cannot serve: it renders at the END of a card's body.
  */
-export interface ScenePanelAnchor {
+interface ScenePanelAnchor {
   key: string
   label: string
   visible: (doc: SceneDoc, obj: SceneObject | null | undefined) => boolean
@@ -182,21 +182,21 @@ export interface ScenePanelAnchor {
 const typeOf = (obj: SceneObject | null | undefined): MaterialType | null =>
   obj && obj.kind !== 'light' ? obj.material.type : null
 
-/** The template's `matEditable`: a primitive always renders `.material`, a GLB only once
- *  its override switch is on, and nothing else ever does. Unlike the schema's
+/** Whether the selection actually renders `.material`: a primitive always does, a GLB only
+ *  once its override switch is on, and nothing else ever does. Unlike the schema's
  *  `isEditableMaterial` this is FALSE with no selection — the panel has no card to draw. */
 const editable = (obj: SceneObject | null | undefined): boolean =>
   !!obj && (obj.kind === 'primitive' || (obj.kind === 'glb' && obj.materialOverride === true))
 
-/** The template's `reliefAvailable`: an unlit shaderFill is a MeshBasicMaterial with no
- *  bump slot at all. */
+/** Whether relief has any lighting to perturb: an unlit shaderFill is a MeshBasicMaterial
+ *  with no bump slot at all, so the card shows a notice instead of the dials. */
 const reliefOn = (obj: SceneObject | null | undefined): boolean =>
   editable(obj) && !(typeOf(obj) === 'shaderFill' && obj!.material.unlit === true)
 
 const isType = (obj: SceneObject | null | undefined, ...types: MaterialType[]): boolean =>
   editable(obj) && types.includes(typeOf(obj)!)
 
-export const SCENE_PANEL_ANCHORS: readonly ScenePanelAnchor[] = [
+const SCENE_PANEL_ANCHORS: readonly ScenePanelAnchor[] = [
   // Material card
   { key: 'ui.material.override', label: 'Override materials', visible: (_d, o) => o?.kind === 'glb' },
   { key: 'ui.material.surface', label: 'Surface', visible: (_d, o) => isType(o, 'standard', 'glass') },
