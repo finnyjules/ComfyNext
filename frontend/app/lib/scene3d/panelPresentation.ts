@@ -4,7 +4,7 @@ import { showIfVisible } from '~/lib/studio/sections'
 import { getByPath } from '~/lib/studio/path'
 import {
   DEFAULT_MATERIAL, MATERIAL_DEFAULTS, gradientAngles,
-  LIGHT_DEFAULTS, DECAL_DEFAULTS, lightIntensityMax,
+  LIGHT_DEFAULTS, DECAL_DEFAULTS, lightIntensityMax, lightIntensityDefault,
   type MaterialType, type SceneDoc, type SceneObject,
 } from './config'
 import { PRIMITIVE_PARAMS, MODIFIER_SPECS, resolveParam, totalClones } from './primParams'
@@ -656,6 +656,18 @@ const OVERRIDE: Record<string, RowPatch> = {
  * Light intensity is the small one: `lightIntensityMaxValue` scaled the ceiling to the
  * light kind, because point/spot are physical (candela, inverse-square) and an area panel
  * is not.
+ *
+ * ## `default` is part of the narrowing, not decoration
+ * A StudioRow resets to `spec.default` on double-click, and `resolveParam` falls back to
+ * it for an untouched bag — so a row carrying the WRONG default is a live write, not a
+ * cosmetic slip. Narrowing min/max/step without it produced exactly that: an icosahedron's
+ * Detail row is 0..3 subdivisions, but the union entry's default is the sphere's 48, so a
+ * double-click reset asked for 48 and the row clamped it to 3 — the MAXIMUM subdivision
+ * where the kind's own default is 0. Same class on plane (→32), pyramid (→12),
+ * cone/pyramid radiusTop (→0.5 where the kind says 0), gem depth, torusKnot tube, and on
+ * a light's Intensity, whose schema default is the area panel's 8 while `createLight`
+ * spawns a point/spot at 80. Every branch below now carries the default its bounds belong
+ * to.
  */
 function dynamicPatch(key: string, obj: SceneObject | null | undefined): RowPatch | null {
   if (key.startsWith(GEOMETRY_PARAM_PREFIX) && isPrim(obj)) {
@@ -663,9 +675,16 @@ function dynamicPatch(key: string, obj: SceneObject | null | undefined): RowPatc
     const spec = PRIMITIVE_PARAMS[(obj as { primitive: keyof typeof PRIMITIVE_PARAMS }).primitive]
       .find((s) => s.key === sub)
     if (!spec) return null
-    return { label: spec.label, hint: spec.hint, min: spec.min, max: spec.max, step: spec.step }
+    return {
+      label: spec.label, hint: spec.hint, min: spec.min, max: spec.max, step: spec.step,
+      // A toggle spec stores 0 | 1 but draws as a switch, so its default is boolean here —
+      // the same conversion `geometryParamField` does on the way out.
+      default: spec.control === 'toggle' ? spec.default > 0.5 : spec.default,
+    }
   }
-  if (key === 'object.intensity' && obj?.kind === 'light') return { max: lightIntensityMax(obj.light) }
+  if (key === 'object.intensity' && obj?.kind === 'light') {
+    return { max: lightIntensityMax(obj.light), default: lightIntensityDefault(obj.light) }
+  }
   return null
 }
 

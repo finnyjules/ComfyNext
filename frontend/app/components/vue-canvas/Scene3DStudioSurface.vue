@@ -169,7 +169,6 @@ function toggleSelected(id: string, additive: boolean): void {
 }
 const selected = computed<SceneObject | null>(() => doc.objects.find((o) => o.id === selectedId.value) ?? null)
 const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
-const selectedIsGlb = computed(() => selected.value?.kind === 'glb')
 // GLBs render their imported materials until the override switch is on; the
 // material editor's controls only appear (and bind) when they'd have an effect.
 const matOverride = computed<boolean>({

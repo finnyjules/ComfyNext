@@ -62,6 +62,9 @@ type Row = {
   hint?: string
   /** Soft range — the bounds draw the row but do not gate what may be entered. */
   entry?: 'unclamped'
+  /** What double-click resets to, and what an untouched value reads as. Only asserted
+   *  where a row transcribes one — a wrong default here is a silent WRITE, not chrome. */
+  default?: number | boolean
 }
 
 const M = 'object.material.'
@@ -362,6 +365,9 @@ function expectRow(c: ControlSpec | undefined, key: string, want: Row) {
     expect((c as { optionLabels?: string[] }).optionLabels, `${key} optionLabels`).toEqual([...want.optionLabels])
   }
   expect(c!.hint ?? null, `${key} hint`).toBe(want.hint ?? null)
+  if (want.default !== undefined) {
+    expect((c as { default: number | boolean }).default, `${key} default`).toBe(want.default)
+  }
   // Asserted for EVERY row, present or absent: a row that quietly picked up a soft range
   // would stop clamping entry, which is a behaviour change nobody asked for.
   expect(c!.entry ?? null, `${key} entry`).toBe(want.entry ?? null)
@@ -759,15 +765,54 @@ describe('Scene3D panel parity — Geometry', () => {
     }
   })
 
-  it('every geometry row carries that kind\'s own label, hint, bounds and step', () => {
+  it('every geometry row carries that kind\'s own label, hint, bounds, step and DEFAULT', () => {
     const doc = defaultDoc()
     for (const kind of PRIMITIVE_KINDS) {
       const rows = byKey(doc, primOf(kind))
       for (const spec of PRIMITIVE_PARAMS[kind]) {
         const c = rows.get(`${GEO}${spec.key}`)
         expectRow(c, `${kind}.${spec.key}`, spec.control === 'toggle'
-          ? { label: spec.label, kind: 'switch', hint: spec.hint }
-          : { label: spec.label, kind: 'slider', min: spec.min, max: spec.max, step: spec.step, hint: spec.hint })
+          ? { label: spec.label, kind: 'switch', hint: spec.hint, default: spec.default > 0.5 }
+          : {
+            label: spec.label, kind: 'slider', min: spec.min, max: spec.max, step: spec.step,
+            hint: spec.hint, default: spec.default,
+          })
+      }
+    }
+  })
+
+  /**
+   * The default is not chrome — a StudioRow RESETS to it on double-click, so a row
+   * carrying the union entry's default writes a number the selected kind never meant.
+   * Every case below was measured on the live panel before the fix: an icosahedron's
+   * Detail row is 0..3 subdivisions and reset asked for the sphere's 48, which the row
+   * clamped to 3 — the MAXIMUM, where the kind's own default is 0.
+   */
+  it('a reset writes the selected kind\'s default, not the union entry\'s', () => {
+    const doc = defaultDoc()
+    const defaultOf = (kind: PrimitiveKind, key: string) =>
+      (byKey(doc, primOf(kind)).get(`${GEO}${key}`) as unknown as { default: number }).default
+    // The union entry that all of these narrow FROM — proving the patch is what fixes it.
+    expect((SCENE_CONTROLS.find((c) => c.key === `${GEO}detail`) as { default: number }).default).toBe(48)
+    expect(defaultOf('icosahedron', 'detail'), 'no subdivision, not maximum subdivision').toBe(0)
+    expect(defaultOf('plane', 'detail')).toBe(1)
+    expect(defaultOf('pyramid', 'detail')).toBe(4)
+    expect(defaultOf('torusKnot', 'detail')).toBe(128)
+    expect(defaultOf('sphere', 'detail')).toBe(48)
+    // radiusTop: a cone and a pyramid come to a POINT, a cylinder and a prism do not.
+    expect(defaultOf('cone', 'radiusTop')).toBe(0)
+    expect(defaultOf('pyramid', 'radiusTop')).toBe(0)
+    expect(defaultOf('cylinder', 'radiusTop')).toBe(0.5)
+    expect(defaultOf('gem', 'depth')).toBe(1)
+    expect(defaultOf('text', 'depth')).toBe(0.2)
+    expect(defaultOf('torusKnot', 'tube')).toBe(0.12)
+    expect(defaultOf('torus', 'tube')).toBe(0.18)
+    // Every kind, exhaustively — the two lists above are the readable examples.
+    for (const kind of PRIMITIVE_KINDS) {
+      for (const spec of PRIMITIVE_PARAMS[kind]) {
+        const row = byKey(doc, primOf(kind)).get(`${GEO}${spec.key}`) as unknown as { default: number | boolean }
+        expect(row.default, `${kind}.${spec.key}`)
+          .toBe(spec.control === 'toggle' ? spec.default > 0.5 : spec.default)
       }
     }
   })
@@ -908,15 +953,22 @@ describe('Scene3D panel parity — Light', () => {
       expect(card.keys).toEqual([...LIGHT_SCENARIO[kind]])
     })
 
-    it(`${kind}: every row carries the shipped label, bounds and tooltip`, () => {
+    it(`${kind}: every row carries the shipped label, bounds, tooltip and reset value`, () => {
       const doc = defaultDoc()
-      const rows = byKey(doc, createLight(kind, []))
+      const light = createLight(kind, [])
+      const rows = byKey(doc, light)
+      // The reset value has to be what the light actually spawned at, or a double-click
+      // is a silent re-lighting of the scene.
+      expect((rows.get('object.intensity') as unknown as { default: number }).default)
+        .toBe((light as unknown as { intensity: number }).intensity)
       for (const key of LIGHT_SCENARIO[kind]) {
-        // Intensity's ceiling is the ONE bound the template computed per light kind
-        // (lightIntensityMaxValue → lightIntensityMax): 600 for the physical point/spot,
-        // 60 for an area panel.
-        const want = key === 'object.intensity' && kind === 'rect'
-          ? { ...LIGHT_ROW[key]!, max: 60 }
+        // Intensity's ceiling AND its reset value are the two bounds the template
+        // computed per light kind (lightIntensityMaxValue / lightIntensityDefault): 600
+        // and 80 for the physical point/spot, 60 and 8 for an area panel. A row that kept
+        // the schema's declared 8 would drop a point light to a twentieth of its spawn
+        // brightness on one double-click.
+        const want = key === 'object.intensity'
+          ? { ...LIGHT_ROW[key]!, ...(kind === 'rect' ? { max: 60, default: 8 } : { default: 80 }) }
           : LIGHT_ROW[key]!
         expectRow(rows.get(key), `${kind}.${key}`, want)
       }
