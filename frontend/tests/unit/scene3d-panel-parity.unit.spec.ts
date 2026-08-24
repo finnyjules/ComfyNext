@@ -1070,8 +1070,14 @@ describe('Scene3D panel parity — reading values', () => {
 describe('Scene3D panel contract', () => {
   it('offers no Collection binding on any migrated row — the shipped controls had none', () => {
     const doc = defaultDoc()
-    for (const type of MATERIAL_TYPES) {
-      for (const c of panel(doc, prim(type))) {
+    const selections: Array<SceneObject | null> = [
+      ...MATERIAL_TYPES.map(prim),
+      // …and the three selection kinds whose own cards a material type never reaches:
+      // Geometry's per-kind rows, a light's, a decal's.
+      primOf('gem'), primOf('text'), createLight('spot', []), textDecal(), imageDecal(), null,
+    ]
+    for (const obj of selections) {
+      for (const c of panel(doc, obj)) {
         if (POST_SECTIONS.includes(String(c.group))) continue
         expect(c.bindable, `${c.key} bindable`).toBe(false)
       }
