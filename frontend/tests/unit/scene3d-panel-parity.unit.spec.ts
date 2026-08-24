@@ -8,7 +8,7 @@ import {
 } from '~/lib/scene3d/panelPresentation'
 import { groupIntoSections } from '~/lib/studio/sections'
 import { POST_SECTIONS } from '~/lib/studio/post/controls'
-import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
+import { SCENE_CONTROLS, type SceneControl } from '~/lib/scene3d/controls'
 import {
   createDecal, createGlbObject, createLight, createPrimitive, defaultDoc,
   LIGHTING_PRESETS, MATERIAL_TYPES,
@@ -583,6 +583,68 @@ describe('Scene3D panel contract', () => {
     for (const c of post) expect(POST_SECTIONS.includes(String(c.group)), c.key).toBe(true)
   })
 })
+describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', () => {
+  // A schema entry NOT in any of panelPresentation.ts's allow-lists (MATERIAL_HEAD/
+  // MATERIAL_BODY/SUB_CARDS/DOC_CARDS). Appended to a COPY of SCENE_CONTROLS — the real,
+  // module-level array is never mutated — and handed to `scenePanelControls`'s third
+  // (test-only) parameter.
+  const novelMaterial: SceneControl = {
+    key: 'object.material.zzProbe', label: 'Probe', kind: 'slider',
+    min: 0, max: 1, step: 0.01, default: 0, group: 'Material',
+    agent: false, animatable: false,
+  } as SceneControl
+  const novelLighting: SceneControl = {
+    key: 'lighting.zzProbe', label: 'Lighting probe', kind: 'slider',
+    min: 0, max: 1, step: 0.01, default: 0, group: 'Lighting',
+    agent: false, animatable: false,
+  } as SceneControl
+
+  it('draws an unmapped Material-group key in the Material card, after the mapped rows', () => {
+    const doc = defaultDoc()
+    const controls = [...SCENE_CONTROLS, novelMaterial]
+    const rows = scenePanelControls(doc, prim('standard'), controls)
+      .filter((c) => c.group === 'Material')
+      .map((c) => c.key)
+    expect(rows).toEqual([...MATERIAL_SCENARIO.standard.Material, 'object.material.zzProbe'])
+  })
+
+  it('draws an unmapped Lighting-group key in the Lighting card', () => {
+    const doc = defaultDoc()
+    const controls = [...SCENE_CONTROLS, novelLighting]
+    const rows = scenePanelControls(doc, null, controls)
+      .filter((c) => c.group === 'Lighting')
+      .map((c) => c.key)
+    expect(rows).toEqual([...DOC_SCENARIO.Lighting, 'lighting.zzProbe'])
+  })
+
+  it('an unmapped key still returns null for a NOT-YET-migrated group (Transform)', () => {
+    const doc = defaultDoc()
+    const novelTransform: SceneControl = {
+      key: 'object.zzTransformProbe', label: 'Probe', kind: 'slider',
+      min: 0, max: 1, step: 0.01, default: 0, group: 'Transform',
+    } as SceneControl
+    const controls = [...SCENE_CONTROLS, novelTransform]
+    const keys = scenePanelControls(doc, prim('standard'), controls).map((c) => c.key)
+    expect(keys).not.toContain('object.zzTransformProbe')
+  })
+
+  it('an unmapped Material key writes through the same generic path setMaterialControl uses, and reads back', () => {
+    // Scene3DStudioSurface.vue's setControl routes `object.material.*` keys with no
+    // special case through `setMaterialControl`'s own generic fallback
+    // (`applyMaterial((m) => { (m as Record<string, unknown>)[field] = value })`), which
+    // for a single object is exactly this direct assignment.
+    const doc = defaultDoc()
+    const o = prim('standard')
+    ;(o.material as unknown as Record<string, unknown>).zzProbe = 0.7
+    expect(readSceneControl(doc, o, 'object.material.zzProbe')).toBe(0.7)
+  })
+
+  it('the real, unmutated SCENE_CONTROLS array never picked up the novel test entries', () => {
+    expect(SCENE_CONTROLS.some((c) => c.key === 'object.material.zzProbe')).toBe(false)
+    expect(SCENE_CONTROLS.some((c) => c.key === 'lighting.zzProbe')).toBe(false)
+  })
+})
+
 describe('Scene3D surface wiring', () => {
   const src = readFileSync(
     fileURLToPath(new URL('../../app/components/vue-canvas/Scene3DStudioSurface.vue', import.meta.url)),

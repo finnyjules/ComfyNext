@@ -84,6 +84,7 @@ import {
   ENV_BY_LABEL, SCENE_PANEL_SECTIONS,
   readSceneControl, scenePanelChrome, scenePanelControls,
 } from '~/lib/scene3d/panelPresentation'
+import { setByPath } from '~/lib/studio/path'
 import type { PostSettings } from '~/lib/spacetype/post'
 
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), {
@@ -1402,7 +1403,16 @@ function setControl(key: string, value: string | number | boolean): void {
   }
   // No `object.position/rotation/scale` branch: the Transform section is hand-written
   // number inputs (see their proxies above), so the panel never emits a transform key.
-  if (key.startsWith('object.material.')) setMaterialControl(key.slice('object.material.'.length), value)
+  if (key.startsWith('object.material.')) { setMaterialControl(key.slice('object.material.'.length), value); return }
+  // Generic fallback: any key the branches above don't special-case (a novel Camera/
+  // Background/doc-level control the panel now draws via panelPresentation.ts's
+  // permissive `panelCardOf`) still has to write somewhere. Mirrors `setPost`'s own
+  // generic write into `doc.post` above, just over the whole doc instead of one
+  // sub-object. The relief seeding, degree conversion and material multi-select fan-out
+  // above stay special-cased for their own keys; this only catches what they don't.
+  // No explicit undo call needed — the deep `watch(doc, …, { deep: true })` below
+  // schedules history for every doc mutation, this one included.
+  setByPath(doc, key, value)
 }
 
 // ── Engine lifecycle ──────────────────────────────────────────────────────────

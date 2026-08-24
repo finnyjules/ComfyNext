@@ -295,13 +295,32 @@ const DOC_CARDS: Record<string, readonly string[]> = {
   Background: ['showFloor', 'ui.background.transparent', 'ui.background.color'],
 }
 
-/** Which card a key lands in, given the active material type. Returns null for a key
- *  the shipped inspector never drew in a migrated section (it is then dropped). */
-function panelCardOf(key: string, matType: MaterialType | null): string | null {
+/**
+ * Which card a key lands in, given the active material type.
+ *
+ * The allow-lists above (`MATERIAL_HEAD`/`MATERIAL_BODY`/`SUB_CARDS`/`DOC_CARDS`) are
+ * ORDER hints, not a gate: a key that isn't in any of them still draws, in the parent
+ * card for its schema `group`, appended after the curated rows (`cardOrder`'s sort
+ * falls unmapped keys through to `Number.MAX_SAFE_INTEGER`, and `Array.prototype.sort`
+ * is stable, so they land in schema-declaration order at the end). This is what makes
+ * the panel PERMISSIVE: a new `SCENE_CONTROLS` entry in an already-migrated group draws
+ * without anyone touching this file.
+ *
+ * `group` is only passed for real schema controls (`scenePanelControls`'s main loop);
+ * the bespoke-block anchors call this with no third argument; they carry no real schema
+ * `group` and must keep resolving through the allow-lists alone.
+ *
+ * Still returns null for a key whose group ISN'T migrated yet — Transform (Task 2's soft-
+ * range row kind) and Geometry/Light/Decal (Task 4) — so those sections stay hand-written
+ * exactly as before.
+ */
+function panelCardOf(key: string, matType: MaterialType | null, group?: string): string | null {
   for (const [card, keys] of Object.entries(DOC_CARDS)) if (keys.includes(key)) return card
   if (MATERIAL_HEAD.includes(key)) return 'Material'
   if (matType && MATERIAL_BODY[matType].includes(key)) return 'Material'
   for (const [card, keys] of Object.entries(SUB_CARDS)) if (keys.includes(key)) return card
+  if (group === 'Material') return 'Material'
+  if (group === 'Camera' || group === 'Lighting' || group === 'Background') return group
   return null
 }
 
@@ -428,12 +447,19 @@ const anchorRow = (a: ScenePanelAnchor, card: string): ControlSpec =>
 /**
  * Every row the shipped inspector drew for this document + selection, carrying its
  * shipped card, caption, bounds and units, in its shipped within-card order, with the
- * bespoke-block anchors spliced in at their positions.
+ * bespoke-block anchors spliced in at their positions. Any OTHER `SCENE_CONTROLS` entry
+ * whose group is a migrated card draws too — see `panelCardOf`'s doc.
  *
  * Post rows pass through untouched, with their own `Effects/<Label>` group — they were
  * already drawn by a `StudioControlPanel` and are not part of this migration.
+ *
+ * `controls` defaults to `SCENE_CONTROLS` and exists so a test can exercise the
+ * permissive fall-through with an appended novel control without mutating the shared
+ * module-level array.
  */
-export function scenePanelControls(doc: SceneDoc, obj: SceneObject | null | undefined): ControlSpec[] {
+export function scenePanelControls(
+  doc: SceneDoc, obj: SceneObject | null | undefined, controls: readonly SceneControl[] = SCENE_CONTROLS,
+): ControlSpec[] {
   const matType = editable(obj) ? typeOf(obj) : null
   const byCard = new Map<string, ControlSpec[]>()
   const push = (card: string, row: ControlSpec) => {
@@ -442,9 +468,9 @@ export function scenePanelControls(doc: SceneDoc, obj: SceneObject | null | unde
   }
 
   const post: ControlSpec[] = []
-  for (const c of SCENE_CONTROLS) {
+  for (const c of controls) {
     if (isScenePostGroup(c.group)) { post.push(c); continue }
-    const card = panelCardOf(c.key, matType)
+    const card = panelCardOf(c.key, matType, c.group)
     if (!card) continue
     if (!scenePanelVisible(c, doc, obj)) continue
     push(card, withPresentation(c, card, matType))
