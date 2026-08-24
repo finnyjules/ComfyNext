@@ -36,10 +36,15 @@ import {
  * chroma/blur/film/halftone/dotScreen/glitch/grain/vignette/gtao) IS an agent- and
  * inspector-reachable `switch` control, not a gap.
  *
- * Scene3D's remaining booleans are still hand-omitted from this schema: `material.unlit`,
- * `GlbObject.materialOverride` and `material.relief.invert`. So the agent can tune
- * `object.material.relief.scale` but cannot flip `relief.invert`. Declaring them as
- * `switch` controls is the fix whenever someone wants it.
+ * `material.unlit` now joins the schema too (`object.material.unlit`, gated to
+ * shaderFill exactly like the surface's own Unlit switch) — so the agent can flip
+ * lit↔unlit on a shaderFill material, not just tune its roughness while stuck one way.
+ * `GlbObject.materialOverride` and `material.relief.invert` are still hand-omitted: the
+ * agent can tune `object.material.relief.scale` but cannot flip `relief.invert`.
+ * Declaring them as `switch` controls is the fix whenever someone wants it.
+ *
+ * `showFloor` (scene-level, doc.showFloor) also joins here, under a new 'Background'
+ * group — the grid + shadow-catcher ground toggle from the surface's Background panel.
  *
  * ## Deliberately NOT in this schema
  * - GLB `url` (an asset reference, not a tunable) and `GlbObject.materialOverride`
@@ -53,10 +58,12 @@ import {
  *   addressing but pointed at fields this schema doesn't otherwise touch.
  * - Per-object motion presets (`ObjectMotion` — loop/in/out/offset) and camera motion
  *   presets — these are their own editor (`app/lib/scene3d/motion/`), not param sliders.
- * - `background`, `showFloor`, `output.width/height` — scene-level settings outside the
- *   "at minimum" list this schema was scoped to; add them here in a follow-on if the
- *   agent/Collection story needs them.
- * - `material.unlit`, `material.relief.invert` — see the booleans note above.
+ * - `background` (the colour/transparency value itself — a stateful proxy with
+ *   last-colour memory over `doc.background === 'transparent'`, Scene3DStudioSurface.vue:
+ *   475-483, not a plain doc leaf) and `output.width/height` — outside the "at minimum"
+ *   list this schema was scoped to; add them here in a follow-on if the agent/Collection
+ *   story needs them.
+ * - `material.relief.invert` — see the booleans note above.
  *
  * Must stay free of `three` imports — this module is dynamically imported by the
  * Collection control resolver (see shapefx/controls.ts's identical constraint).
@@ -69,7 +76,7 @@ export type SceneControl = ControlSpec & {
  *  visibleSceneControls. POST_SECTIONS ('Effects', 'Effects/Bloom', ...) is appended so
  *  the shared post stack's nested sections land after the hand-declared groups — mirrors
  *  texturefx/sections.ts's `...POST_SECTIONS` append. */
-export const SCENE_SECTIONS = ['Material', 'Lighting', 'Camera', 'Transform', ...POST_SECTIONS] as const
+export const SCENE_SECTIONS = ['Material', 'Lighting', 'Camera', 'Background', 'Transform', ...POST_SECTIONS] as const
 
 // ── `when` predicates ────────────────────────────────────────────────────────────
 // Material controls only make sense on an object that actually renders `.material`:
@@ -94,6 +101,12 @@ const isPhysicalMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
 // MaterialType's doc in config.ts. Mirrors Scene3DStudioSurface.vue:2031.
 const isPhongMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'phong'
+
+// The Unlit switch itself only exists inside the shaderFill branch (Scene3DStudioSurface.vue's
+// `matEditable && matType === 'shaderFill'` template block, ~line 4210) — every other material
+// type has no MeshBasicMaterial-vs-MeshStandardMaterial choice at all.
+const isShaderFillMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
+  isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'shaderFill'
 
 // roughness/metalness apply to standard, glass and image (all PBR-lit) and to shaderFill
 // only while it isn't unlit (a MeshBasicMaterial has no roughness/metalness slot at all).
@@ -158,11 +171,29 @@ export const SCENE_CONTROLS: SceneControl[] = [
   // --- Material (prefix object.material.) ----------------------------------------
   color('object.material.color', 'Color', DEFAULT_MATERIAL.color, 'Material', { when: hasBaseColor }),
   slider('object.material.roughness', 'Roughness', 0, 1, 0.01, 'Material', DEFAULT_MATERIAL.roughness,
-    'How matte or glossy the surface is', { when: hasPbrSurface, summary: 2 }),
+    'How matte or glossy the surface is', {
+      when: hasPbrSurface, summary: 2,
+      // Mirrors the template's `v-if="!matUnlit"` on the shaderFill branch's Roughness row
+      // (Scene3DStudioSurface.vue:4222). `notEquals: true`, NOT `equals: false`: `unlit` is
+      // absent (undefined) on every material type but shaderFill, and showIfVisible compares
+      // with `===` — `equals: false` would read undefined !== false and wrongly hide this row
+      // for standard/glass/image/opalescent, which `hasPbrSurface` already keeps visible and
+      // have no unlit concept at all. `notEquals: true` reads undefined !== true → stays
+      // visible, and true !== true → hides only once unlit is actually flipped on.
+      showIf: { key: 'object.material.unlit', notEquals: true },
+    }),
   slider('object.material.metalness', 'Metalness', 0, 1, 0.01, 'Material', DEFAULT_MATERIAL.metalness,
-    'Blends between plastic-like and metal reflections', { when: hasPbrSurface }),
+    'Blends between plastic-like and metal reflections', {
+      when: hasPbrSurface,
+      showIf: { key: 'object.material.unlit', notEquals: true },
+    }),
   select('object.material.type', 'Material type', [...MATERIAL_TYPES], DEFAULT_MATERIAL.type, 'Material', undefined,
     { when: isEditableMaterial, summary: 1 }),
+  {
+    key: 'object.material.unlit', label: 'Unlit', kind: 'switch', default: MATERIAL_DEFAULTS.unlit, group: 'Material',
+    hint: 'Glows flat instead of being shaded by scene lights',
+    when: isShaderFillMaterial,
+  } as SceneControl,
 
   // Physical block — standard + glass only.
   slider('object.material.clearcoat', 'Clearcoat', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.clearcoat,
@@ -237,6 +268,15 @@ export const SCENE_CONTROLS: SceneControl[] = [
   // --- Camera (doc-level) -----------------------------------------------------------
   slider('camera.fov', 'Field of view', 15, 100, 1, 'Camera', D.camera.fov,
     'Camera field of view — how wide the lens sees'),
+
+  // --- Background (doc-level) -------------------------------------------------------
+  // `background` itself (colour/transparent) stays a bespoke row — see this module's
+  // doc for why (a stateful proxy, not a plain doc leaf). `showFloor` IS one: a plain
+  // boolean on SceneDoc (config.ts), so it joins here as a switch.
+  {
+    key: 'showFloor', label: 'Floor', kind: 'switch', default: D.showFloor, group: 'Background',
+    hint: 'Grid + shadow-catcher ground — off gives a clean floating look',
+  } as SceneControl,
 
   // --- Post (doc-level; derived from the shared manifest, not hand-declared) -------
   // Includes ambient occlusion (gtao needs a depth buffer — `three-depth` is the only
