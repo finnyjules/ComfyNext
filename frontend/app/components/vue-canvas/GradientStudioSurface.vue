@@ -23,7 +23,7 @@ import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
 import {
-  GRADIENT_PANEL_SECTIONS, PANEL_ANCHOR_KEYS, gradientPanelControls, panelValue, panelWriteSeed,
+  GRADIENT_PANEL_SECTIONS, gradientPanelControls, panelValue, panelWriteSeed,
 } from '~/lib/gradientfx/panelPresentation'
 import { DEFAULT_POST } from '~/lib/studio/post/settings'
 import type { ControlSpec } from '~/lib/spacetype/effect'
@@ -180,10 +180,17 @@ function setControl(key: string, value: string | number | boolean) {
 function promoteControl(c: ControlSpec) {
   promote(c, paramsFor(c.key)[c.key] as string | number)
 }
-/** The bespoke-block anchors are positions, not parameters — there is nothing to bind
- *  a Collection column to, so the wrapper's right-click must not offer one. */
+/** Right-click opens the promote/bind menu — but only where a binding is possible.
+ *  StudioRow gates its VariableGlyph on `bindable !== false` and yet emits `menu` from
+ *  the row's contextmenu UNCONDITIONALLY, so without this the 16 rows that declare
+ *  `bindable: false` would offer through right-click exactly the binding their own
+ *  glyph withholds — and the shipped panel offered none of them (canvas.layout was a
+ *  bare button grid, every Shape slider carried `:bindable="false"`, and a bound
+ *  canvas.layout would write past setLayout's stack/mesh seeding). The bespoke-block
+ *  anchors are covered by the same test: they are positions, not parameters, and
+ *  `gradientPanelControls` builds them with `bindable: false`. */
 function onControlMenu(e: MouseEvent, c: ControlSpec) {
-  if (PANEL_ANCHOR_KEYS.has(c.key)) return
+  if (c.bindable === false) return
   openVarMenu(e, c)
 }
 /** Section badges/open-states, keyed by the ON-SCREEN card title the remap produced.

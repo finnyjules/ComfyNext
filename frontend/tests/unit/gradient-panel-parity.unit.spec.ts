@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   GRADIENT_CONTROLS,
@@ -688,5 +690,49 @@ describe('the derived panel reproduces the SHIPPED cards, not the schema groups'
   it('anchors the bespoke blocks the schema never described', () => {
     for (const k of PANEL_ANCHOR_KEYS) expect(GRADIENT_PANEL_ORDER).toContain(PANEL_ANCHORS.find(a => a.key === k)!.group)
     expect([...PANEL_ANCHOR_KEYS].every((k) => k.startsWith('ui.'))).toBe(true)
+  })
+})
+
+// ── the bind menu reaches only bindable rows ─────────────────────────────────
+
+/**
+ * `bindable: false` is pinned per row above, but that only says what the SCHEMA
+ * declares — it says nothing about whether the panel acts on it. StudioRow gates its
+ * VariableGlyph on `bindable !== false` and yet emits `menu` from the row's
+ * contextmenu unconditionally, so the surface has to do the gating itself or a
+ * right-click offers the binding the glyph withholds.
+ *
+ * Asserting that needs the SURFACE, and the unit runner is `environment: 'node'` with
+ * no Vue plugin, so the component's structure is asserted against its source — the
+ * house pattern (`vectortype-solid-toggle`, `capsule-meta`). The data half below is a
+ * real assertion: it is what makes ONE `bindable === false` test cover the anchors too.
+ */
+const SURFACE_SRC = readFileSync(
+  fileURLToPath(new URL('../../app/components/vue-canvas/GradientStudioSurface.vue', import.meta.url)),
+  'utf8',
+)
+
+describe('the bind menu is withheld wherever the bind glyph is', () => {
+  it('builds every bespoke-block anchor as bindable:false', () => {
+    const rows = gradientPanelControls(norm(defaultConfig('#parity')), 0)
+    const anchors = rows.filter((c) => PANEL_ANCHOR_KEYS.has(c.key))
+    expect(anchors.length).toBeGreaterThan(0)
+    for (const a of anchors) expect(a.bindable, a.key).toBe(false)
+  })
+
+  it('leaves no non-bindable row reachable through the panel menu', () => {
+    const cfg = stripe('stack')
+    const suppressed = gradientPanelControls(cfg, 0).filter((c) => c.bindable === false).map((c) => c.key)
+    // canvas.layout, every Shape slider, and the anchors — never a Collection binding.
+    expect(suppressed).toContain('canvas.layout')
+    expect(suppressed).toContain('layer.shape.count')
+    for (const k of PANEL_ANCHOR_KEYS) if (gradientPanelControls(cfg, 0).some(c => c.key === k)) expect(suppressed).toContain(k)
+  })
+
+  it('gates the surface handler on bindable, not on the anchor list', () => {
+    const handler = SURFACE_SRC.slice(SURFACE_SRC.indexOf('function onControlMenu'))
+      .slice(0, SURFACE_SRC.slice(SURFACE_SRC.indexOf('function onControlMenu')).indexOf('\n}') + 2)
+    expect(handler).toContain('bindable === false')
+    expect(handler).toMatch(/if \(c\.bindable === false\) return/)
   })
 })
