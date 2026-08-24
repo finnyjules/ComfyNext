@@ -73,3 +73,18 @@
 
 - [ ] Dev server via the Browser pane (`frontend` config, port 3002; do NOT touch :3000). `/dev/scene3d-lab`: novel-key smoke (add a probe entry locally? NO — instead verify a real Task 4 row end-to-end per section: geometry Detail slider reshapes, light intensity relights, decal opacity fades); Transform: type 35 into Position X via the PANEL row → accepted, sticks, arrow-up → 35.1 (the old bug's exact gesture); Relief dropdown shows None/Effect/Image and picking Effect stores 'shader' (check the lab's debug JSON dump); Gradient lab: focus.shape shows prose labels.
 - [ ] Append verification record to this plan; update `docs/STATE.md` (Scene3D row: fully schema-drawn except listed bespoke editors) + ROADMAP Act 1 open-items + dashboard artifact (read live first); memory update (`derived-inspector-retrofit-landed` gains "CLOSED" notes on Transform/allow-list/labels). Commit docs.
+
+---
+
+## Verification Record (2026-08-24, Task 5)
+
+**Live browser (dev server :3002, real gestures):**
+- Transform (schema rows, soft-range): typed 35 into Position X → accepted, doc holds `position:[35,0.5,0]`; ArrowUp at 35 → 35.1 (the gesture that used to write 20); 3px drag → +0.8 relative move on the step grid (matches scrub math exactly), no snap-to-bound; Size X double-click reset → doc scale exactly `1` (world display 0.94 = base extent).
+- Geometry: icosahedron Detail renders [0,3] (per-kind narrowing); drag to 2, double-click → 0 (the kind's own default — pre-fix this wrote the union default 48); cylinder "Open ended" switch → doc `params.openEnded: 1` (number, engine contract).
+- Light: point light shows Intensity 80/600 (spawn value as reset default), Distance/Decay/Cast shadow; Angle/Penumbra/Width/Height correctly absent for point.
+- Labels: Gradient focus.shape options render "Off — blur everything / Radial — sharp spot / Linear — tilt-shift band" over raw stored values; Scene3D Relief None/Effect/Image live-proven by Task 3's reviewer (persisted config dumps raw `shader`).
+- Playwright: scene3d-grouping + scene3d-svg-import — 6/6 passed serially (one parallel-run flake, passed twice after).
+
+**Suites:** covering sets green at every task; vocabulary dumps byte-identical at every commit (zero agent/motion/sweep growth); vue-tsc flat at 420 throughout.
+
+**Invariant recorded (third occurrence this plan):** in presentation patches, `min/max/step/label` are description but `default` is BEHAVIOUR — any patch that moves a row's units or range must move its default too.

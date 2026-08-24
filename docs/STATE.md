@@ -14,7 +14,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ (mode-gated controls) | ✅ descriptor | 11,202 |
 | Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger, preset gallery, **colour tracks**, and 4 per-glyph effects (blink · axis scatter · grade flicker · draw-on) | ✅ | ✅ descriptor (unverified live) | — |
-| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree (Material/Camera/Lighting/Background **schema-drawn**) | ✅ descriptor (object.* + id-addressed) | ~6,300 (+ SVG import) |
+| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree (**fully schema-drawn** incl. Transform/Geometry/Light/Decal; bespoke: tree, sculpt/merge, motion pickers) | ✅ descriptor (object.* + id-addressed) | ~6,300 (+ SVG import) |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (**schema-drawn** from GRADIENT_CONTROLS) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
@@ -30,6 +30,10 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### 3D Studio — full schema derivation (parity with Gradient) — LANDED 2026-08-24
+
+Same-day follow-up closing the retrofit's four gaps, so 3D Studio now matches Gradient: **a control declared in `SCENE_CONTROLS` appears in the panel, writes, and reads back with zero hand-written UI.** (1) The panel's two allow-lists became fall-throughs — novel keys in any migrated group draw and write via the generic dotted path (read symmetry included, after review caught camera/background reading 0). (2) **Soft-range rows**: `entry: 'unclamped'` on slider ControlSpecs — min/max drive track/fill/drag-rate but typed entry and arrows are unclamped, drag is RELATIVE (no terminal clamp), Home/End inert; Transform's nine rows migrated on it (typed 35 sticks; ArrowUp 35→35.1; live-verified). (3) **`optionLabels`** on selects — display names over frozen stored values (Relief None/Effect/Image; Gradient focus.shape prose restored). (4) **Geometry/Light/Decal joined the schema** (~44 entries, all `agent:false, animatable:false` — zero vocabulary growth, dump-proven at every commit) with per-kind/per-light-type gating, per-primitive narrowing via presentation patch, and bespoke anchors for button grids/pickers. Reviews caught and fixed: union `default` not narrowed (double-click reset wrote another kind's default, sometimes clamped to MAX), Size reset restoring 1 world unit instead of scale 1, drag still clamping out-of-range values. **Invariant for the next migration: in a presentation patch, min/max/step/label are description but `default` is behaviour.** Remaining bespoke on purpose: object tree, sculpt/merge, object-motion pickers, add-menus, matOverride banner, bgTransparent. Spec/plan + verification record: `docs/superpowers/specs|plans/2026-08-24-scene3d-full-derivation*`.
 
 ### Derived inspectors — Gradient + 3D Studio panels drawn from the control list — LANDED 2026-08-24
 
