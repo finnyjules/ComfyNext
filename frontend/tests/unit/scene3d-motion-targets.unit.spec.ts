@@ -120,6 +120,54 @@ describe('animatableTargets', () => {
     'material.ior', 'material.opacity', 'material.sheen', 'material.thickness', 'material.transmission',
   ]
 
+  /**
+   * The same allow-list, for the DOC-level half of the vocabulary. The test above it
+   * ("still offers the doc-level targets") is a presence check on three paths, so the
+   * Lighting / Camera / Post namespaces could grow without anything going red — exactly
+   * the hole the per-object allow-list was added to close. Pinned from the current,
+   * correct vocabulary.
+   *
+   * `post.*` is derived from the SHARED post catalog (~/lib/studio/post), which other
+   * surfaces grow too: adding an effect there legitimately lands new paths here. That is
+   * a deliberate grant, so it belongs in this list — update it in the same change, do not
+   * loosen the assertion.
+   */
+  const docTargets = (prefix: string): string[] => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('box', doc.objects))
+    return animatableTargets(doc).map((t) => t.path).filter((p) => p.startsWith(prefix)).sort()
+  }
+
+  it('offers exactly these lighting targets', () => {
+    expect(docTargets('lighting.')).toEqual([
+      'lighting.ambient', 'lighting.sunAzimuth', 'lighting.sunElevation', 'lighting.sunIntensity',
+    ])
+  })
+
+  it('offers exactly these camera targets', () => {
+    expect(docTargets('camera.')).toEqual(['camera.fov'])
+  })
+
+  it('offers exactly these post targets', () => {
+    expect(docTargets('post.')).toEqual([
+      'post.bloomRadius', 'post.bloomStrength', 'post.bloomThreshold',
+      'post.blurAmount', 'post.chromaAmount', 'post.contrast', 'post.distortAmount',
+      'post.dotScreenAngle', 'post.dotScreenScale', 'post.duotoneMix', 'post.exposure',
+      'post.filmIntensity', 'post.grainAmount', 'post.grainSize',
+      'post.gtaoIntensity', 'post.gtaoRadius', 'post.gtaoThickness',
+      'post.halftoneRadius', 'post.halftoneScatter', 'post.hue', 'post.saturation',
+      'post.vignetteAmount', 'post.vignetteRadius', 'post.vignetteSoftness',
+    ])
+  })
+
+  it('offers no doc-level namespace beyond Lighting / Camera / Post', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('box', doc.objects))
+    const stray = animatableTargets(doc).map((t) => t.path)
+      .filter((p) => !p.startsWith('object') && !/^(lighting|camera|post)\./.test(p))
+    expect(stray).toEqual([])
+  })
+
   it.each([
     ['standard', [...PBR, ...PHYSICAL, ...RELIEF]],
     ['glass', [...PBR, ...PHYSICAL, ...RELIEF]],

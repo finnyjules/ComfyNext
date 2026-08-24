@@ -314,6 +314,11 @@ export function gradientPanelVisible(c: ControlSpec, cfg: GradientConfig, active
 
   // Conic reads u_center but never u_innerRadius (template 1010: "conic does NOT
   // use innerRadius"), so the shipped Canvas card was one layout narrower here.
+  // NOTE this reads the CANVAS layout, which is the right answer for a single-layer
+  // config only: on a stack the shipped row showed for `anyInnerRadius` (ANY layer).
+  // The panel path answers it there instead — GLOBAL_ROW_RULES in panelPresentation.ts
+  // short-circuits this branch — so what survives here is the single-layer contract the
+  // parity spec's schema half pins.
   if (c.key === 'canvas.innerRadius') return usesInnerRadius(cfg)
 
   // Colour params the shipped "Color" card gated on the shader branch that reads

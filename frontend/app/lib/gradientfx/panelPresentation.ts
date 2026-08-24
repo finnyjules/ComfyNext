@@ -86,43 +86,43 @@ export interface PanelAnchor {
 }
 
 const BANDED = ['linear', 'radial', 'orbit', 'stack']
-const bandedCanvas = (cfg: GradientConfig) => BANDED.includes(cfg.canvas.layout)
 const activeIs = (cfg: GradientConfig, i: number, kinds: string[]) => kinds.includes(effectiveLayout(cfg, i))
+const activeBanded = (cfg: GradientConfig, i: number) => activeIs(cfg, i, BANDED)
 
 export const PANEL_ANCHORS: readonly PanelAnchor[] = [
   { key: 'ui.color.stops', label: 'Colours', group: 'Color', visible: () => true },
   {
     key: 'ui.color.direction', label: 'Gradient direction', group: 'Color',
-    visible: (cfg, i) => bandedCanvas(cfg) && !activeIs(cfg, i, ['stack']),
+    visible: (cfg, i) => activeBanded(cfg, i) && !activeIs(cfg, i, ['stack']),
   },
   { key: 'ui.flow.intro', label: 'Flow', group: 'Flow', visible: () => true },
   {
     key: 'ui.liquid.presets', label: 'Presets', group: 'Depth & light',
-    visible: (cfg) => cfg.canvas.layout === 'liquid',
+    visible: (cfg, i) => activeIs(cfg, i, ['liquid']),
   },
   {
     key: 'ui.liquid.intro', label: 'Liquid surface', group: 'Liquid surface',
-    visible: (cfg) => cfg.canvas.layout === 'liquid',
+    visible: (cfg, i) => activeIs(cfg, i, ['liquid']),
   },
   {
     key: 'ui.mesh.points', label: 'Points', group: 'Mesh',
-    visible: (cfg) => cfg.canvas.layout === 'mesh',
+    visible: (cfg, i) => activeIs(cfg, i, ['mesh']),
   },
   {
     key: 'ui.shape.kind', label: 'Shape kind', group: 'Shape',
-    visible: (cfg, i) => bandedCanvas(cfg) && !activeIs(cfg, i, ['stack']),
+    visible: (cfg, i) => activeBanded(cfg, i) && !activeIs(cfg, i, ['stack']),
   },
   {
     key: 'ui.shape.ringShape', label: 'Ring shape', group: 'Shape',
-    visible: (cfg, i) => bandedCanvas(cfg) && activeIs(cfg, i, ['stack']),
+    visible: (cfg, i) => activeBanded(cfg, i) && activeIs(cfg, i, ['stack']),
   },
   {
     key: 'ui.shape.direction', label: 'Direction', group: 'Shape',
-    visible: (cfg, i) => bandedCanvas(cfg) && !activeIs(cfg, i, ['stack', 'radial', 'orbit']),
+    visible: (cfg, i) => activeBanded(cfg, i) && !activeIs(cfg, i, ['stack', 'radial', 'orbit']),
   },
   {
     key: 'ui.shape.mirror', label: 'Mirror', group: 'Shape',
-    visible: (cfg, i) => bandedCanvas(cfg) && !activeIs(cfg, i, ['stack']),
+    visible: (cfg, i) => activeBanded(cfg, i) && !activeIs(cfg, i, ['stack']),
   },
 ]
 
@@ -237,7 +237,20 @@ export function panelValue(key: string, raw: string | number | boolean | undefin
 /** Container objects the shipped rows seeded WHOLE before writing one field
  *  (`onRamp`/`onCurve`/the `??=` proxies). A dotted write creates `{}`, leaving the
  *  siblings undefined, and the renderer's `L.ramp ?? RAMP_DEFAULTS` then no longer
- *  fires — so the other axis fields read as undefined instead of defaulted. */
+ *  fires — so the other axis fields read as undefined instead of defaulted.
+ *
+ *  WHY `flow.*` IS NOT IN THIS TABLE. `flow` is the fourth optional container with a
+ *  `?? DEFAULT_FLOW` fallback (`flowOf`), so on the face of it a `flow.speed` write into
+ *  an absent `flow` would create the same partial `{ speed }` — worse than the shipped
+ *  rows, which held a `??=` proxy that simply no-op'd when `flow` was missing. It is safe
+ *  because `config.value` is only ever assigned from two kinds of source, and BOTH
+ *  guarantee a whole `flow`: the load path runs `ensureConfigDefaults` (types.ts — `if
+ *  (!cfg.flow) cfg.flow = { ...DEFAULT_FLOW }`), and every randomize.ts builder sets
+ *  `flow` outright (`reroll` ends with the same explicit `if (!next.flow)` guard).
+ *  That guarantee is LOAD-BEARING, not incidental: a future config source that skips
+ *  both would not merely leave the Flow rows reading defaults — it would let one row's
+ *  write bake a partial flow object that permanently defeats `flowOf`'s fallback. Add
+ *  `flow` here rather than relaxing it. */
 export function panelWriteSeed(key: string): { path: 'ramp' | 'curve' | 'center' | 'light' | 'mesh' } | null {
   if (key.startsWith('layer.ramp.')) return { path: 'ramp' }
   if (key.startsWith('layer.curve.')) return { path: 'curve' }
@@ -245,6 +258,87 @@ export function panelWriteSeed(key: string): { path: 'ramp' | 'curve' | 'center'
   if (key.startsWith('relief.light.')) return { path: 'light' }
   if (key.startsWith('layer.mesh.')) return { path: 'mesh' }
   return null
+}
+
+// ── multi-layer gating ───────────────────────────────────────────────────────
+
+/**
+ * A control's `when` reads `cfg.canvas.layout` and always will: `visibleGradientControls`
+ * is ALSO the agent's vocabulary and motion's animatable-target list, both pinned by
+ * frozen snapshots, and both are canvas-level questions. The PANEL's question is
+ * narrower and has three different answers, which the deleted template answered with
+ * three computed families (9c20f8b72 `GradientStudioSurface.vue` lines 65-90):
+ *
+ *   is*    the ACTIVE layer's layout (`activeLayout = effectiveLayout(cfg, activeLayer)`)
+ *          — every per-layer family: the Gradient axis, the Color card's layout gates,
+ *          Curve, Mesh, Liquid and Shape. These rows address `layer.*`, and the params
+ *          proxy resolves `layer.` against the SELECTED layer, so gating them on the
+ *          canvas layout both hides rows that render (a curve layer over a ramp canvas)
+ *          and draws rows that don't (a Curve card over a stack layer, whose writes land
+ *          in `layers[n].curve` where nothing reads them).
+ *   any*   ANY layer (`anyBanded` / `anyInnerRadius` / `anyCenter`) — the GLOBAL canvas
+ *          rows. `canvas.margin`, `canvas.innerRadius` and `canvas.center.*` live on the
+ *          whole gradient, so selecting a layer that ignores them must not hide them
+ *          from the layer that doesn't.
+ *   base*  LAYER 0 (`baseBanded` / `baseLiquid`) — the rows whose uniform the shader only
+ *          applies under layer 0's layout: the relief light, and the four global liquid
+ *          uniforms (highlights/shadows/gloss/ripple).
+ *
+ * The `is*` family is reproduced by evaluating `when` against a SHADOW config whose
+ * canvas layout (and layer 0) is the active layer's; the other two are explicit rules
+ * below, because they are not a question any single-layout config can express.
+ * Pinned by the multi-layer scenarios in tests/unit/gradient-panel-parity.unit.spec.ts.
+ */
+const someLayerIs = (cfg: GradientConfig, kinds: string[]): boolean =>
+  (cfg.layers ?? []).some((_l, i) => kinds.includes(effectiveLayout(cfg, i)))
+const baseIs = (cfg: GradientConfig, kinds: string[]): boolean => kinds.includes(effectiveLayout(cfg, 0))
+
+/**
+ * The `any*` / `base*` rows, keyed by control. A rule is the WHOLE answer for its row
+ * (it replaces both the schema `when` and `gradientPanelVisible`) — a shadow-config
+ * `when` would re-impose the active layer's reading and undo the point.
+ */
+const GLOBAL_ROW_RULES: Record<string, (cfg: GradientConfig, activeLayer: number) => boolean> = {
+  // anyBanded / anyInnerRadius / anyCenter. Note innerRadius is one layout narrower
+  // than center: conic reads u_center but never u_innerRadius.
+  'canvas.margin': (cfg) => someLayerIs(cfg, BANDED),
+  'canvas.innerRadius': (cfg) => someLayerIs(cfg, ['radial', 'orbit', 'radialRamp']),
+  'canvas.center.x': (cfg) => someLayerIs(cfg, ['radial', 'orbit', 'radialRamp', 'conic']),
+  'canvas.center.y': (cfg) => someLayerIs(cfg, ['radial', 'orbit', 'radialRamp', 'conic']),
+  // baseBanded — shaders.ts gates u_light on `u_layout < 3.5`, i.e. layer 0's layout.
+  'relief.relief': (cfg) => baseIs(cfg, BANDED),
+  'relief.light.azimuth': (cfg) => baseIs(cfg, BANDED),
+  'relief.light.elevation': (cfg) => baseIs(cfg, BANDED),
+  // isLiquid AND baseLiquid — the template drew these inside the liquid-only cards
+  // (active layer) behind a second `v-if="baseLiquid"`: the uniforms are global and
+  // only applied under layer 0's layout.
+  'flow.highlights': (cfg, i) => activeIs(cfg, i, ['liquid']) && baseIs(cfg, ['liquid']),
+  'flow.shadows': (cfg, i) => activeIs(cfg, i, ['liquid']) && baseIs(cfg, ['liquid']),
+  'flow.gloss': (cfg, i) => activeIs(cfg, i, ['liquid']) && baseIs(cfg, ['liquid']),
+  'flow.ripple': (cfg, i) => activeIs(cfg, i, ['liquid']) && baseIs(cfg, ['liquid']),
+}
+
+/**
+ * `cfg` as the per-layer families see it: the ACTIVE layer's effective layout standing
+ * in for the canvas layout, and the active layer standing in at index 0 for the handful
+ * of `when` clauses that read `layers[0]` for per-layer STATE (curve shape/mode, colour
+ * repeat, shape kind) rather than layout. Both substitutions say the same thing — "this
+ * row is about the selected layer" — and neither is visible outside this module: only
+ * the `when` predicates and `gradientPanelVisible` ever see it.
+ */
+function shadowConfig(cfg: GradientConfig, activeLayer: number): GradientConfig {
+  const layout = effectiveLayout(cfg, activeLayer)
+  const active = cfg.layers?.[activeLayer]
+  const layers = active && activeLayer > 0 ? [active, ...cfg.layers.slice(1)] : cfg.layers
+  return { ...cfg, canvas: { ...cfg.canvas, layout }, layers }
+}
+
+/** The panel's whole visibility answer for one schema row. */
+function panelRowVisible(c: GradientControl, cfg: GradientConfig, activeLayer: number, shadow: GradientConfig): boolean {
+  const rule = GLOBAL_ROW_RULES[c.key]
+  if (rule) return rule(cfg, activeLayer)
+  if (c.when && !c.when(shadow)) return false
+  return gradientPanelVisible(c, shadow, activeLayer)
 }
 
 // ── the remap ────────────────────────────────────────────────────────────────
@@ -299,6 +393,7 @@ export function gradientPanelControls(
   opts: { controls?: readonly GradientControl[]; postVisible?: (c: ControlSpec) => boolean } = {},
 ): ControlSpec[] {
   const source = opts.controls ?? GRADIENT_CONTROLS
+  const shadow = shadowConfig(cfg, activeLayer)
   const rows: ControlSpec[] = []
   const post: ControlSpec[] = []
   for (const c of source) {
@@ -306,8 +401,7 @@ export function gradientPanelControls(
       if (!opts.postVisible || opts.postVisible(c)) post.push(c)
       continue
     }
-    if (c.when && !c.when(cfg)) continue
-    if (!gradientPanelVisible(c, cfg, activeLayer)) continue
+    if (!panelRowVisible(c, cfg, activeLayer, shadow)) continue
     rows.push(withPresentation(c, cfg, activeLayer))
   }
   for (const a of PANEL_ANCHORS) {

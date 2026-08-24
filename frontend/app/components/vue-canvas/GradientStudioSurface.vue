@@ -161,7 +161,9 @@ const controlValue = (key: string) =>
 /** Seed the WHOLE optional container before writing one field into it. A dotted write
  *  creates a bare `{}`, which stops the renderer's `L.ramp ?? RAMP_DEFAULTS` fallback
  *  firing and leaves the sibling fields undefined — the reason the shipped rows went
- *  through `onRamp`/`onCurve` and the `??=` proxies instead of writing directly. */
+ *  through `onRamp`/`onCurve` and the `??=` proxies instead of writing directly.
+ *  `flow` is deliberately absent from the table — see panelWriteSeed for why that gap
+ *  is safe and what makes it so. */
 function seedContainer(key: string) {
   const seed = panelWriteSeed(key)
   if (!seed) return

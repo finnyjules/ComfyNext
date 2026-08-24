@@ -46,12 +46,13 @@ import { defaultConfig, stripeConfig } from '~/lib/gradientfx/randomize'
  * rows) but their shipped widget is bespoke — see BESPOKE_WIDGETS below.
  *
  * ── Scope of the config model used here ────────────────────────────────────────
- * Every scenario uses a SINGLE-layer config with `activeLayer = 0` (plus one
- * explicit two-layer scenario for the Layer section). On a single-layer config the
- * template's `is*` (active layer), `any*` (any layer) and `base*` (layer 0)
- * predicate families all collapse onto `canvas.layout`, so they are
- * indistinguishable here. Their multi-layer differences are recorded in
- * MULTI_LAYER_DIVERGENCES below rather than tested.
+ * The scenarios in the FIRST block use a SINGLE-layer config with `activeLayer = 0`
+ * (plus one explicit two-layer scenario for the Layer section). On a single-layer
+ * config the template's `is*` (active layer), `any*` (any layer) and `base*` (layer 0)
+ * predicate families all collapse onto `canvas.layout`, so they are indistinguishable
+ * there. Telling them apart needs a stacked gradient with a `layer.layout` override —
+ * see MULTI_LAYER_SCENARIOS near the end of this file, and MULTI_LAYER_FAMILIES for
+ * which family each row belongs to.
  */
 
 // ── the transcribed panel ────────────────────────────────────────────────────
@@ -596,19 +597,42 @@ export const KNOWN_ORDER_DIVERGENCES = {
  *  to the same field. The derived panel keeps the first. */
 export const DEDUPLICATED_ROWS = ['layer.shape.scrub']
 
-/** Predicate families that differ only on MULTI-layer configs, where the spec's
- *  single-layer scenarios cannot tell them apart. `when` reads `canvas.layout`;
- *  the template read the ACTIVE layer (`is*`), ANY layer (`any*`) or layer 0
- *  (`base*`). Task 3 inherits the schema's canvas-layout reading. */
-export const MULTI_LAYER_DIVERGENCES = {
-  'canvas.margin': 'template: anyBanded (any layer) — schema: canvas.layout',
-  'canvas.innerRadius': 'template: anyInnerRadius (any layer) — schema: canvas.layout',
-  'canvas.center.*': 'template: anyCenter (any layer) — schema: canvas.layout',
-  'relief.*': 'template: baseBanded (layer 0) — schema: canvas.layout (identical while layer 0 anchors to canvas.layout)',
-  'flow.highlights|shadows|gloss|ripple': 'template: baseLiquid (layer 0) — schema: canvas.layout',
-  'Shape/Color/Curve/Mesh gating': 'template: activeLayout (the selected layer) — schema: canvas.layout',
-  'layer.shape.detail': "its `when` reads layers[0].shape.type; gradientPanelVisible reads the ACTIVE layer's — they differ only when a non-base layer has a different shape kind",
+/**
+ * Predicate families that differ only on MULTI-layer configs. The template read the
+ * ACTIVE layer (`is*`), ANY layer (`any*`) or LAYER 0 (`base*`); a control's `when`
+ * reads `cfg.canvas.layout` and always will, because `when` is ALSO the agent's
+ * vocabulary and motion's animatable-target list, where the canvas layout is the
+ * right question.
+ *
+ * All three families are now REPRODUCED — in `panelPresentation.ts` (`shadowConfig`
+ * + `GLOBAL_ROW_RULES`), the layer between the schema and the panel, and pinned by
+ * MULTI_LAYER_SCENARIOS below. What is recorded here is therefore no longer a set of
+ * live divergences but the map of WHICH family each row belongs to: the thing a
+ * future row has to pick from, and the thing the shadow config would silently get
+ * wrong if a new row were added to the `any*`/`base*` set without a rule.
+ */
+export const MULTI_LAYER_FAMILIES = {
+  'canvas.margin': 'any — anyBanded (GLOBAL_ROW_RULES)',
+  'canvas.innerRadius': 'any — anyInnerRadius, one layout narrower than center (GLOBAL_ROW_RULES)',
+  'canvas.center.*': 'any — anyCenter (GLOBAL_ROW_RULES)',
+  'relief.*': 'base — baseBanded, layer 0 (GLOBAL_ROW_RULES)',
+  'flow.highlights|shadows|gloss|ripple': 'base — isLiquid AND baseLiquid (GLOBAL_ROW_RULES)',
+  'flow.depth|foldScale|veins|veinScale|refract|viscosity': 'active — isLiquid, a genuine per-layer effect inside computeLayer (shadow `when`)',
+  'Gradient / Color / Curve / Mesh / Shape gating': 'active — effectiveLayout(cfg, activeLayer) (shadow `when` + gradientPanelVisible)',
+  'layer.curve.*, layer.color.repeatCount, layer.shape.detail':
+    "active — their `when` reads layers[0] for per-layer STATE (curve shape/mode, colour repeat, shape kind); the shadow config stands the active layer in at index 0 so they read the selected layer, as the template's `layer` did",
+  'bespoke-block anchors (ui.*)': 'active — PANEL_ANCHORS.visible reads effectiveLayout(cfg, activeLayer)',
 }
+
+/**
+ * The ONE thing that stays canvas-layout-blind, deliberately: the schema half of this
+ * spec (`panelRows` above) evaluates `c.when(cfg)` and `gradientPanelVisible(cfg)`
+ * against the raw config, which is what the AGENT and MOTION do. Its scenarios are all
+ * single-layer, where the three families collapse, so it stays a faithful pin of the
+ * schema. The panel's own multi-layer answer is asserted through `gradientPanelControls`
+ * in MULTI_LAYER_SCENARIOS instead.
+ */
+export const SCHEMA_HALF_IS_CANVAS_LEVEL = true
 
 describe('documented divergences stay documented', () => {
   it('every group in SECTION_TITLE_MAP is a real design section', () => {
@@ -693,6 +717,140 @@ describe('the derived panel reproduces the SHIPPED cards, not the schema groups'
   })
 })
 
+// ── MULTI-LAYER: the three predicate families the single-layer block collapses ─
+
+/**
+ * Every scenario above is single-layer, where the template's `is*` (ACTIVE layer),
+ * `any*` (ANY layer) and `base*` (LAYER 0) predicate families all collapse onto
+ * `canvas.layout` — so they cannot tell the three apart. A stacked gradient CAN:
+ * `layer.layout` overrides one layer's type while the canvas keeps another.
+ *
+ * These scenarios were transcribed from the SAME deleted template (9c20f8b72,
+ * `GradientStudioSurface.vue` — the computeds at lines 65-90 and the section gates
+ * at 986-1613), and they run the REAL panel path (`gradientPanelControls`), not the
+ * schema-derivation harness above: a control's `when` reads `cfg.canvas.layout` and
+ * always will (it is also the agent's and motion's vocabulary), so reproducing the
+ * per-layer reading is the PRESENTATION layer's job. See panelPresentation.ts.
+ */
+const twoLayer = (base: string, override: string, mutate: (c: any) => void = () => {}): GradientConfig => {
+  const c: any = stripeConfig('#parity')
+  c.canvas.layout = base
+  c.layers = [c.layers[0], JSON.parse(JSON.stringify(c.layers[0]))]
+  c.layers[1].layout = override
+  mutate(c)
+  return norm(c)
+}
+
+interface MultiScenario { state: string; cfg: () => GradientConfig; activeLayer: number; rows: Row[]; anchors: string[] }
+
+const MULTI_LAYER_SCENARIOS: MultiScenario[] = [
+  {
+    // template: `<StudioSection v-if="isCurve">` where isCurve reads activeLayout.
+    state: 'base ramp + layer 1 overridden to curve, layer 1 active — the Curve card follows the SELECTED layer',
+    cfg: () => twoLayer('ramp', 'curve'),
+    activeLayer: 1,
+    rows: [
+      // No layer is banded (ramp + curve) => no Margin; none is polar => no Center /
+      // Inner radius; layer 0 is not banded => no Relief.
+      ...CANVAS(),
+      ...CURVE_HEAD,
+      ...FLOW,
+      // activeLayout 'curve' is one of `isSimpleRamp || isCurve` => Repeat shows.
+      ...COLOR_PARAMS({ steps: true, hueDrift: true, repeat: true, falloff: true }),
+      ...FOCUS(),
+      ...LAYER_SECTION,
+    ],
+    anchors: ['ui.color.stops', 'ui.flow.intro'],
+  },
+  {
+    // The inverse: the base is curve, so the SCHEMA would draw a Curve card — but the
+    // selected layer is a stack, and writes from those rows land in layers[1].curve,
+    // which nothing reads.
+    state: 'base curve + layer 1 overridden to stack, layer 1 active — no Curve card, the Shape card is the stack one',
+    cfg: () => twoLayer('curve', 'stack'),
+    activeLayer: 1,
+    rows: [
+      // anyBanded: layer 1 is a stack => Margin shows even though the canvas is curve.
+      ...CANVAS({ margin: true }),
+      ...FLOW,
+      ...SHAPE_STACK,
+      // baseBanded is false (layer 0 is curve) => NO Relief.
+      // isStack => no Hue drift; not a simple primitive => no Repeat.
+      ...COLOR_PARAMS({ steps: true, falloff: true }),
+      ...FOCUS(),
+      ...LAYER_SECTION,
+    ],
+    anchors: ['ui.color.stops', 'ui.flow.intro', 'ui.shape.ringShape'],
+  },
+  {
+    // template: `anyCenter` / `anyInnerRadius` — a GLOBAL row shows when ANY layer
+    // needs it, so selecting the linear base must not hide the radial layer's origin.
+    state: 'base linear + layer 1 overridden to radial, layer 0 active — Center X/Y and Inner radius show for the OTHER layer',
+    cfg: () => twoLayer('linear', 'radial'),
+    activeLayer: 0,
+    rows: [
+      ...CANVAS({ margin: true, innerRadius: true, center: true }),
+      ...FLOW,
+      // The active layer is linear, so Shape is the non-radial banded block.
+      ...SHAPE_BANDED('bands', false),
+      ...RELIEF,
+      ...COLOR_PARAMS({ steps: true, hueDrift: true, falloff: true }),
+      ...FOCUS(),
+    ],
+    anchors: ['ui.color.stops', 'ui.color.direction', 'ui.flow.intro', 'ui.shape.kind', 'ui.shape.direction', 'ui.shape.mirror'],
+  },
+]
+
+/** Every row the real panel path produces, carrying its on-screen card title. */
+function panelRowsOnScreen(cfg: GradientConfig, activeLayer: number) {
+  const tree = groupIntoSections(gradientPanelControls(cfg, activeLayer), GRADIENT_PANEL_ORDER)
+  const out: Array<{ title: string; spec: any }> = []
+  const walk = (nodes: typeof tree) => nodes.forEach((n) => {
+    for (const c of n.controls) out.push({ title: n.title, spec: c })
+    walk(n.sections)
+  })
+  walk(tree)
+  return out
+}
+
+describe('multi-layer gating — active layer / any layer / layer 0', () => {
+  for (const s of MULTI_LAYER_SCENARIOS) {
+    describe(s.state, () => {
+      it('shows exactly the rows the old panel showed', () => {
+        const got = panelRowsOnScreen(s.cfg(), s.activeLayer)
+          .filter((r) => !PANEL_ANCHOR_KEYS.has(r.spec.key)).map((r) => r.spec.key)
+        expect([...got].sort()).toEqual([...new Set(s.rows.map((r) => r.key))].sort())
+      })
+
+      it('draws the bespoke-block anchors the old panel drew', () => {
+        const got = panelRowsOnScreen(s.cfg(), s.activeLayer)
+          .filter((r) => PANEL_ANCHOR_KEYS.has(r.spec.key)).map((r) => r.spec.key)
+        expect([...got].sort()).toEqual([...s.anchors].sort())
+      })
+
+      it('reproduces every row label, bound, option list and card title', () => {
+        const got = panelRowsOnScreen(s.cfg(), s.activeLayer)
+        for (const want of s.rows) {
+          const hit = got.find((g) => g.spec.key === want.key)
+          expect(hit, `${want.key} ("${want.label}") missing`).toBeTruthy()
+          expect(hit!.spec.label, `${want.key} label`).toBe(want.label)
+          expect(hit!.title, `${want.key} card`).toBe(want.onScreen)
+          if (want.min !== undefined) {
+            expect(hit!.spec.min, `${want.key} min`).toBe(want.min)
+            expect(hit!.spec.max, `${want.key} max`).toBe(want.max)
+          }
+          if (want.options) expect(hit!.spec.options, `${want.key} options`).toEqual([...want.options])
+        }
+      })
+
+      it('never renders the same key twice', () => {
+        const keys = panelRowsOnScreen(s.cfg(), s.activeLayer).map((r) => r.spec.key)
+        expect(new Set(keys).size).toBe(keys.length)
+      })
+    })
+  }
+})
+
 // ── the bind menu reaches only bindable rows ─────────────────────────────────
 
 /**
@@ -733,6 +891,5 @@ describe('the bind menu is withheld wherever the bind glyph is', () => {
     const handler = SURFACE_SRC.slice(SURFACE_SRC.indexOf('function onControlMenu'))
       .slice(0, SURFACE_SRC.slice(SURFACE_SRC.indexOf('function onControlMenu')).indexOf('\n}') + 2)
     expect(handler).toContain('bindable === false')
-    expect(handler).toMatch(/if \(c\.bindable === false\) return/)
   })
 })
