@@ -733,10 +733,13 @@ const CLONER_ROWS: Record<number, readonly string[]> = {
 const CLONER_TAIL = [
   'ui.cloner.step',
   `${MOD}cloneStepRotX`, `${MOD}cloneStepRotY`, `${MOD}cloneStepRotZ`, `${MOD}cloneStepScale`,
-  'ui.cloner.cost',
 ] as const
 
-const clonerRows = (mode: number) => [...CLONER_ROWS[mode]!, ...CLONER_TAIL]
+/** …plus the cost readout, which the template gated on `cloneCost` — null at one copy.
+ *  Grid mode's own defaults are 3 × 1 × 3, so picking it shows nine copies straight away
+ *  and the readout with them. */
+const clonerRows = (mode: number) =>
+  [...CLONER_ROWS[mode]!, ...CLONER_TAIL, ...(mode === 2 ? ['ui.cloner.cost'] : [])]
 
 describe('Scene3D panel parity — Geometry', () => {
   it('draws the Geometry card, then Modifiers and Cloner, for every primitive kind', () => {
@@ -824,7 +827,7 @@ describe('Scene3D panel parity — Geometry', () => {
     }
   })
 
-  it('the Cloner card swaps its placement rows with the mode, and keeps Step + cost', () => {
+  it('the Cloner card swaps its placement rows with the mode, and keeps the Step block', () => {
     const doc = defaultDoc()
     for (const mode of [0, 1, 2]) {
       const o = primOf('box') as { modifiers?: Record<string, number> }
@@ -832,6 +835,17 @@ describe('Scene3D panel parity — Geometry', () => {
       const keys = geometryCards(doc, o as unknown as SceneObject).find((s) => s.title === 'Cloner')!.keys
       expect(keys, `mode ${mode}`).toEqual(clonerRows(mode))
     }
+  })
+
+  it('the copies/vertices cost readout appears only once there is more than one copy', () => {
+    const doc = defaultDoc()
+    const one = primOf('box') as { modifiers?: Record<string, number> }
+    expect(geometryCards(doc, one as unknown as SceneObject).find((s) => s.title === 'Cloner')!.keys)
+      .not.toContain('ui.cloner.cost')
+    const many = primOf('box') as { modifiers?: Record<string, number> }
+    many.modifiers = { cloneCount: 4 }
+    expect(geometryCards(doc, many as unknown as SceneObject).find((s) => s.title === 'Cloner')!.keys)
+      .toEqual([...clonerRows(0), 'ui.cloner.cost'])
   })
 
   it('Modifiers and Cloner start collapsed, exactly as the bare <details> did', () => {
@@ -1326,10 +1340,14 @@ describe('Scene3D surface wiring', () => {
     'utf-8',
   )
 
-  it('supplies a slot for every bespoke-block anchor', () => {
+  it('supplies a slot for every bespoke-block anchor, and no slot without one', () => {
     for (const key of SCENE_PANEL_ANCHOR_KEYS) {
       expect(src, key).toContain(`#control-${key}`)
     }
+    // The other direction: a `#control-` slot the panel never asks for is dead markup —
+    // it renders nowhere and nothing says so.
+    const slots = [...src.matchAll(/#control-([\w.]+)/g)].map((m) => m[1]!)
+    expect([...new Set(slots)].sort()).toEqual([...SCENE_PANEL_ANCHOR_KEYS].sort())
   })
 
   it('keeps the heavy-geometry deferral by wrapping the panels in a capture listener', () => {

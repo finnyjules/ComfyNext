@@ -7,7 +7,7 @@ import {
   LIGHT_DEFAULTS, DECAL_DEFAULTS, lightIntensityMax,
   type MaterialType, type SceneDoc, type SceneObject,
 } from './config'
-import { PRIMITIVE_PARAMS, MODIFIER_SPECS, resolveParam } from './primParams'
+import { PRIMITIVE_PARAMS, MODIFIER_SPECS, resolveParam, totalClones } from './primParams'
 import {
   SCENE_CONTROLS, GEOMETRY_PARAM_PREFIX, MODIFIER_PREFIX, type SceneControl,
 } from './controls'
@@ -412,7 +412,11 @@ const SCENE_PANEL_ANCHORS: readonly ScenePanelAnchor[] = [
   { key: 'ui.cloner.mode', label: modLabel('cloneMode'), visible: (_d, o) => isPrim(o) },
   { key: 'ui.cloner.axis', label: modLabel('cloneAxis'), visible: (_d, o) => isPrim(o) && cloneModeOf(o) === 1 },
   { key: 'ui.cloner.step', label: 'Step', visible: (_d, o) => isPrim(o) },
-  { key: 'ui.cloner.cost', label: 'Clone cost', visible: (_d, o) => isPrim(o) },
+  // …and the cost readout only once there is more than one copy — `cloneCost` was null
+  // below that and the whole block was `v-if`'d away. An always-present anchor would leave
+  // an empty row (and its 12px of `space-y`) at the foot of every Cloner card.
+  { key: 'ui.cloner.cost', label: 'Clone cost',
+    visible: (_d, o) => isPrim(o) && totalClones((o as { modifiers?: Record<string, number> }).modifiers) > 1 },
   // Decal card — a text sticker's label + font picker, an image sticker's thumbnail +
   // Replace button, and Reposition (a decal has no gizmo; re-placing it re-arms the
   // click-to-place flow).

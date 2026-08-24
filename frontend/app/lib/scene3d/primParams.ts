@@ -259,6 +259,19 @@ export function modifierValue(modifiers: Record<string, number> | undefined, key
   return resolveParam(MODIFIER_SPECS, modifiers, key)
 }
 
+/** Total copies the cloner will produce for these settings. Linear and radial are driven
+ *  by cloneCount; grid multiplies its three axis counts. Lives here rather than in
+ *  modifiers.ts (which re-exports it) because it is pure arithmetic over the bag above —
+ *  modifiers.ts pulls in three, and both the inspector panel and the Collection control
+ *  resolver read this module without it. */
+export function totalClones(modifiers: Record<string, number> | undefined): number {
+  const m = (k: string) => modifierValue(modifiers, k)
+  if (Math.round(m('cloneMode')) === 2) {
+    return Math.round(m('cloneCountX')) * Math.round(m('cloneCountY')) * Math.round(m('cloneCountZ'))
+  }
+  return Math.round(m('cloneCount'))
+}
+
 // Scenes saved before the Array controls became the Cloner section (2026-07-18)
 // used array* keys. Remap on load; this can be deleted once those are gone.
 const LEGACY_MODIFIER_KEYS: Record<string, string> = {

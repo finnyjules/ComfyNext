@@ -176,8 +176,6 @@ const matOverride = computed<boolean>({
   get: () => selected.value?.kind === 'glb' && selected.value.materialOverride === true,
   set: (v) => { const o = selected.value; if (o?.kind === 'glb') o.materialOverride = v },
 })
-const selectedIsLight = computed(() => selected.value?.kind === 'light')
-const selectedIsDecal = computed(() => selected.value?.kind === 'decal')
 const selectedDecal = computed<DecalObject | null>(() => (selected.value?.kind === 'decal' ? selected.value : null))
 const activeTab = ref<'build' | 'motion'>('build')  // inspector tab: Build (existing sections) vs Motion (Task 5)
 

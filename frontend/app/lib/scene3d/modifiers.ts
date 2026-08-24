@@ -9,22 +9,17 @@
 // Stage order is fixed: subdivide → taper → twist → bend → noise → jitter → cloner.
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { modifierValue } from '~/lib/scene3d/primParams'
+import { modifierValue, totalClones } from '~/lib/scene3d/primParams'
 
 /** Rough ceiling for the final merged geometry. `totalClones` (the doc value
  *  the panel shows back) is never reduced; subdivision stops early, and
  *  `clampedClones` below is the render-time guard on the cloner itself. */
 const VERTEX_BUDGET = 300_000
 
-/** Total copies the cloner will produce for these settings. Linear and radial
- *  are driven by cloneCount; grid multiplies its three axis counts. */
-export function totalClones(modifiers: Record<string, number> | undefined): number {
-  const m = (k: string) => modifierValue(modifiers, k)
-  if (Math.round(m('cloneMode')) === 2) {
-    return Math.round(m('cloneCountX')) * Math.round(m('cloneCountY')) * Math.round(m('cloneCountZ'))
-  }
-  return Math.round(m('cloneCount'))
-}
+// `totalClones` moved to primParams.ts — it is pure arithmetic over the modifier bag,
+// with no three in it, and the inspector panel needs it to know whether the Cloner's cost
+// readout has anything to say. Re-exported here so every existing caller is unaffected.
+export { totalClones }
 
 /** The clone count actually rendered, and whether the budget reduced it.
  *
