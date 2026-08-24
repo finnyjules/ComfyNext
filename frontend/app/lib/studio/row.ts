@@ -39,16 +39,37 @@ export function formatValue(value: number, step: number): string {
   return Number(value).toFixed(stepDecimals(step))
 }
 
+/**
+ * How a row treats its own range when a value is ENTERED (typed, or arrowed) rather
+ * than pointed at. `'clamped'` — the default everywhere — means the declared range is
+ * the parameter's domain and nothing may leave it. `'unclamped'` is the SOFT range: the
+ * bounds still draw the fill, place the handle and size the drag, but they do not
+ * decide what a number may be.
+ *
+ * Declared in the schema as `entry: 'unclamped'` (see ControlSpec's `entry`). The
+ * motivating case is 3D Studio's Transform: the gizmo puts an object at x = 35 on a row
+ * whose schema says ±20, and clamping the arrow keys there rewrote the value to 20 and
+ * fanned the −15 difference across the whole selection.
+ */
+export type EntryMode = 'clamped' | 'unclamped'
+export type EntryOpts = { entry?: EntryMode }
+
 /** Parse a typed value. Returns null when it is not a number so the caller can
  *  revert the field instead of writing NaN through to the document. Stray units
- *  are stripped because people paste "42px" out of dev tools. */
-export function parseTyped(input: string, min: number, max: number, step: number): number | null {
+ *  are stripped because people paste "42px" out of dev tools.
+ *
+ *  Only the CLAMP is conditional on the mode. Snapping to the step and rejecting a
+ *  non-number happen either way — a soft range is a soft range, not a soft parser. */
+export function parseTyped(
+  input: string, min: number, max: number, step: number, opts: EntryOpts = {},
+): number | null {
   const cleaned = String(input).trim().replace(/[^0-9eE+\-.]/g, '')
   if (cleaned === '') return null
   const n = Number(cleaned)
   if (!Number.isFinite(n)) return null
   const snapped = step > 0 ? Math.round(n / step) * step : n
-  return Number(Math.min(max, Math.max(min, snapped)).toFixed(6))
+  const bounded = opts.entry === 'unclamped' ? snapped : Math.min(max, Math.max(min, snapped))
+  return Number(bounded.toFixed(6))
 }
 
 /** The MOST steps a Shift gesture covers. A native `<input type="range">` puts this
@@ -107,6 +128,10 @@ export function coarseStepMultiplier(min: number, max: number, step: number): nu
  *
  * Returns the CURRENT value unchanged when the move is impossible (already at an
  * end, or an unparseable candidate), so the caller can skip a redundant write.
+ *
+ * On a SOFT range (`entry: 'unclamped'`) there are no ends to be at, so the step
+ * always lands — including from a value the range does not contain, which is the
+ * whole point: 35 arrows to 35.1, not to 20.
  */
 export function nudgeValue(opts: {
   value: number
@@ -115,14 +140,14 @@ export function nudgeValue(opts: {
   step: number
   direction: 1 | -1
   coarse?: boolean
-}): number {
+} & EntryOpts): number {
   // A missing or nonsensical step would make every arrow press a no-op; fall back to
   // 1 for the JUMP only. `parseTyped` still gets the declared step, so snapping stays
   // byte-identical to typed entry.
   const size = Number.isFinite(opts.step) && opts.step > 0 ? opts.step : 1
   const jump = size * (opts.coarse ? coarseStepMultiplier(opts.min, opts.max, size) : 1)
   const next = opts.value + (opts.direction < 0 ? -jump : jump)
-  return parseTyped(String(next), opts.min, opts.max, opts.step) ?? opts.value
+  return parseTyped(String(next), opts.min, opts.max, opts.step, { entry: opts.entry }) ?? opts.value
 }
 
 /** Double-click target. A declared default always wins — including a default of 0,

@@ -44,6 +44,17 @@ const min = computed(() => Number((props.spec as { min?: number }).min ?? 0))
 const max = computed(() => Number((props.spec as { max?: number }).max ?? 1))
 const step = computed(() => Number((props.spec as { step?: number }).step ?? 1))
 const num = computed(() => Number(props.modelValue))
+/**
+ * SOFT RANGE, opt-in per control. Undefined — every row in the app but 3D Studio's nine
+ * Transform rows — means the declared range gates entry as it always has.
+ *
+ * It reaches the two ENTRY paths only: the text field (`onCommit`) and the arrow keys
+ * (`nudgeValue`). The two TRACK gestures — a drag and a click-to-position — stay bounded
+ * in both modes, because "point at a place on this track" can only ever mean a place
+ * within the range the track draws. `fillFraction` likewise keeps clamping, so an
+ * out-of-range value shows its true number with the handle pinned at the end.
+ */
+const entryMode = computed(() => (props.spec as { entry?: 'unclamped' }).entry)
 
 // The painted band runs between the origin and the value, so a bipolar slider grows
 // out of the middle in whichever direction the value went.
@@ -191,10 +202,17 @@ function onPointerDown(e: PointerEvent) {
  */
 function onKeydown(e: KeyboardEvent) {
   if (!numeric.value || props.bound || editing.value) return
-  // The arithmetic lives in ~/lib/studio/row so it has a test path; both branches end
-  // in parseTyped's snap-and-clamp, same as typed entry, so a keyed value and a typed
-  // one can never land on different grids.
-  const args = { value: num.value, min: min.value, max: max.value, step: step.value, coarse: e.shiftKey }
+  // The arithmetic lives in ~/lib/studio/row so it has a test path; both arrow branches
+  // end in parseTyped, same as typed entry — carrying the SAME `entry` mode — so a keyed
+  // value and a typed one can never land on different grids or different bounds.
+  //
+  // Home/End deliberately do NOT carry it. They mean "go to the end of the range", so
+  // the range is the answer, soft or not; passing the mode would only let an off-grid
+  // `min` snap somewhere the row can never otherwise reach.
+  const args = {
+    value: num.value, min: min.value, max: max.value, step: step.value,
+    coarse: e.shiftKey, entry: entryMode.value,
+  }
   let next: number
   switch (e.key) {
     case 'ArrowLeft': case 'ArrowDown': next = nudgeValue({ ...args, direction: -1 }); break
@@ -241,7 +259,7 @@ function restoreFocus() {
 function onCommit(raw: string) {
   restoreFocus()
   editing.value = false
-  const v = parseTyped(raw, min.value, max.value, step.value)
+  const v = parseTyped(raw, min.value, max.value, step.value, { entry: entryMode.value })
   if (v !== null) emit('update:modelValue', v)
 }
 

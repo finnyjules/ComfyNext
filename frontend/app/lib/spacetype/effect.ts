@@ -49,6 +49,24 @@ type ControlMeta = {
    *  `:bindable="false"` rows (Gradient's Shape section). Motion/agent are NOT
    *  affected — use `animatable`/`agent` for those. */
   bindable?: false
+  /**
+   * SOFT RANGE. Numeric rows only (`slider`; the other kinds have no range to
+   * soften). `min`/`max` normally gate typed and keyed entry as well as drawing the
+   * fill — right for almost everything, since the declared range IS the parameter's
+   * domain. `entry: 'unclamped'` keeps the range for the LOOK (fill, handle
+   * position, drag travel, click-to-position) and drops it from ENTRY: a typed
+   * number and an arrow press may land outside it.
+   *
+   * For controls whose range is a general-purpose DESCRIPTION rather than a limit —
+   * 3D Studio's Transform rows, where the gizmo puts an object at x = 35 while the
+   * schema says ±20, and one clamped arrow press would rewrite it to 20 and fan the
+   * −15 delta across the whole selection. Step snapping and NaN rejection are
+   * unaffected in both modes: a soft range is not a soft parser.
+   *
+   * PRESENTATION only — stripped from every derived agent vocabulary the same way
+   * `bindable` is, so opting a row in never changes what the model is offered.
+   */
+  entry?: 'unclamped'
 }
 
 export type ControlSpec = (

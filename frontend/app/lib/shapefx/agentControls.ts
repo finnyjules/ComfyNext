@@ -4,12 +4,12 @@ import { getShaderFillControls, derivedShaderFillControls } from '~/lib/shaderfi
 import type { ShapeConfig } from './config'
 import { visibleShapeControls } from './controls'
 
-/** Strip the schema-only fields (`when`/`agent`/`animatable`) that `ShapeControl`
+/** Strip the schema-only fields (`when`/`agent`/`animatable`/`summary`/`entry`) that `ShapeControl`
  *  and `getShaderFillControls()` may carry, matching visibleShapeControls's own list. */
 function stripMeta(specs: ControlSpec[]): ControlSpec[] {
   return specs
     .filter((c) => (c as any).agent !== false)
-    .map(({ when, agent, animatable, summary, ...spec }: any) => spec as ControlSpec)
+    .map(({ when, agent, animatable, summary, entry, ...spec }: any) => spec as ControlSpec)
 }
 
 /**
