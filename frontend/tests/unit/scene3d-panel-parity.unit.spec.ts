@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import {
   SCENE_PANEL_ANCHOR_KEYS, SCENE_PANEL_ORDER, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
+  SCENE_GEOMETRY_SECTIONS,
   ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls, scenePanelVisible, writeMaterialField,
 } from '~/lib/scene3d/panelPresentation'
+import { MODIFIER_SPECS, PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 import { formatValue, nudgeValue, parseTyped } from '~/lib/studio/row'
 import { scrubValue } from '~/lib/studio/scrub'
 import { groupIntoSections } from '~/lib/studio/sections'
@@ -14,8 +16,8 @@ import { POST_SECTIONS } from '~/lib/studio/post/controls'
 import { SCENE_CONTROLS, type SceneControl } from '~/lib/scene3d/controls'
 import {
   createDecal, createGlbObject, createLight, createPrimitive, defaultDoc,
-  LIGHTING_PRESETS, MATERIAL_TYPES,
-  type MaterialType, type SceneDoc, type SceneObject,
+  LIGHTING_PRESETS, MATERIAL_TYPES, PRIMITIVE_KINDS,
+  type LightKind, type MaterialType, type PrimitiveKind, type SceneDoc, type SceneObject,
 } from '~/lib/scene3d/config'
 
 /**
@@ -194,6 +196,23 @@ const ANCHOR_LABEL: Record<string, string> = {
   'ui.camera.output': 'Output',
   'ui.background.transparent': 'Transparent',
   'ui.background.color': 'Color',
+  // Geometry — the text editor, the remesh block, the five modifier group captions,
+  // the four index-valued pickers, and the Cloner's caption + cost readout.
+  'ui.geometry.text': 'Text',
+  'ui.geometry.mesh': 'Mesh',
+  'ui.mod.group.taper': 'Taper',
+  'ui.mod.group.twist': 'Twist',
+  'ui.mod.group.bend': 'Bend',
+  'ui.mod.group.noise': 'Noise',
+  'ui.mod.group.jitter': 'Jitter',
+  'ui.mod.taperAxis': 'Taper axis',
+  'ui.mod.twistAxis': 'Twist axis',
+  'ui.mod.bendAxis': 'Bend axis',
+  'ui.mod.jitterMode': 'Jitter mode',
+  'ui.cloner.mode': 'Mode',
+  'ui.cloner.axis': 'Around',
+  'ui.cloner.step': 'Step',
+  'ui.cloner.cost': 'Clone cost',
 }
 
 // ── scenarios ────────────────────────────────────────────────────────────────
@@ -203,6 +222,18 @@ const prim = (type: MaterialType): SceneObject => {
   o.material.type = type
   return o
 }
+
+/** A well-formed image decal. (The calls this replaces passed `createDecal`'s four
+ *  arguments in the wrong order — pose and content swapped, a stray fifth — so the
+ *  object under test had no `position` and a `content` that was neither text nor
+ *  image. Nothing read those fields while Decal was hand-written; the migrated Decal
+ *  card branches on `content.type`, so the fixture has to be real.) */
+const imageDecal = (): SceneObject =>
+  createDecal('target', { position: [0, 0, 0], rotation: [0, 0, 0] }, { type: 'image', image: 'a.png' }, [])
+
+const textDecal = (): SceneObject =>
+  createDecal('target', { position: [0, 0, 0], rotation: [0, 0, 0] },
+    { type: 'text', text: 'LABEL', font: 'google:Inter@700', color: '#1a1a1a' }, [])
 
 const RELIEF_OFF = [`${M}relief.source`]
 
@@ -483,8 +514,9 @@ describe('Scene3D panel parity — selection states', () => {
 
   it('a selected decal draws no migrated Material card either', () => {
     const doc = defaultDoc()
-    const cards = designCards(doc, createDecal('img', { type: 'image', image: 'a.png' }, [0, 0, 0], [0, 0, 0], []))
+    const cards = designCards(doc, imageDecal())
     expect(cards.map((s) => s.title)).toEqual(Object.keys(DOC_SCENARIO))
+    expect(panel(doc, imageDecal()).some((c) => c.key.startsWith(M))).toBe(false)
   })
 
   it('with nothing selected only the three doc cards render', () => {
@@ -515,7 +547,7 @@ describe('Scene3D panel parity — Transform', () => {
   it('withholds the Size rows from a light and from a decal — the engine ignores their scale', () => {
     const doc = defaultDoc()
     const light = rendered(doc, createLight('point', []), SCENE_TRANSFORM_SECTIONS)[0]!.keys
-    const decal = rendered(doc, createDecal('img', { type: 'image', image: 'a.png' }, [0, 0, 0], [0, 0, 0], []), SCENE_TRANSFORM_SECTIONS)[0]!.keys
+    const decal = rendered(doc, imageDecal(), SCENE_TRANSFORM_SECTIONS)[0]!.keys
     expect(light).toEqual(TRANSFORM_ROWS.slice(0, 6))
     expect(decal).toEqual(TRANSFORM_ROWS.slice(0, 6))
   })
@@ -606,6 +638,221 @@ describe('Scene3D panel parity — Transform', () => {
     expect(parseTyped('1.37', row.min, row.max, row.step, { entry: row.entry })).toBe(1.37)
     // The step this replaces, kept as the record of what it did: a −1.5% silent resize.
     expect(parseTyped('1.37', row.min, row.max, 0.05, { entry: row.entry })).toBe(1.35)
+  })
+})
+
+// ── Geometry / Light / Decal ─────────────────────────────────────────────────
+//
+// CHARACTERIZATION of the three sections that stayed hand-written through the
+// retrofit, transcribed from `Scene3DStudioSurface.vue`'s own markup (the Geometry
+// StudioSection at 3711-3907, Light at 3909-3943, Decal at 3948-3982 as of 1d26adabd)
+// BEFORE any of it moved into the schema.
+//
+// Geometry's slider rows were never hand-listed even in the template: it iterated
+// `PRIMITIVE_PARAMS[kind]` and `MODIFIER_SPECS` (primParams.ts) and drew a StudioSlider
+// per spec, taking label/hint/min/max/step straight off it. So the transcription IS
+// those two tables — asserting the panel reproduces them, in table order, per primitive
+// kind. Four kinds are ALSO spelled out literally below (box/sphere/text/gem) so a
+// silent edit to primParams.ts cannot move the panel and the expectation together.
+//
+// Deliberate, recorded divergences from the shipped markup:
+//   - Modifiers and Cloner were bare `<details>` with an uppercase summary; they are
+//     nested StudioSections now, still collapsed by default (same as the five Material
+//     sub-blocks the retrofit converted).
+//   - The Light card's body opened with a second, inner "Light" caption above the rows.
+//     The card's own title already says it, so the duplicate is dropped.
+//   - Every option-valued modifier (`taperAxis`/`twistAxis`/`bendAxis`/`jitterMode`/
+//     `cloneMode`/`cloneAxis`) stores an option INDEX, not the option's text, so it
+//     stays a bespoke segmented control behind an anchor rather than becoming a schema
+//     `select` that would write the STRING into a flat number bag.
+
+const geometryCards = (doc: SceneDoc, obj: SceneObject | null) =>
+  rendered(doc, obj, SCENE_GEOMETRY_SECTIONS)
+
+const primOf = (kind: PrimitiveKind): SceneObject => createPrimitive(kind, [])
+
+const GEO = 'object.params.'
+const MOD = 'object.modifiers.'
+
+/** The four kinds spelled out by hand — the guard against primParams.ts and this file
+ *  drifting in step. Rows are `[key, label, min, max, step, hint]`. */
+const GEO_LITERAL: Partial<Record<PrimitiveKind, ReadonlyArray<readonly [string, string, number, number, number, string]>>> = {
+  box: [
+    ['cornerRadius', 'Corner', 0, 0.49, 0.01, 'Rounds off every edge of the box'],
+    ['cornerSides', 'Corner sides', 1, 8, 1, 'How smooth each rounded edge looks'],
+  ],
+  sphere: [
+    ['detail', 'Detail', 4, 64, 1, 'Segment count — low values give a faceted, low-poly look'],
+    ['arc', 'Arc', 30, 360, 1, 'Sweeps only part of the way around, leaving a wedge'],
+    ['sweep', 'Sweep', 10, 180, 1, 'Trims the ball down from the bottom toward a dome'],
+  ],
+  text: [
+    ['size', 'Size', 0.1, 2, 0.05, 'Overall scale of the text'],
+    ['depth', 'Depth', 0, 1, 0.01, 'How far the text extrudes in 3D space'],
+    ['bevel', 'Bevel', 0, 0.1, 0.005, 'Rounds off the edges for a smoother look'],
+    ['bevelSegments', 'Bevel segments', 1, 5, 1, 'How smooth each beveled edge looks'],
+    ['letterSpacing', 'Letter spacing', -0.1, 0.5, 0.01, 'Gap between individual characters'],
+    ['curveSegments', 'Curve segments', 2, 12, 1, 'How detailed the letter curves appear'],
+  ],
+  gem: [
+    ['points', 'Facets', 4, 40, 1, 'How many points form the stone — more gives finer facets'],
+    ['spread', 'Spread', 0, 1, 0.01, 'Tight, pointy stone → wide, full one'],
+    ['depth', 'Depth', 0.2, 2, 0.01, 'Flat, cut-gem slab → deep, chunky stone'],
+    ['gemSeed', 'Seed', 0, 99, 1, 'Shuffles the facets into a different stone'],
+  ],
+}
+
+/** The Modifiers card, as the template laid it out: a lone Subdivide slider, then five
+ *  captioned groups. A caption is an anchor (a plain uppercase `<div>`, not a control);
+ *  an axis/mode picker is an anchor too (it stores an index). */
+const MODIFIERS_ROWS = [
+  `${MOD}subdivide`,
+  'ui.mod.group.taper', `${MOD}taper`, 'ui.mod.taperAxis',
+  'ui.mod.group.twist', `${MOD}twist`, 'ui.mod.twistAxis',
+  'ui.mod.group.bend', `${MOD}bend`, 'ui.mod.bendAxis',
+  'ui.mod.group.noise', `${MOD}noise`, `${MOD}noiseScale`, `${MOD}noiseSeed`,
+  'ui.mod.group.jitter', `${MOD}jitter`, 'ui.mod.jitterMode', `${MOD}jitterSeed`,
+] as const
+
+/** The Cloner card, per mode. CLONER_KEYS swapped the placement controls by mode and
+ *  grid dropped `cloneCount` entirely; the Step block and the cost readout follow in
+ *  every mode. */
+const CLONER_ROWS: Record<number, readonly string[]> = {
+  0: [`${MOD}cloneCount`, 'ui.cloner.mode', `${MOD}cloneOffsetX`, `${MOD}cloneOffsetY`, `${MOD}cloneOffsetZ`],
+  1: [`${MOD}cloneCount`, 'ui.cloner.mode', `${MOD}cloneRadius`, 'ui.cloner.axis'],
+  2: [
+    'ui.cloner.mode',
+    `${MOD}cloneCountX`, `${MOD}cloneCountY`, `${MOD}cloneCountZ`,
+    `${MOD}cloneSpacingX`, `${MOD}cloneSpacingY`, `${MOD}cloneSpacingZ`,
+  ],
+}
+const CLONER_TAIL = [
+  'ui.cloner.step',
+  `${MOD}cloneStepRotX`, `${MOD}cloneStepRotY`, `${MOD}cloneStepRotZ`, `${MOD}cloneStepScale`,
+  'ui.cloner.cost',
+] as const
+
+const clonerRows = (mode: number) => [...CLONER_ROWS[mode]!, ...CLONER_TAIL]
+
+describe('Scene3D panel parity — Geometry', () => {
+  it('draws the Geometry card, then Modifiers and Cloner, for every primitive kind', () => {
+    const doc = defaultDoc()
+    for (const kind of PRIMITIVE_KINDS) {
+      const titles = geometryCards(doc, primOf(kind)).map((s) => s.title)
+      expect(titles, kind).toEqual(['Geometry', 'Modifiers', 'Cloner'])
+    }
+  })
+
+  it('the Geometry card holds that kind\'s PRIMITIVE_PARAMS rows, in table order', () => {
+    const doc = defaultDoc()
+    for (const kind of PRIMITIVE_KINDS) {
+      const keys = geometryCards(doc, primOf(kind)).find((s) => s.title === 'Geometry')!.keys
+      const bespoke = kind === 'text' ? ['ui.geometry.text'] : kind === 'mesh' ? ['ui.geometry.mesh'] : []
+      expect(keys, kind).toEqual([...bespoke, ...PRIMITIVE_PARAMS[kind].map((s) => `${GEO}${s.key}`)])
+    }
+  })
+
+  it('every geometry row carries that kind\'s own label, hint, bounds and step', () => {
+    const doc = defaultDoc()
+    for (const kind of PRIMITIVE_KINDS) {
+      const rows = byKey(doc, primOf(kind))
+      for (const spec of PRIMITIVE_PARAMS[kind]) {
+        const c = rows.get(`${GEO}${spec.key}`)
+        expectRow(c, `${kind}.${spec.key}`, spec.control === 'toggle'
+          ? { label: spec.label, kind: 'switch', hint: spec.hint }
+          : { label: spec.label, kind: 'slider', min: spec.min, max: spec.max, step: spec.step, hint: spec.hint })
+      }
+    }
+  })
+
+  it('the four hand-transcribed kinds match the panel character for character', () => {
+    const doc = defaultDoc()
+    for (const [kind, rows] of Object.entries(GEO_LITERAL)) {
+      const got = byKey(doc, primOf(kind as PrimitiveKind))
+      for (const [key, label, min, max, step, hint] of rows!) {
+        expectRow(got.get(`${GEO}${key}`), `${kind}.${key}`, { label, kind: 'slider', min, max, step, hint })
+      }
+    }
+  })
+
+  it('the same key means different things on different kinds — Depth on text vs gem', () => {
+    const doc = defaultDoc()
+    const onText = byKey(doc, primOf('text')).get(`${GEO}depth`) as unknown as { min: number; max: number; hint: string }
+    const onGem = byKey(doc, primOf('gem')).get(`${GEO}depth`) as unknown as { min: number; max: number; hint: string }
+    expect([onText.min, onText.max]).toEqual([0, 1])
+    expect([onGem.min, onGem.max]).toEqual([0.2, 2])
+    expect(onText.hint).not.toBe(onGem.hint)
+  })
+
+  it('the cylinder cap toggle is a switch over the flat number bag, not a slider', () => {
+    const doc = defaultDoc()
+    const o = primOf('cylinder')
+    const row = byKey(doc, o).get(`${GEO}openEnded`)!
+    expect(row.kind).toBe('switch')
+    expect(readSceneControl(doc, o, `${GEO}openEnded`), 'default 0 reads as off').toBe(false)
+    ;(o as { params?: Record<string, number> }).params = { openEnded: 1 }
+    expect(readSceneControl(doc, o, `${GEO}openEnded`)).toBe(true)
+  })
+
+  it('a mesh primitive has no parametric geometry — only the remesh block', () => {
+    const doc = defaultDoc()
+    expect(PRIMITIVE_PARAMS.mesh).toEqual([])
+    const keys = geometryCards(doc, primOf('mesh')).find((s) => s.title === 'Geometry')!.keys
+    expect(keys).toEqual(['ui.geometry.mesh'])
+  })
+
+  it('the Modifiers card holds the shipped rows, captions and axis pickers, in order', () => {
+    const doc = defaultDoc()
+    const keys = geometryCards(doc, primOf('box')).find((s) => s.title === 'Modifiers')!.keys
+    expect(keys).toEqual([...MODIFIERS_ROWS])
+  })
+
+  it('every modifier row carries MODIFIER_SPECS\' own label, hint, bounds and step', () => {
+    const doc = defaultDoc()
+    const rows = byKey(doc, primOf('box'))
+    for (const spec of MODIFIER_SPECS) {
+      if (spec.control === 'options') continue
+      const c = rows.get(`${MOD}${spec.key}`)
+      if (!c) continue // mode-gated cloner keys: covered by the Cloner cases below
+      expectRow(c, spec.key, {
+        label: spec.label, kind: 'slider', min: spec.min, max: spec.max, step: spec.step, hint: spec.hint,
+      })
+    }
+  })
+
+  it('the Cloner card swaps its placement rows with the mode, and keeps Step + cost', () => {
+    const doc = defaultDoc()
+    for (const mode of [0, 1, 2]) {
+      const o = primOf('box') as { modifiers?: Record<string, number> }
+      o.modifiers = { cloneMode: mode }
+      const keys = geometryCards(doc, o as unknown as SceneObject).find((s) => s.title === 'Cloner')!.keys
+      expect(keys, `mode ${mode}`).toEqual(clonerRows(mode))
+    }
+  })
+
+  it('Modifiers and Cloner start collapsed, exactly as the bare <details> did', () => {
+    expect(scenePanelChrome('standard').Modifiers).toEqual({ open: false })
+    expect(scenePanelChrome('standard').Cloner).toEqual({ open: false })
+  })
+
+  it('no geometry row is offered to a GLB, a light, a decal or an empty selection', () => {
+    const doc = defaultDoc()
+    const glb = createGlbObject('x.glb', [])
+    glb.materialOverride = true
+    for (const obj of [glb, createLight('point', []), imageDecal(), null]) {
+      expect(geometryCards(doc, obj), String((obj as SceneObject | null)?.kind)).toEqual([])
+    }
+  })
+
+  it('reads and writes land on the params / modifiers bags the engine reads', () => {
+    const doc = defaultDoc()
+    const o = primOf('sphere') as SceneObject & { params?: Record<string, number>; modifiers?: Record<string, number> }
+    expect(readSceneControl(doc, o, `${GEO}detail`), 'the spec default, not 0').toBe(48)
+    o.params = { detail: 12 }
+    expect(readSceneControl(doc, o, `${GEO}detail`)).toBe(12)
+    expect(readSceneControl(doc, o, `${MOD}twist`), 'an untouched modifier is the identity').toBe(0)
+    o.modifiers = { twist: 90 }
+    expect(readSceneControl(doc, o, `${MOD}twist`)).toBe(90)
   })
 })
 
@@ -707,12 +954,16 @@ describe('Scene3D panel contract', () => {
 
   it('every card the remap emits is listed in the panel order — nothing is silently dropped', () => {
     const doc = defaultDoc()
-    // Both panels' orders: the surface renders SCENE_TRANSFORM_SECTIONS above the
-    // hand-written Geometry card and SCENE_PANEL_SECTIONS below it, from one row list.
-    const allowed = new Set([...SCENE_TRANSFORM_SECTIONS, ...SCENE_PANEL_ORDER, ...POST_SECTIONS])
+    // All three panels' orders: the surface renders SCENE_TRANSFORM_SECTIONS, then
+    // SCENE_GEOMETRY_SECTIONS (or the sculpt panel in its place), then
+    // SCENE_PANEL_SECTIONS — from one row list.
+    const allowed = new Set([
+      ...SCENE_TRANSFORM_SECTIONS, ...SCENE_GEOMETRY_SECTIONS, ...SCENE_PANEL_ORDER, ...POST_SECTIONS,
+    ])
     for (const type of MATERIAL_TYPES) {
       for (const c of panel(doc, prim(type))) expect(allowed.has(String(c.group)), c.key).toBe(true)
     }
+    for (const c of panel(doc, primOf('gem'))) expect(allowed.has(String(c.group)), c.key).toBe(true)
   })
 
   it('evaluates showIf against the ACTIVE object, so Unlit withholds Roughness', () => {
@@ -743,6 +994,8 @@ describe('Scene3D panel contract', () => {
     expect(scenePanelChrome('standard')).toEqual({
       'Coat & sheen': { open: false }, Glow: { open: false },
       Transparency: { open: false }, Iridescence: { open: false }, Reflection: { open: false },
+      // Geometry's own two bare <details>, collapsed for the same reason.
+      Modifiers: { open: false }, Cloner: { open: false },
     })
     expect(scenePanelChrome('glass').Transparency).toEqual({ open: true })
   })
@@ -834,30 +1087,23 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     expect(rows).toEqual([...DOC_SCENARIO.Background, 'zzBackgroundProbe'])
   })
 
-  it('an unmapped key still returns null for a NOT-YET-migrated group (Geometry)', () => {
-    // Transform used to be this test's example; Task 2 migrated it, so the example moved
-    // to Geometry — still hand-written, still Task 4's job.
+  it('draws an unmapped Geometry-group key in the Geometry card', () => {
+    // This test used to assert the OPPOSITE — Transform was the example until Task 2
+    // migrated it, then Geometry until Task 4 did. No group is left un-migrated, so it
+    // now pins the last fall-through instead of the last hold-out.
     const doc = defaultDoc()
     const novelGeometry: SceneControl = {
       key: 'object.zzGeometryProbe', label: 'Probe', kind: 'slider',
       min: 0, max: 1, step: 0.01, default: 0, group: 'Geometry',
+      agent: false, animatable: false,
     } as SceneControl
     const controls = [...SCENE_CONTROLS, novelGeometry]
-    const keys = scenePanelControls(doc, prim('standard'), controls).map((c) => c.key)
-    expect(keys).not.toContain('object.zzGeometryProbe')
-  })
-
-  it('draws an unmapped Transform-group key in the Transform card', () => {
-    const doc = defaultDoc()
-    const novelTransform: SceneControl = {
-      key: 'object.zzTransformProbe', label: 'Probe', kind: 'slider',
-      min: 0, max: 1, step: 0.01, default: 0, group: 'Transform',
-    } as SceneControl
-    const controls = [...SCENE_CONTROLS, novelTransform]
-    const rows = scenePanelControls(doc, prim('standard'), controls)
-      .filter((c) => c.group === 'Transform')
+    const rows = scenePanelControls(doc, primOf('box'), controls)
+      .filter((c) => c.group === 'Geometry')
       .map((c) => c.key)
-    expect(rows).toEqual([...TRANSFORM_ROWS, 'object.zzTransformProbe'])
+    expect(rows).toEqual([
+      ...PRIMITIVE_PARAMS.box.map((s) => `${GEO}${s.key}`), 'object.zzGeometryProbe',
+    ])
   })
 
   it('an unmapped Material key writes through the exact seam setMaterialControl uses, and reads back', () => {
@@ -895,6 +1141,8 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     expect(SCENE_CONTROLS.some((c) => c.key === 'zzBackgroundProbe')).toBe(false)
     expect(SCENE_CONTROLS.some((c) => c.key === 'object.zzTransformProbe')).toBe(false)
     expect(SCENE_CONTROLS.some((c) => c.key === 'object.zzGeometryProbe')).toBe(false)
+    expect(SCENE_CONTROLS.some((c) => c.key === 'object.zzLightProbe')).toBe(false)
+    expect(SCENE_CONTROLS.some((c) => c.key === 'object.zzDecalProbe')).toBe(false)
   })
 })
 
@@ -914,15 +1162,33 @@ describe('Scene3D surface wiring', () => {
     expect(src).toContain('@pointerdown.capture="onControlsPointerDown"')
   })
 
-  it('no longer hand-writes the migrated sections', () => {
-    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background']) {
+  it('no longer hand-writes any migrated section', () => {
+    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background', 'Geometry']) {
       expect(src, title).not.toContain(`<StudioSection title="${title}"`)
       expect(src, title).not.toContain(`title="${title}" @pointerdown`)
     }
-    // The sections that stay hand-written must still be here.
-    expect(src).toContain('title="Geometry"')
+    // The sections that genuinely stay hand-written — editors, not control rows.
+    expect(src).toContain('title="Motion"')
+    // …and the two still on their way (their own commits follow this one).
     expect(src).toContain('title="Light"')
     expect(src).toContain('title="Decal"')
+  })
+
+  /**
+   * Geometry renders through its OWN panel, not the main one: the sculpt panel replaces
+   * exactly that card (and nothing else in the column) while a stroke session is open,
+   * and one StudioControlPanel cannot have a sibling swapped out of its middle.
+   */
+  it('migrates Geometry — its own panel, sharing the one row list', () => {
+    expect(src).toContain('SCENE_GEOMETRY_SECTIONS')
+    // The per-row proxies that fed only the deleted markup are gone.
+    for (const proxy of ['geoSpecs', 'paramOf', 'MODIFIER_GROUPS', 'CLONER_KEYS']) {
+      expect(src, proxy).not.toContain(`const ${proxy} `)
+      expect(src, proxy).not.toContain(`function ${proxy}(`)
+    }
+    // …and the write branches the new rows dispatch on exist.
+    expect(src).toContain("key.startsWith('object.params.')")
+    expect(src).toContain("key.startsWith('object.modifiers.')")
   })
 
   /**

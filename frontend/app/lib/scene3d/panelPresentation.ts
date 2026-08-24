@@ -4,9 +4,13 @@ import { showIfVisible } from '~/lib/studio/sections'
 import { getByPath } from '~/lib/studio/path'
 import {
   DEFAULT_MATERIAL, MATERIAL_DEFAULTS, gradientAngles,
+  LIGHT_DEFAULTS, DECAL_DEFAULTS, lightIntensityMax,
   type MaterialType, type SceneDoc, type SceneObject,
 } from './config'
-import { SCENE_CONTROLS, type SceneControl } from './controls'
+import { PRIMITIVE_PARAMS, MODIFIER_SPECS, resolveParam } from './primParams'
+import {
+  SCENE_CONTROLS, GEOMETRY_PARAM_PREFIX, MODIFIER_PREFIX, type SceneControl,
+} from './controls'
 
 /**
  * PRESENTATION layer between `SCENE_CONTROLS` and the 3D Studio inspector panel.
@@ -57,15 +61,26 @@ import { SCENE_CONTROLS, type SceneControl } from './controls'
 
 // ── section order + chrome ───────────────────────────────────────────────────
 
-/** The Transform card renders on its own, ABOVE the hand-written Geometry section
- *  (which stays hand-written), so it cannot share a panel with the rest. */
+/** The Transform card renders on its own, ABOVE the Geometry panel, so it cannot share
+ *  a panel with the rest. */
 export const SCENE_TRANSFORM_SECTIONS = ['Transform'] as readonly string[]
 
-/** Material (+ its five shipped sub-blocks, as nesting paths) and the doc-level cards,
- *  in the order the shipped inspector drew them. The hand-written Light and Decal cards
- *  sit ABOVE this panel in the template — they are mutually exclusive with Material
- *  (a light/decal is never a primitive or a GLB), so moving them ahead of it cannot
- *  change what the user sees in any state. */
+/**
+ * The Geometry card and its two sub-cards, in their own panel too — and for a sharper
+ * reason than Transform's. `Scene3DSculptPanel` REPLACES exactly this card (and nothing
+ * else in the inspector column) for the duration of a stroke session, because
+ * `geometryForObject` short-circuits to the session's raw buffer and a Modifiers/Cloner
+ * edit would silently do nothing. A sibling can be swapped out; a card in the middle of
+ * one StudioControlPanel cannot.
+ */
+export const SCENE_GEOMETRY_SECTIONS = [
+  'Geometry', 'Geometry/Modifiers', 'Geometry/Cloner',
+] as readonly string[]
+
+/** Light, Decal, Material (+ its five shipped sub-blocks, as nesting paths) and the
+ *  doc-level cards, in the order the shipped inspector drew them. Light and Decal are
+ *  mutually exclusive with Material — a light or a decal is never a primitive or a GLB —
+ *  so no state ever shows two of the three, whatever the order says. */
 export const SCENE_PANEL_ORDER = [
   'Material',
   'Material/Coat & sheen',
@@ -88,6 +103,10 @@ export const SCENE_PANEL_SECTIONS = [...SCENE_PANEL_ORDER, ...POST_SECTIONS] as 
  * with no `open` attribute start collapsed; Transparency reproduces the shipped
  * `transparencyOpen` ref, which seeded itself open for glass and re-seeded on every
  * material-type change.
+ *
+ * Modifiers and Cloner were bare `<details>` too — peers of the Geometry sliders rather
+ * than of the Material sub-blocks, but collapsed by default for the same reason and now
+ * by the same mechanism.
  */
 export function scenePanelChrome(matType: MaterialType | null): Record<string, { badge?: string; open?: boolean }> {
   return {
@@ -96,6 +115,8 @@ export function scenePanelChrome(matType: MaterialType | null): Record<string, {
     Transparency: { open: matType === 'glass' },
     Iridescence: { open: false },
     Reflection: { open: false },
+    Modifiers: { open: false },
+    Cloner: { open: false },
   }
 }
 
@@ -172,6 +193,11 @@ export function readSceneControl(
   if (key.startsWith('object.')) {
     if (!obj) return 0
     if (key.startsWith('object.material.')) return materialField(obj.material, key.slice('object.material.'.length))
+    if (key.startsWith(GEOMETRY_PARAM_PREFIX)) return geometryParamField(obj, key.slice(GEOMETRY_PARAM_PREFIX.length))
+    if (key.startsWith(MODIFIER_PREFIX)) return modifierField(obj, key.slice(MODIFIER_PREFIX.length))
+    // A decal's spin is radians on disk and degrees in the panel — the same split
+    // `object.rotation.*` has, and the same rounding the deleted `decalSpinDeg` proxy did.
+    if (key === 'object.spin') return Math.round(((obj as { spin?: number }).spin ?? 0) * RAD2DEG)
     // The two conversions the deleted row proxies did, in the read direction. `writeAxis`
     // in the surface is their exact inverse.
     const axis = Number(key.slice(-1)) as 0 | 1 | 2
@@ -181,9 +207,50 @@ export function readSceneControl(
       const base = ctx.baseSize?.[axis] || 1
       return Math.round((obj.scale[axis] ?? 1) * base * 100) / 100
     }
-    return 0
+    // Everything else `object.`-prefixed is a plain leaf ON the object — a light's
+    // colour/intensity/…, a decal's size/wrap/opacity, a text decal's `content.color`.
+    // The defaults mirror the deleted `lightParam`/`decalParam` proxies: an untouched
+    // optional field reads its shipped default, never `undefined` (which would leave a
+    // slider with no number at all).
+    return objectLeaf(obj, key.slice('object.'.length))
   }
   return (getByPath(doc, key) as ParamValue | undefined) ?? 0
+}
+
+/** One geometry parameter, resolved the way the engine resolves it: the stored value
+ *  clamped to the SELECTED KIND's spec, else that spec's default. A toggle spec stores
+ *  0 | 1 in the same flat number bag but draws as a switch, so it reads back boolean —
+ *  `setControl`'s writer is the exact inverse. */
+function geometryParamField(obj: SceneObject, sub: string): ParamValue {
+  if (obj.kind !== 'primitive') return 0
+  const specs = PRIMITIVE_PARAMS[obj.primitive]
+  const spec = specs.find((s) => s.key === sub)
+  if (!spec) return 0
+  const v = resolveParam(specs, obj.params, sub)
+  return spec.control === 'toggle' ? v > 0.5 : v
+}
+
+/** One modifier value. Guarded by its own spec lookup rather than calling
+ *  `modifierValue` straight: that throws on an undeclared key, and a reader the panel
+ *  calls for whatever key it is handed must not. */
+function modifierField(obj: SceneObject, sub: string): ParamValue {
+  if (obj.kind !== 'primitive') return 0
+  const spec = MODIFIER_SPECS.find((s) => s.key === sub)
+  if (!spec) return 0
+  return resolveParam(MODIFIER_SPECS, obj.modifiers, sub)
+}
+
+const LEAF_DEFAULTS: Record<SceneObject['kind'], Record<string, ParamValue>> = {
+  light: { ...LIGHT_DEFAULTS },
+  decal: { size: DECAL_DEFAULTS.size, depth: DECAL_DEFAULTS.depth, spin: DECAL_DEFAULTS.spin,
+    opacity: DECAL_DEFAULTS.opacity, 'content.color': DECAL_DEFAULTS.color },
+  primitive: {}, glb: {}, group: {},
+}
+
+function objectLeaf(obj: SceneObject, rest: string): ParamValue {
+  const v = getByPath(obj, rest)
+  if (v !== undefined && v !== null) return v as ParamValue
+  return LEAF_DEFAULTS[obj.kind][rest] ?? 0
 }
 
 // ── the environment segmented's display labels ───────────────────────────────
@@ -231,6 +298,62 @@ const reliefOn = (obj: SceneObject | null | undefined): boolean =>
 const isType = (obj: SceneObject | null | undefined, ...types: MaterialType[]): boolean =>
   editable(obj) && types.includes(typeOf(obj)!)
 
+// ── Geometry / Light / Decal helpers ─────────────────────────────────────────
+// `kind` narrows to a primitive; the optional second argument narrows further to one
+// PrimitiveKind (the two per-kind editors below).
+const isPrim = (obj: SceneObject | null | undefined, primitive?: string): boolean =>
+  !!obj && obj.kind === 'primitive' && (primitive === undefined || obj.primitive === primitive)
+
+const isDecalContent = (obj: SceneObject | null | undefined, type: 'text' | 'image'): boolean =>
+  !!obj && obj.kind === 'decal' && obj.content.type === type
+
+const modSpecOf = (key: string) => MODIFIER_SPECS.find((s) => s.key === key)!
+const modLabel = (key: string): string => modSpecOf(key).label
+
+const cloneModeOf = (obj: SceneObject | null | undefined): number =>
+  isPrim(obj) ? Math.round(resolveParam(MODIFIER_SPECS, (obj as { modifiers?: Record<string, number> }).modifiers, 'cloneMode')) : 0
+
+/**
+ * The Modifiers card's five captioned groups, as the deleted `MODIFIER_GROUPS` computed
+ * had them: a caption, then that deformation's amount slider, then its axis/mode picker
+ * where it has one. Subdivide sits above them all, ungrouped.
+ */
+const MODIFIER_GROUPS = [
+  { key: 'taper', label: 'Taper', keys: ['taper', 'taperAxis'] },
+  { key: 'twist', label: 'Twist', keys: ['twist', 'twistAxis'] },
+  { key: 'bend', label: 'Bend', keys: ['bend', 'bendAxis'] },
+  { key: 'noise', label: 'Noise', keys: ['noise', 'noiseScale', 'noiseSeed'] },
+  { key: 'jitter', label: 'Jitter', keys: ['jitter', 'jitterMode', 'jitterSeed'] },
+] as const
+
+/** The Cloner's placement rows, swapped by mode exactly as the deleted `CLONER_KEYS`
+ *  computed swapped them — grid drops `cloneCount` outright, its three axis counts
+ *  replacing it. The Step block and the cost readout follow in every mode. */
+function clonerKeys(mode: number): readonly string[] {
+  if (mode === 1) return ['cloneCount', 'cloneMode', 'cloneRadius', 'cloneAxis']
+  if (mode === 2) {
+    return [
+      'cloneMode',
+      'cloneCountX', 'cloneCountY', 'cloneCountZ',
+      'cloneSpacingX', 'cloneSpacingY', 'cloneSpacingZ',
+    ]
+  }
+  return ['cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ']
+}
+const CLONER_STEP_KEYS = ['cloneStepRotX', 'cloneStepRotY', 'cloneStepRotZ', 'cloneStepScale'] as const
+
+/** The anchor that stands in for each index-valued modifier — spelled out rather than
+ *  derived from the key, because the two Cloner ones are captioned by their POSITION in
+ *  that card ("Mode", "Around"), not by their bag key. */
+const OPTION_ANCHOR: Record<string, string> = {
+  taperAxis: 'ui.mod.taperAxis', twistAxis: 'ui.mod.twistAxis', bendAxis: 'ui.mod.bendAxis',
+  jitterMode: 'ui.mod.jitterMode', cloneMode: 'ui.cloner.mode', cloneAxis: 'ui.cloner.axis',
+}
+
+/** A modifier key's row: the index-valued ones are anchors (a bespoke segmented control),
+ *  everything else is a schema row. */
+const modRowKey = (key: string): string => OPTION_ANCHOR[key] ?? `${MODIFIER_PREFIX}${key}`
+
 const SCENE_PANEL_ANCHORS: readonly ScenePanelAnchor[] = [
   // Material card
   { key: 'ui.material.override', label: 'Override materials', visible: (_d, o) => o?.kind === 'glb' },
@@ -267,6 +390,27 @@ const SCENE_PANEL_ANCHORS: readonly ScenePanelAnchor[] = [
     key: 'ui.relief.shader', label: 'Relief effect',
     visible: (_d, o) => reliefOn(o) && materialField(o!.material, 'relief.source') === 'shader',
   },
+  // Geometry card — the two bespoke per-kind editors. Text's string + font picker (+ its
+  // weight selects) and mesh's vertex readout / Remesh / Solidify block are editors, not
+  // parameters: `content` is a string and a font token, and Resolution/Thickness are
+  // transient inputs to an ACTION, not fields on the document at all.
+  { key: 'ui.geometry.text', label: 'Text', visible: (_d, o) => isPrim(o, 'text') },
+  { key: 'ui.geometry.mesh', label: 'Mesh', visible: (_d, o) => isPrim(o, 'mesh') },
+  // Modifiers — the five group captions (plain uppercase labels in the shipped markup)
+  // and the four index-valued pickers. See controls.ts on why an index picker cannot be
+  // a schema `select`.
+  ...MODIFIER_GROUPS.map((g) => ({
+    key: `ui.mod.group.${g.key}`, label: g.label, visible: (_d: SceneDoc, o: SceneObject | null | undefined) => isPrim(o),
+  })),
+  ...(['taperAxis', 'twistAxis', 'bendAxis', 'jitterMode'] as const).map((k) => ({
+    key: `ui.mod.${k}`, label: modLabel(k), visible: (_d: SceneDoc, o: SceneObject | null | undefined) => isPrim(o),
+  })),
+  // Cloner — the mode picker (always), the radial axis picker, the Step caption, and the
+  // live copies/vertices cost readout.
+  { key: 'ui.cloner.mode', label: modLabel('cloneMode'), visible: (_d, o) => isPrim(o) },
+  { key: 'ui.cloner.axis', label: modLabel('cloneAxis'), visible: (_d, o) => isPrim(o) && cloneModeOf(o) === 1 },
+  { key: 'ui.cloner.step', label: 'Step', visible: (_d, o) => isPrim(o) },
+  { key: 'ui.cloner.cost', label: 'Clone cost', visible: (_d, o) => isPrim(o) },
   // Camera / Background
   { key: 'ui.camera.output', label: 'Output', visible: () => true },
   { key: 'ui.background.transparent', label: 'Transparent', visible: () => true },
@@ -332,6 +476,46 @@ const SUB_CARDS: Record<string, readonly string[]> = {
   ],
 }
 
+/** The Light and Decal cards, in the order the shipped `<template v-if>` chains drew
+ *  them. Both are flat lists — nothing here depends on the object beyond the `when`
+ *  gates the schema already carries. */
+const KIND_CARDS: Record<string, readonly string[]> = {
+  Light: [
+    'object.color', 'object.intensity', 'object.distance', 'object.decay', 'object.castShadow',
+    'object.angle', 'object.penumbra', 'object.width', 'object.height',
+  ],
+  Decal: [
+    'ui.decal.text', 'object.content.color', 'ui.decal.image',
+    'object.size', 'object.spin', 'object.depth', 'object.opacity',
+    'ui.decal.reposition',
+  ],
+}
+
+/** The three Geometry cards. Unlike every other card these depend on the SELECTION —
+ *  which primitive kind is selected decides the parameter rows outright, and the live
+ *  clone mode swaps the Cloner's placement rows — so they are computed, not tabulated,
+ *  from the same two sources the deleted template iterated. */
+function geometryCardOrder(card: string, obj: SceneObject | null | undefined): readonly string[] {
+  if (card === 'Geometry') {
+    const params = isPrim(obj)
+      ? PRIMITIVE_PARAMS[(obj as { primitive: keyof typeof PRIMITIVE_PARAMS }).primitive]
+      : []
+    return ['ui.geometry.text', 'ui.geometry.mesh', ...params.map((s) => `${GEOMETRY_PARAM_PREFIX}${s.key}`)]
+  }
+  if (card === 'Geometry/Modifiers') {
+    return [
+      `${MODIFIER_PREFIX}subdivide`,
+      ...MODIFIER_GROUPS.flatMap((g) => [`ui.mod.group.${g.key}`, ...g.keys.map(modRowKey)]),
+    ]
+  }
+  return [
+    ...clonerKeys(cloneModeOf(obj)).map(modRowKey),
+    'ui.cloner.step', ...CLONER_STEP_KEYS.map((k) => `${MODIFIER_PREFIX}${k}`), 'ui.cloner.cost',
+  ]
+}
+
+const isGeometryCard = (card: string): boolean => card === 'Geometry' || card.startsWith('Geometry/')
+
 const DOC_CARDS: Record<string, readonly string[]> = {
   Transform: [
     'object.position.0', 'object.position.1', 'object.position.2',
@@ -361,23 +545,40 @@ const DOC_CARDS: Record<string, readonly string[]> = {
  * the bespoke-block anchors call this with no third argument; they carry no real schema
  * `group` and must keep resolving through the allow-lists alone.
  *
- * Still returns null for a key whose group ISN'T migrated yet — Geometry/Light/Decal
- * (Task 4) — so those sections stay hand-written exactly as before. Transform WAS on that
- * list; Task 2's soft-range row lifted it.
+ * Every group is migrated now, so this returns null only for a key nothing claims —
+ * an anchor whose card is not on screen, or a control in a group that does not exist.
+ * (Transform was the last hold-out until Task 2's soft-range row; Geometry/Light/Decal
+ * until Task 4.)
+ *
+ * Geometry is the one group that fans out to THREE cards, so its keys are routed by
+ * prefix rather than by an allow-list: a parameter belongs to Geometry, a `clone*`
+ * modifier to Cloner, any other modifier to Modifiers.
  */
 function panelCardOf(key: string, matType: MaterialType | null, group?: string): string | null {
+  if (key.startsWith(GEOMETRY_PARAM_PREFIX) || key.startsWith('ui.geometry.')) return 'Geometry'
+  if (key.startsWith('ui.mod.')) return 'Geometry/Modifiers'
+  if (key.startsWith('ui.cloner.')) return 'Geometry/Cloner'
+  if (key.startsWith(MODIFIER_PREFIX)) {
+    return key.slice(MODIFIER_PREFIX.length).startsWith('clone') ? 'Geometry/Cloner' : 'Geometry/Modifiers'
+  }
+  for (const [card, keys] of Object.entries(KIND_CARDS)) if (keys.includes(key)) return card
   for (const [card, keys] of Object.entries(DOC_CARDS)) if (keys.includes(key)) return card
   if (MATERIAL_HEAD.includes(key)) return 'Material'
   if (matType && MATERIAL_BODY[matType].includes(key)) return 'Material'
   for (const [card, keys] of Object.entries(SUB_CARDS)) if (keys.includes(key)) return card
   if (group === 'Material') return 'Material'
+  if (group === 'Geometry') return 'Geometry'
   if (group === 'Camera' || group === 'Lighting' || group === 'Background' || group === 'Transform') return group
+  if (group === 'Light' || group === 'Decal') return group
   return null
 }
 
-function cardOrder(card: string, matType: MaterialType | null): readonly string[] {
+function cardOrder(
+  card: string, matType: MaterialType | null, obj: SceneObject | null | undefined,
+): readonly string[] {
   if (card === 'Material') return [...MATERIAL_HEAD, ...(matType ? MATERIAL_BODY[matType] : [])]
-  return SUB_CARDS[card] ?? DOC_CARDS[card] ?? []
+  if (isGeometryCard(card)) return geometryCardOrder(card, obj)
+  return SUB_CARDS[card] ?? KIND_CARDS[card] ?? DOC_CARDS[card] ?? []
 }
 
 // ── the shipped label / hint / range overrides ───────────────────────────────
@@ -425,6 +626,35 @@ const OVERRIDE: Record<string, RowPatch> = {
   'object.rotation.0': { min: -180, max: 180, step: 1, hint: null },
   'object.rotation.1': { min: -180, max: 180, step: 1, hint: null },
   'object.rotation.2': { min: -180, max: 180, step: 1, hint: null },
+  // A decal's spin: the same radians-on-disk / degrees-on-screen split, and the shipped
+  // row kept its descriptive tooltip rather than announcing the unit.
+  'object.spin': { min: -180, max: 180, step: 1 },
+}
+
+/**
+ * Bounds and captions that depend on the SELECTION, not just on the key — the two the
+ * template computed per row rather than writing down.
+ *
+ * Geometry is the big one: one schema entry per param KEY (keys are unique, see
+ * `geometryParamControls`), but `detail` means 4..64 segments on a sphere and 0..3
+ * subdivisions on an icosahedron. The row the user sees is the SELECTED kind's own
+ * `ParamSpec`, verbatim — which is what the template drew, since it iterated
+ * `PRIMITIVE_PARAMS[kind]` directly.
+ *
+ * Light intensity is the small one: `lightIntensityMaxValue` scaled the ceiling to the
+ * light kind, because point/spot are physical (candela, inverse-square) and an area panel
+ * is not.
+ */
+function dynamicPatch(key: string, obj: SceneObject | null | undefined): RowPatch | null {
+  if (key.startsWith(GEOMETRY_PARAM_PREFIX) && isPrim(obj)) {
+    const sub = key.slice(GEOMETRY_PARAM_PREFIX.length)
+    const spec = PRIMITIVE_PARAMS[(obj as { primitive: keyof typeof PRIMITIVE_PARAMS }).primitive]
+      .find((s) => s.key === sub)
+    if (!spec) return null
+    return { label: spec.label, hint: spec.hint, min: spec.min, max: spec.max, step: spec.step }
+  }
+  if (key === 'object.intensity' && obj?.kind === 'light') return { max: lightIntensityMax(obj.light) }
+  return null
 }
 
 /** Opalescent moves three rows into the main body AND re-captions them — the shipped
@@ -507,12 +737,15 @@ export function scenePanelVisible(
 
 function withPresentation(
   c: SceneControl, card: string, matType: MaterialType | null, ctx: SceneReadCtx,
+  obj: SceneObject | null | undefined,
 ): ControlSpec {
   const out: Record<string, unknown> = { ...c, group: card, bindable: false }
   delete out.when
   const patches: RowPatch[] = []
   if (OVERRIDE[c.key]) patches.push(OVERRIDE[c.key]!)
   if (matType === 'opalescent' && OPAL_OVERRIDE[c.key]) patches.push(OPAL_OVERRIDE[c.key]!)
+  const dyn = dynamicPatch(c.key, obj)
+  if (dyn) patches.push(dyn)
   if (c.key.startsWith('object.scale.')) patches.push(sizeOverride(Number(c.key.slice(-1)) as 0 | 1 | 2, ctx))
   for (const p of patches) {
     for (const [k, v] of Object.entries(p)) {
@@ -559,7 +792,7 @@ export function scenePanelControls(
     const card = panelCardOf(c.key, matType, c.group)
     if (!card) continue
     if (!scenePanelVisible(c, doc, obj, ctx)) continue
-    push(card, withPresentation(c, card, matType, ctx))
+    push(card, withPresentation(c, card, matType, ctx, obj))
   }
   for (const a of SCENE_PANEL_ANCHORS) {
     const card = panelCardOf(a.key, matType)
@@ -570,7 +803,7 @@ export function scenePanelControls(
 
   const out: ControlSpec[] = []
   for (const [card, rows] of byCard) {
-    const order = cardOrder(card, matType)
+    const order = cardOrder(card, matType, obj)
     const at = new Map(order.map((k, i) => [k, i]))
     rows.sort((a, b) => (at.get(a.key) ?? Number.MAX_SAFE_INTEGER) - (at.get(b.key) ?? Number.MAX_SAFE_INTEGER))
     out.push(...rows)

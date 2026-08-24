@@ -2,8 +2,10 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 import {
   MATERIAL_TYPES, MATERIAL_DEFAULTS, DEFAULT_MATERIAL, LIGHTING_PRESETS, ENVIRONMENT_KINDS, defaultDoc,
+  PRIMITIVE_KINDS, LIGHT_DEFAULTS, DECAL_DEFAULTS, lightIntensityMax,
   type SceneDoc, type SceneObject, type MaterialType,
 } from './config'
+import { PRIMITIVE_PARAMS, MODIFIER_SPECS, modifierValue, type ParamSpec } from './primParams'
 
 /**
  * The single declarative description of Scene3D (3D Studio)'s parameters.
@@ -46,16 +48,34 @@ import {
  * `showFloor` (scene-level, doc.showFloor) also joins here, under a new 'Background'
  * group — the grid + shadow-catcher ground toggle from the surface's Background panel.
  *
+ * ## The inspector-only tail: Geometry, Light, Decal
+ * Three whole panel sections used to be hand-written markup, outside this schema
+ * entirely: the per-primitive geometry `params`, the shared modifier/cloner stack, the
+ * `LightObject` fields, and the `DecalObject` projection fields. They are all declared
+ * here now, so the 3D inspector draws NOTHING by hand except genuine editors (the object
+ * tree, sculpt/merge, the object-motion pickers, the add menus).
+ *
+ * Every one of those entries is `agent: false, animatable: false`. Declaring a control so
+ * the INSPECTOR can draw it must not silently widen what a model may change nor what the
+ * motion picker offers — granting the agent geometry/light/decal knobs is a separate,
+ * later decision. The same two-flags-move-together rule the per-type material branches
+ * above already follow.
+ *
+ * Two of them are derived rather than hand-listed, because the TEMPLATE derived them too
+ * (it iterated the same two tables): see `geometryParamControls` and
+ * `modifierControls` below.
+ *
  * ## Deliberately NOT in this schema
  * - GLB `url` (an asset reference, not a tunable) and `GlbObject.materialOverride`
  *   (boolean — see the booleans note above; whether it's ON gates every `object.material.*`
  *   control via `when`, but the flag itself isn't a control).
- * - The primitive modifier stack (`primParams.ts` MODIFIER_SPECS) and per-primitive
- *   geometry `params` — a distinct, already-parametric system with its own key space.
- * - Light-specific properties (`LightObject.color/intensity/distance/decay/angle/
- *   penumbra/width/height/castShadow`) — lights are a third object kind with no
- *   Collection/agent story yet; folding them in here would need the same `object.`
- *   addressing but pointed at fields this schema doesn't otherwise touch.
+ * - The option-valued modifiers (`taperAxis`/`twistAxis`/`bendAxis`/`jitterMode`/
+ *   `cloneMode`/`cloneAxis`). They store the option's INDEX in the same flat number bag
+ *   as the sliders, so a `select` here would write the STRING 'y' where a 1 belongs —
+ *   the exact corruption the booleans note above warns about, one type over. They stay
+ *   bespoke segmented controls behind a panel anchor.
+ * - A decal's text/font and a text primitive's string/font (`content.text`/`content.font`)
+ *   — a text field and a font picker, not parameters.
  * - Per-object motion presets (`ObjectMotion` — loop/in/out/offset) and camera motion
  *   presets — these are their own editor (`app/lib/scene3d/motion/`), not param sliders.
  * - `background` (the colour/transparency value itself — a stateful proxy with
@@ -75,7 +95,10 @@ export type SceneControl = ControlSpec & {
  *  visibleSceneControls. POST_SECTIONS ('Effects', 'Effects/Bloom', ...) is appended so
  *  the shared post stack's nested sections land after the hand-declared groups — mirrors
  *  texturefx/sections.ts's `...POST_SECTIONS` append. */
-export const SCENE_SECTIONS = ['Material', 'Lighting', 'Camera', 'Background', 'Transform', ...POST_SECTIONS] as const
+export const SCENE_SECTIONS = [
+  'Material', 'Lighting', 'Camera', 'Background', 'Transform', 'Geometry', 'Light', 'Decal',
+  ...POST_SECTIONS,
+] as const
 
 // ── `when` predicates ────────────────────────────────────────────────────────────
 // Material controls only make sense on an object that actually renders `.material`:
@@ -189,6 +212,125 @@ const color = (key: string, label: string, def: string, group: string, extra: Pa
   ({ key, label, kind: 'color', default: def, group, ...extra } as SceneControl)
 
 const D = defaultDoc()
+
+// ── Geometry / Light / Decal: the inspector-only tail ───────────────────────────────
+// Every entry below carries this pair. See the module doc's "inspector-only tail" note:
+// the panel gains a row, the agent and the motion picker gain nothing.
+const INSPECTOR_ONLY = { agent: false, animatable: false } as const
+
+/** Where a primitive's per-kind geometry parameters live (`PrimitiveObject.params`,
+ *  keyed by `ParamSpec.key`). Exported so the panel's read/write plumbing and this
+ *  schema cannot disagree about the prefix. */
+export const GEOMETRY_PARAM_PREFIX = 'object.params.'
+/** …and the shared deformation/cloner bag (`PrimitiveObject.modifiers`). */
+export const MODIFIER_PREFIX = 'object.modifiers.'
+
+const isPrimitiveObj = (obj?: SceneObject): obj is Extract<SceneObject, { kind: 'primitive' }> =>
+  !!obj && obj.kind === 'primitive'
+
+/** A primitive's live clone mode as an index (0 linear, 1 radial, 2 grid). Mirrors the
+ *  template's own `cloneMode` computed, which is what swapped the Cloner's rows. */
+const cloneModeOf = (obj?: SceneObject): number =>
+  isPrimitiveObj(obj) ? Math.round(modifierValue(obj.modifiers, 'cloneMode')) : 0
+
+/**
+ * The per-primitive geometry parameters, DERIVED from `PRIMITIVE_PARAMS` rather than
+ * re-typed — exactly as the deleted template derived them (`geoSpecs` was
+ * `PRIMITIVE_PARAMS[o.primitive]`, drawn one StudioSlider per spec).
+ *
+ * One entry per distinct param KEY, not per (kind, key) pair: the keys are the schema's
+ * identity (`scene3d-controls.unit.spec.ts` asserts they are unique, and a duplicate
+ * would make `object.params.detail` mean two different things). But `detail` genuinely
+ * IS two different things — 4..64 segments on a sphere, 0..3 subdivisions on an
+ * icosahedron, 32..256 on a torus knot — so what a single entry can honestly declare is
+ * the UNION: the widest range any kind allows, the finest step any kind uses, and the
+ * first declaring kind's caption and default. The panel then narrows each row to the
+ * SELECTED kind's own spec (`panelPresentation.ts`'s per-kind patch), which is what the
+ * user sees and what the parity spec pins. Nothing else reads these bounds — the entries
+ * are `agent: false, animatable: false`.
+ */
+function geometryParamControls(): SceneControl[] {
+  const byKey = new Map<string, ParamSpec[]>()
+  for (const kind of PRIMITIVE_KINDS) {
+    for (const spec of PRIMITIVE_PARAMS[kind]) {
+      if (!byKey.has(spec.key)) byKey.set(spec.key, [])
+      byKey.get(spec.key)!.push(spec)
+    }
+  }
+  const out: SceneControl[] = []
+  for (const [key, specs] of byKey) {
+    const first = specs[0]!
+    const declares = (_doc: SceneDoc, obj?: SceneObject): boolean =>
+      isPrimitiveObj(obj) && PRIMITIVE_PARAMS[obj.primitive].some((s) => s.key === key)
+    // A toggle spec stores 0 | 1 in the same flat number bag; `switch` is still the
+    // right KIND (the template drew a checkbox), and the panel's reader/writer convert
+    // at the seam so the bag stays numbers. See panelPresentation's own note.
+    if (specs.some((s) => s.control === 'toggle')) {
+      out.push({
+        key: `${GEOMETRY_PARAM_PREFIX}${key}`, label: first.label, kind: 'switch',
+        default: first.default > 0.5, group: 'Geometry', hint: first.hint,
+        when: declares, ...INSPECTOR_ONLY,
+      } as SceneControl)
+      continue
+    }
+    out.push(slider(
+      `${GEOMETRY_PARAM_PREFIX}${key}`, first.label,
+      Math.min(...specs.map((s) => s.min)), Math.max(...specs.map((s) => s.max)),
+      Math.min(...specs.map((s) => s.step)), 'Geometry', first.default, first.hint,
+      { when: declares, ...INSPECTOR_ONLY },
+    ))
+  }
+  return out
+}
+
+/**
+ * The deformation + cloner stack, derived from `MODIFIER_SPECS` the same way. Unlike the
+ * geometry params these are shared by every primitive kind, so each spec's own bounds are
+ * the truth and no per-kind narrowing is needed.
+ *
+ * `control: 'options'` specs are skipped — they store an index (see the module doc's
+ * "Deliberately NOT in this schema"). The cloner's placement rows carry the template's
+ * own mode gating: `CLONER_KEYS` swapped them with the mode, and grid dropped
+ * `cloneCount` outright in favour of its three axis counts.
+ */
+const CLONE_MODE_GATE: Record<string, number[]> = {
+  cloneCount: [0, 1],
+  cloneOffsetX: [0], cloneOffsetY: [0], cloneOffsetZ: [0],
+  cloneRadius: [1],
+  cloneCountX: [2], cloneCountY: [2], cloneCountZ: [2],
+  cloneSpacingX: [2], cloneSpacingY: [2], cloneSpacingZ: [2],
+}
+
+function modifierControls(): SceneControl[] {
+  const out: SceneControl[] = []
+  for (const spec of MODIFIER_SPECS) {
+    if (spec.control === 'options') continue
+    const modes = CLONE_MODE_GATE[spec.key]
+    const when = modes
+      ? (_doc: SceneDoc, obj?: SceneObject) => isPrimitiveObj(obj) && modes.includes(cloneModeOf(obj))
+      : (_doc: SceneDoc, obj?: SceneObject) => isPrimitiveObj(obj)
+    out.push(slider(
+      `${MODIFIER_PREFIX}${spec.key}`, spec.label, spec.min, spec.max, spec.step,
+      'Geometry', spec.default, spec.hint, { when, ...INSPECTOR_ONLY },
+    ))
+  }
+  return out
+}
+
+// Light fields sit FLAT on `LightObject` (config.ts), not under a `light.` sub-object —
+// `object.light` is already taken, it holds the KIND ('point' | 'spot' | 'rect'). So the
+// keys are `object.color`, `object.intensity`, … addressing real leaves on the object.
+const isLight = (_doc: SceneDoc, obj?: SceneObject): boolean => !!obj && obj.kind === 'light'
+const isPointOrSpot = (_doc: SceneDoc, obj?: SceneObject): boolean =>
+  !!obj && obj.kind === 'light' && (obj.light === 'point' || obj.light === 'spot')
+const isSpotLight = (_doc: SceneDoc, obj?: SceneObject): boolean =>
+  !!obj && obj.kind === 'light' && obj.light === 'spot'
+const isRectLight = (_doc: SceneDoc, obj?: SceneObject): boolean =>
+  !!obj && obj.kind === 'light' && obj.light === 'rect'
+
+const isDecal = (_doc: SceneDoc, obj?: SceneObject): boolean => !!obj && obj.kind === 'decal'
+const isTextDecal = (_doc: SceneDoc, obj?: SceneObject): boolean =>
+  !!obj && obj.kind === 'decal' && obj.content.type === 'text'
 
 export const SCENE_CONTROLS: SceneControl[] = [
   // --- Material (prefix object.material.) ----------------------------------------
@@ -400,6 +542,56 @@ export const SCENE_CONTROLS: SceneControl[] = [
   slider('object.scale.0', 'Scale X', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false, entry: 'unclamped' }),
   slider('object.scale.1', 'Scale Y', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false, entry: 'unclamped' }),
   slider('object.scale.2', 'Scale Z', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false, entry: 'unclamped' }),
+
+  // --- Geometry (prefix object.params. / object.modifiers.) -------------------------
+  // Derived, not hand-listed — see the two functions' own docs. The panel splits this
+  // ONE schema group into three cards (Geometry / Modifiers / Cloner), exactly as
+  // Material's five sub-blocks come out of the single 'Material' group.
+  ...geometryParamControls(),
+  ...modifierControls(),
+
+  // --- Light (prefix object., flat on LightObject) ----------------------------------
+  color('object.color', 'Color', LIGHT_DEFAULTS.color, 'Light', { when: isLight, ...INSPECTOR_ONLY }),
+  // The ceiling is the ONE bound the template computed per light kind
+  // (`lightIntensityMaxValue`): point/spot are physical (candela, inverse-square) and run
+  // to 600, an area panel to 60. Declared at the point/spot ceiling — the wider of the
+  // two, so the declaration contains every reachable value — and narrowed to the SELECTED
+  // light's own maximum by panelPresentation.
+  slider('object.intensity', 'Intensity', 0, lightIntensityMax('point'), 1, 'Light', LIGHT_DEFAULTS.intensity,
+    'Brightness of this light — point/spot use physical falloff, so they scale much higher',
+    { when: isLight, ...INSPECTOR_ONLY }),
+  slider('object.distance', 'Distance', 0, 30, 0.5, 'Light', LIGHT_DEFAULTS.distance,
+    'How far the light reaches — 0 means infinite', { when: isPointOrSpot, ...INSPECTOR_ONLY }),
+  slider('object.decay', 'Decay', 0, 3, 0.1, 'Light', LIGHT_DEFAULTS.decay,
+    'How quickly the light fades over distance', { when: isPointOrSpot, ...INSPECTOR_ONLY }),
+  {
+    key: 'object.castShadow', label: 'Cast shadow', kind: 'switch', default: LIGHT_DEFAULTS.castShadow,
+    group: 'Light', when: isPointOrSpot, ...INSPECTOR_ONLY,
+  } as SceneControl,
+  slider('object.angle', 'Angle', 0.05, 1.4, 0.01, 'Light', LIGHT_DEFAULTS.angle,
+    'Cone half-angle of the spot beam', { when: isSpotLight, ...INSPECTOR_ONLY }),
+  slider('object.penumbra', 'Penumbra', 0, 1, 0.05, 'Light', LIGHT_DEFAULTS.penumbra,
+    "Softness of the spot beam's edge", { when: isSpotLight, ...INSPECTOR_ONLY }),
+  slider('object.width', 'Width', 0.2, 10, 0.1, 'Light', LIGHT_DEFAULTS.width,
+    'Width of the area light panel', { when: isRectLight, ...INSPECTOR_ONLY }),
+  slider('object.height', 'Height', 0.2, 10, 0.1, 'Light', LIGHT_DEFAULTS.height,
+    'Height of the area light panel', { when: isRectLight, ...INSPECTOR_ONLY }),
+
+  // --- Decal (prefix object., flat on DecalObject) ----------------------------------
+  // `spin` is RADIANS on disk (the engine feeds it straight to the projector) and was
+  // ALWAYS edited in degrees, exactly like `object.rotation.*` above: the schema
+  // addresses the stored radian value, and the panel's own override rescales the row to
+  // −180..180. `depth` is captioned "Wrap" in the inspector — it is the projection box's
+  // depth, i.e. how far the sticker wraps around curvature.
+  color('object.content.color', 'Color', DECAL_DEFAULTS.color, 'Decal', { when: isTextDecal, ...INSPECTOR_ONLY }),
+  slider('object.size', 'Size', 0.05, 3, 0.01, 'Decal', DECAL_DEFAULTS.size,
+    'Sticker width on the surface', { when: isDecal, ...INSPECTOR_ONLY }),
+  slider('object.spin', 'Spin', -Math.PI, Math.PI, 0.01, 'Decal', DECAL_DEFAULTS.spin,
+    'Rotation around the surface normal', { when: isDecal, ...INSPECTOR_ONLY }),
+  slider('object.depth', 'Wrap', 0.05, 2, 0.01, 'Decal', DECAL_DEFAULTS.depth,
+    'How far the sticker wraps around curved surfaces', { when: isDecal, ...INSPECTOR_ONLY }),
+  slider('object.opacity', 'Opacity', 0, 1, 0.01, 'Decal', DECAL_DEFAULTS.opacity,
+    'How solid the sticker sits on the surface', { when: isDecal, ...INSPECTOR_ONLY }),
 ]
 
 /** Controls applicable to `doc`/`obj`, in SCENE_SECTIONS order — the single gate

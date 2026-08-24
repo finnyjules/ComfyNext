@@ -48,7 +48,7 @@ import { remesh, boundsOf } from '~/lib/scene3d/voxel'
 import { mergeMeshes, type MergeOp } from '~/lib/scene3d/voxel/merge'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones, clampedClones } from '~/lib/scene3d/modifiers'
-import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
+import { MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction, type PlacementHit } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
@@ -81,7 +81,7 @@ import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.v
 import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 import {
-  ENV_BY_LABEL, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
+  ENV_BY_LABEL, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS, SCENE_GEOMETRY_SECTIONS,
   readSceneControl, scenePanelChrome, scenePanelControls, writeMaterialField,
 } from '~/lib/scene3d/panelPresentation'
 import { setByPath } from '~/lib/studio/path'
@@ -1016,14 +1016,10 @@ function writeTransform(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2
   writeAxis('position', axis, v)
 }
 
-// Geometry params for the selected primitive. Reads resolve through the schema
-// (stored value clamped, else the spec default); writes create the params bag on
-// first touch. Always iterate PRIMITIVE_PARAMS[kind] — paramValue throws on a key
-// the kind doesn't declare. Toggles store 0 | 1 so params stays a flat number map.
-function paramOf(key: string): number {
-  const o = selected.value
-  return o && o.kind === 'primitive' ? paramValue(o.primitive, o.params, key) : 0
-}
+// Geometry params for the selected primitive. Reads live in panelPresentation.ts (the
+// panel, the parity spec and the write path share one description of them); this is the
+// write half — it creates the params bag on first touch. Toggles store 0 | 1 so `params`
+// stays a flat number map, which is what `resolveParam` and the geometry factory expect.
 function setParam(key: string, v: number): void {
   const o = selected.value
   if (!o || o.kind !== 'primitive') return
@@ -1053,33 +1049,6 @@ function setOption(key: string, label: string): void {
   const i = modSpec(key).options!.indexOf(label)
   if (i >= 0) setMod(key, i)
 }
-const cloneMode = computed(() => Math.round(modOf('cloneMode')))
-// Modifier controls, grouped for the panel. The Cloner lives in its own
-// top-level section (below), so it is not one of these groups.
-const MODIFIER_GROUPS = computed(() => [
-  { label: 'Taper', keys: ['taper', 'taperAxis'] },
-  { label: 'Twist', keys: ['twist', 'twistAxis'] },
-  { label: 'Bend', keys: ['bend', 'bendAxis'] },
-  { label: 'Noise', keys: ['noise', 'noiseScale', 'noiseSeed'] },
-  { label: 'Jitter', keys: ['jitter', 'jitterMode', 'jitterSeed'] },
-])
-// Cloner keys: the placement controls are swapped by mode, so this is computed
-// rather than a static list. Grid drops `cloneCount` entirely — its three axis
-// counts replace it (and `totalClones` reads them instead).
-const CLONER_KEYS = computed(() => {
-  if (cloneMode.value === 1) return ['cloneCount', 'cloneMode', 'cloneRadius', 'cloneAxis']
-  if (cloneMode.value === 2)
-    return [
-      'cloneMode',
-      'cloneCountX', 'cloneCountY', 'cloneCountZ',
-      'cloneSpacingX', 'cloneSpacingY', 'cloneSpacingZ',
-    ]
-  return ['cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ']
-})
-// Step transforms accumulate across copies and apply in every mode, so they sit
-// below the mode-specific controls under their own micro-label.
-const CLONER_STEP_KEYS = ['cloneStepRotX', 'cloneStepRotY', 'cloneStepRotZ', 'cloneStepScale']
-
 // Cost readout. The philosophy here is disclose, don't clamp: detail and counts
 // are user-visible slider values, so silently reducing them would make the
 // readout lie. Instead the totals are shown while dragging.
@@ -1150,12 +1119,6 @@ const baseSize = computed<[number, number, number]>(() => {
     : engine?.baseSizeOf(o.id) ?? [1, 1, 1]
   return lastBaseSize
 })
-// The Geometry panel's rows, straight from the schema — never a hand-written list.
-const geoSpecs = computed(() => {
-  const o = selected.value
-  return o && o.kind === 'primitive' ? PRIMITIVE_PARAMS[o.primitive] : []
-})
-
 // ── Text primitive controls (Geometry panel, above the schema-driven sliders) ──
 // Not schema-driven like the sliders above: `content` only exists on `text`
 // objects and holds a string + a font URL, not a numeric param.
@@ -1384,6 +1347,15 @@ function setControl(key: string, value: string | number | boolean): void {
   if (key.startsWith('object.position.')) { writeTransform('position', axis, Number(value)); return }
   if (key.startsWith('object.rotation.')) { writeTransform('rotation', axis, Number(value)); return }
   if (key.startsWith('object.scale.')) { writeTransform('scale', axis, Number(value)); return }
+  // Geometry: both bags are FLAT NUMBER MAPS the engine reads by key (primParams.ts), so
+  // a `switch` row's boolean is stored as 0 | 1 — `readSceneControl`'s toggle branch is
+  // the exact inverse. Writing `true` in there would make `resolveParam` fall straight
+  // back to the default and the checkbox would appear to do nothing.
+  if (key.startsWith('object.params.')) {
+    setParam(key.slice('object.params.'.length), typeof value === 'boolean' ? (value ? 1 : 0) : Number(value))
+    return
+  }
+  if (key.startsWith('object.modifiers.')) { setMod(key.slice('object.modifiers.'.length), Number(value)); return }
   // Generic fallback: any key the branches above don't special-case (a novel Camera/
   // Background/doc-level control the panel now draws via panelPresentation.ts's
   // permissive `panelCardOf`) still has to write somewhere. Mirrors `setPost`'s own
@@ -3708,10 +3680,28 @@ async function onClose() {
         @remesh="remeshSculptSession"
       />
 
-      <StudioSection v-else-if="selectedIsPrimitive" title="Geometry" @pointerdown.capture="onControlsPointerDown">
+      <!-- Geometry / Modifiers / Cloner — DRAWN FROM SCENE_CONTROLS, from the same
+           `panelControls` row list the Transform panel above and the Material panel below
+           use. Its own StudioControlPanel because the sculpt panel above replaces exactly
+           these three cards and nothing else in the column (see SCENE_GEOMETRY_SECTIONS'
+           own note); the parameter rows come from PRIMITIVE_PARAMS[kind] and the
+           deformations from MODIFIER_SPECS, which is what the deleted markup iterated too.
+           What stays bespoke below is what was never a parameter: the text primitive's
+           string + font pickers, the mesh remesh/solidify block, the five modifier group
+           captions, the four index-valued segmented pickers, the Cloner's Step caption and
+           its live cost readout. -->
+      <div v-else-if="selectedIsPrimitive" class="flex flex-col gap-2" @pointerdown.capture="onControlsPointerDown">
+        <StudioControlPanel
+          :controls="panelControls"
+          :order="SCENE_GEOMETRY_SECTIONS"
+          :sections="panelChrome"
+          :value="readControl"
+          @set="setControl"
+        >
         <!-- Text controls: not schema-driven (content is {text?,font?}, only
-             carried by `text` objects) — sit above the generated sliders. -->
-        <div v-if="selectedText" class="space-y-3 pt-1">
+             carried by `text` objects). -->
+        <template #control-ui.geometry.text>
+        <div class="space-y-3">
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Text</label>
             <input v-model="textValue" type="text" aria-label="Text content" class="studio-num" style="text-align: left" />
@@ -3733,10 +3723,12 @@ async function onClose() {
             <StudioSelect label="Weight" v-model="libraryFontWeight" :options="libraryWeightOptions" />
           </div>
         </div>
+        </template>
 
-        <!-- Remesh / Solidify: PRIMITIVE_PARAMS.mesh is `[]`, so geoSpecs is
-             empty for a mesh object — this fills that space instead. -->
-        <div v-if="selectedMesh" class="space-y-3 pt-1">
+        <!-- Remesh / Solidify: PRIMITIVE_PARAMS.mesh is `[]`, so a mesh object has no
+             parametric geometry at all — this fills that space instead. -->
+        <template #control-ui.geometry.mesh>
+        <div class="space-y-3">
           <StudioSlider
             v-model="remeshResolution"
             label="Resolution"
@@ -3773,125 +3765,76 @@ async function onClose() {
                it, so a Remesh/Solidify failure is visible where it happened. -->
           <p v-if="convertError" class="text-[11px] leading-snug text-red-400/90">{{ convertError }}</p>
         </div>
+        </template>
 
-        <!-- Geometry: a peer of the material sub-groups (plain details, no card
-             chrome), but open by default — these are the shape's primary knobs. -->
-        <div v-if="geoSpecs.length" class="space-y-3 pt-1">
-          <template v-for="spec in geoSpecs" :key="spec.key">
-            <label
-              v-if="spec.control === 'toggle'"
-              class="flex cursor-pointer items-center justify-between text-[11px] text-white/55"
-              :title="spec.hint"
-            >
-              <span>{{ spec.label }}</span>
-              <input
-                type="checkbox"
-                class="h-3.5 w-3.5 accent-white/70"
-                :checked="paramOf(spec.key) > 0.5"
-                @change="setParam(spec.key, ($event.target as HTMLInputElement).checked ? 1 : 0)"
-              />
-            </label>
-            <StudioSlider
-              v-else
-              :model-value="paramOf(spec.key)"
-              :label="spec.label"
-              :hint="spec.hint"
-              :min="spec.min"
-              :max="spec.max"
-              :step="spec.step"
-              @update:model-value="(v: number) => setParam(spec.key, v)"
-            />
-          </template>
-        </div>
+        <!-- The five Modifiers group captions. Plain uppercase labels in the shipped
+             markup, and still markup here: a caption is not a control. -->
+        <template #control-ui.mod.group.taper><div class="text-[10px] uppercase tracking-[0.12em] text-white/25">Taper</div></template>
+        <template #control-ui.mod.group.twist><div class="text-[10px] uppercase tracking-[0.12em] text-white/25">Twist</div></template>
+        <template #control-ui.mod.group.bend><div class="text-[10px] uppercase tracking-[0.12em] text-white/25">Bend</div></template>
+        <template #control-ui.mod.group.noise><div class="text-[10px] uppercase tracking-[0.12em] text-white/25">Noise</div></template>
+        <template #control-ui.mod.group.jitter><div class="text-[10px] uppercase tracking-[0.12em] text-white/25">Jitter</div></template>
 
-        <!-- Modifiers: a peer of Geometry (same plain details, no card chrome),
-             collapsed by default — these deform the built geometry. -->
-        <details v-if="selectedIsPrimitive" class="group">
-          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Modifiers</summary>
-          <div class="space-y-3 pt-1">
-            <StudioSlider
-              :model-value="modOf('subdivide')"
-              :label="modSpec('subdivide').label"
-              :hint="modSpec('subdivide').hint"
-              :min="modSpec('subdivide').min"
-              :max="modSpec('subdivide').max"
-              :step="modSpec('subdivide').step"
-              @update:model-value="(v: number) => setMod('subdivide', v)"
-            />
-            <div v-for="group in MODIFIER_GROUPS" :key="group.label" class="space-y-2">
-              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">{{ group.label }}</div>
-              <template v-for="key in group.keys" :key="key">
-                <div v-if="modSpec(key).control === 'options'">
-                  <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
-                  <StudioSegmented
-                    :model-value="optionOf(key)"
-                    :options="modSpec(key).options!"
-                    @update:model-value="(v: string) => setOption(key, v)"
-                  />
-                </div>
-                <StudioSlider
-                  v-else
-                  :model-value="modOf(key)"
-                  :label="modSpec(key).label"
-                  :hint="modSpec(key).hint"
-                  :min="modSpec(key).min"
-                  :max="modSpec(key).max"
-                  :step="modSpec(key).step"
-                  @update:model-value="(v: number) => setMod(key, v)"
-                />
-              </template>
-            </div>
+        <!-- The six index-valued pickers (four deformation axes/modes here, the Cloner's
+             two below). Each stores its option's INDEX in the same flat number bag the
+             sliders write to, so a schema `select` would put the option's STRING there —
+             see controls.ts's "Deliberately NOT in this schema". Written out one per
+             anchor rather than looped over dynamic slot names: a slot that silently
+             resolves to nothing renders a bare StudioRow instead, with no error. -->
+        <template #control-ui.mod.taperAxis>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55" :title="modSpec('taperAxis').hint">{{ modSpec('taperAxis').label }}</label>
+            <StudioSegmented :model-value="optionOf('taperAxis')" :options="modSpec('taperAxis').options!"
+              @update:model-value="(v: string) => setOption('taperAxis', v)" />
           </div>
-        </details>
+        </template>
+        <template #control-ui.mod.twistAxis>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55" :title="modSpec('twistAxis').hint">{{ modSpec('twistAxis').label }}</label>
+            <StudioSegmented :model-value="optionOf('twistAxis')" :options="modSpec('twistAxis').options!"
+              @update:model-value="(v: string) => setOption('twistAxis', v)" />
+          </div>
+        </template>
+        <template #control-ui.mod.bendAxis>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55" :title="modSpec('bendAxis').hint">{{ modSpec('bendAxis').label }}</label>
+            <StudioSegmented :model-value="optionOf('bendAxis')" :options="modSpec('bendAxis').options!"
+              @update:model-value="(v: string) => setOption('bendAxis', v)" />
+          </div>
+        </template>
+        <template #control-ui.mod.jitterMode>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55" :title="modSpec('jitterMode').hint">{{ modSpec('jitterMode').label }}</label>
+            <StudioSegmented :model-value="optionOf('jitterMode')" :options="modSpec('jitterMode').options!"
+              @update:model-value="(v: string) => setOption('jitterMode', v)" />
+          </div>
+        </template>
+        <template #control-ui.cloner.mode>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55" :title="modSpec('cloneMode').hint">{{ modSpec('cloneMode').label }}</label>
+            <StudioSegmented :model-value="optionOf('cloneMode')" :options="modSpec('cloneMode').options!"
+              @update:model-value="(v: string) => setOption('cloneMode', v)" />
+          </div>
+        </template>
+        <template #control-ui.cloner.axis>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55" :title="modSpec('cloneAxis').hint">{{ modSpec('cloneAxis').label }}</label>
+            <StudioSegmented :model-value="optionOf('cloneAxis')" :options="modSpec('cloneAxis').options!"
+              @update:model-value="(v: string) => setOption('cloneAxis', v)" />
+          </div>
+        </template>
 
-        <!-- Cloner: a peer of Geometry and Modifiers, not a group inside them —
-             this section is meant to grow. Flat list, collapsed by default. -->
-        <details v-if="selectedIsPrimitive" class="group">
-          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Cloner</summary>
-          <div class="space-y-3 pt-1">
-            <template v-for="key in CLONER_KEYS" :key="key">
-              <div v-if="modSpec(key).control === 'options'">
-                <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
-                <StudioSegmented
-                  :model-value="optionOf(key)"
-                  :options="modSpec(key).options!"
-                  @update:model-value="(v: string) => setOption(key, v)"
-                />
-              </div>
-              <StudioSlider
-                v-else
-                :model-value="modOf(key)"
-                :label="modSpec(key).label"
-                :hint="modSpec(key).hint"
-                :min="modSpec(key).min"
-                :max="modSpec(key).max"
-                :step="modSpec(key).step"
-                @update:model-value="(v: number) => setMod(key, v)"
-              />
-            </template>
+        <!-- Step transforms accumulate across copies in every mode, so they sit under
+             their own caption below the mode-specific placement rows. -->
+        <template #control-ui.cloner.step><div class="text-[10px] uppercase tracking-[0.12em] text-white/25">Step</div></template>
 
-            <!-- Step transforms accumulate across copies in every mode, so they
-                 are their own block below the mode-specific placement controls. -->
-            <div class="space-y-2">
-              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">Step</div>
-              <StudioSlider
-                v-for="key in CLONER_STEP_KEYS"
-                :key="key"
-                :model-value="modOf(key)"
-                :label="modSpec(key).label"
-                :hint="modSpec(key).hint"
-                :min="modSpec(key).min"
-                :max="modSpec(key).max"
-                :step="modSpec(key).step"
-                @update:model-value="(v: number) => setMod(key, v)"
-              />
-            </div>
-
-            <!-- Cost disclosure: what this clone set actually costs, live while
-                 dragging. Amber past the point where rebuilds start to hitch. -->
+        <!-- Cost disclosure: what this clone set actually costs, live while dragging.
+             Amber past the point where rebuilds start to hitch. -->
+        <template #control-ui.cloner.cost>
+          <div>
             <div
               v-if="cloneCost"
-              class="pt-0.5 text-[10px] tabular-nums"
+              class="text-[10px] tabular-nums"
               :class="cloneCost.heavy ? 'text-amber-400/80' : 'text-white/35'"
             >
               {{ cloneCost.copies }} copies · ~{{ compactCount(cloneCost.verts) }} verts<template v-if="deferringGeometry"> · updates on release</template>
@@ -3903,8 +3846,9 @@ async function onClose() {
               Clone count reduced to {{ cloneCost.clamp.count }} to stay inside the vertex budget.
             </div>
           </div>
-        </details>
-      </StudioSection>
+        </template>
+        </StudioControlPanel>
+      </div>
 
       <StudioSection v-if="selectedIsLight" title="Light" @pointerdown.capture="onControlsPointerDown">
         <!-- Light controls: a peer of the material sub-groups above, gated on
