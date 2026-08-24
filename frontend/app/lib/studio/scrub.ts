@@ -1,4 +1,4 @@
-import { coarseStepMultiplier } from './row'
+import { coarseStepMultiplier, type EntryMode } from './row'
 
 export interface ScrubArgs {
   startValue: number
@@ -7,6 +7,21 @@ export interface ScrubArgs {
   max: number
   step: number
   scrubPx?: number
+  /**
+   * SOFT RANGE, and it belongs here as much as it belongs on the keyboard.
+   *
+   * This scrub is RELATIVE — `startValue + (deltaPx / scrubPx) × range` — so the range
+   * only sets the travel RATE. The one thing that pulled an out-of-range value back
+   * inside was the terminal clamp below, and a 3px accidental drag on a Transform row
+   * reading 35 therefore wrote 20 and fanned the −15 difference across the whole
+   * selection: exactly the hazard `entry: 'unclamped'` exists to remove, and net-new
+   * against the `<input type="number">` grid, which had no drag at all.
+   *
+   * Click-to-position (StudioRow.vue's `up()`) stays clamped in both modes, because THAT
+   * gesture is absolute: it means "put the value at this place on the track", and the
+   * track is the declared range.
+   */
+  entry?: EntryMode
   /**
    * The OLD meaning of Shift — 0.15× travel.
    *
@@ -54,6 +69,6 @@ export function scrubValue(a: ScrubArgs): number {
   } else {
     snapped = Math.round(raw / step) * step
   }
-  const clamped = Math.min(a.max, Math.max(a.min, snapped))
-  return Number(clamped.toFixed(6))
+  const bounded = a.entry === 'unclamped' ? snapped : Math.min(a.max, Math.max(a.min, snapped))
+  return Number(bounded.toFixed(6))
 }

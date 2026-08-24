@@ -48,11 +48,13 @@ const num = computed(() => Number(props.modelValue))
  * SOFT RANGE, opt-in per control. Undefined — every row in the app but 3D Studio's nine
  * Transform rows — means the declared range gates entry as it always has.
  *
- * It reaches the two ENTRY paths only: the text field (`onCommit`) and the arrow keys
- * (`nudgeValue`). The two TRACK gestures — a drag and a click-to-position — stay bounded
- * in both modes, because "point at a place on this track" can only ever mean a place
- * within the range the track draws. `fillFraction` likewise keeps clamping, so an
- * out-of-range value shows its true number with the handle pinned at the end.
+ * It reaches every gesture that moves the value RELATIVE to where it already is: the text
+ * field (`onCommit`), the arrow keys (`nudgeValue`) and the drag (`scrubValue`, which is
+ * `startValue + travel` — so without the mode a 3px slip on a row reading 35 snapped it
+ * back to 20). Click-to-position is the one gesture that stays bounded in both modes: it
+ * is ABSOLUTE — "put the value at this place on the track" — and the track is the declared
+ * range. `fillFraction` likewise keeps clamping, so an out-of-range value shows its true
+ * number with the handle pinned at the end.
  */
 const entryMode = computed(() => (props.spec as { entry?: 'unclamped' }).entry)
 
@@ -155,6 +157,7 @@ function onPointerDown(e: PointerEvent) {
     emit('update:modelValue', scrubValue({
       startValue, deltaPx: ev.clientX - startX,
       min: min.value, max: max.value, step: step.value, coarse: ev.shiftKey,
+      entry: entryMode.value,
     }))
   }
   // Detaching is deliberately separate from finishing: `pointercancel` (touch, pen,
@@ -196,19 +199,16 @@ function onPointerDown(e: PointerEvent) {
  * every studio, so the regression would have been permanent. Arrows move one step,
  * Shift-arrow moves `coarseStepMultiplier` steps — up to ten (a native range's PageUp
  * jump, on a key people actually press), less on a range too short to absorb ten, and
- * nothing extra on one too short to absorb even two. Home/End pin the ends. Bound rows
- * are inert here exactly as they are under the pointer, and an open text field keeps
- * its own arrows for caret movement.
+ * nothing extra on one too short to absorb even two. Home/End pin the ends — except on a
+ * soft-range row, where there are no ends to pin. Bound rows are inert here exactly as
+ * they are under the pointer, and an open text field keeps its own arrows for caret
+ * movement.
  */
 function onKeydown(e: KeyboardEvent) {
   if (!numeric.value || props.bound || editing.value) return
   // The arithmetic lives in ~/lib/studio/row so it has a test path; both arrow branches
   // end in parseTyped, same as typed entry — carrying the SAME `entry` mode — so a keyed
   // value and a typed one can never land on different grids or different bounds.
-  //
-  // Home/End deliberately do NOT carry it. They mean "go to the end of the range", so
-  // the range is the answer, soft or not; passing the mode would only let an off-grid
-  // `min` snap somewhere the row can never otherwise reach.
   const args = {
     value: num.value, min: min.value, max: max.value, step: step.value,
     coarse: e.shiftKey, entry: entryMode.value,
@@ -217,8 +217,16 @@ function onKeydown(e: KeyboardEvent) {
   switch (e.key) {
     case 'ArrowLeft': case 'ArrowDown': next = nudgeValue({ ...args, direction: -1 }); break
     case 'ArrowRight': case 'ArrowUp': next = nudgeValue({ ...args, direction: 1 }); break
-    case 'Home': next = parseTyped(String(min.value), min.value, max.value, step.value) ?? num.value; break
-    case 'End': next = parseTyped(String(max.value), min.value, max.value, step.value) ?? num.value; break
+    case 'Home': case 'End': {
+      // On a soft range the bounds describe the parameter, they do not bound it, so
+      // "jump to the end" names nothing — and on a value that legitimately sits outside
+      // them it would be a large destructive write one keystroke away from the arrows.
+      // Swallowed rather than ignored, so the key still cannot scroll the panel.
+      if (entryMode.value === 'unclamped') { e.preventDefault(); return }
+      const edge = e.key === 'Home' ? min.value : max.value
+      next = parseTyped(String(edge), min.value, max.value, step.value) ?? num.value
+      break
+    }
     default: return
   }
   // Handled either way — an arrow at the maximum must still not scroll the panel.

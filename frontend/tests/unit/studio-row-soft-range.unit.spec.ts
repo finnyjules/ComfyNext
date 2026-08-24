@@ -123,17 +123,44 @@ describe('nudgeValue — entry: unclamped', () => {
 
 // ── what the soft range deliberately does NOT change ─────────────────────────
 
-describe('the range still governs the LOOK and the drag', () => {
+describe('the range still governs the LOOK', () => {
   it('the fill and the handle pin at the edge for an out-of-range value', () => {
     expect(fillFraction(35, -20, 20)).toBe(1)
     expect(fillFraction(-35, -20, 20)).toBe(0)
   })
+})
 
-  it('a drag still maps the track onto [min, max], soft range or not', () => {
-    // Grabbing a row that reads 35 and dragging it hands back an IN-range number: the
-    // gesture is "point at a place on this track", and the track is the declared range.
-    expect(scrubValue({ startValue: 35, deltaPx: 0, min: -20, max: 20, step: 0.1 })).toBe(20)
-    expect(scrubValue({ startValue: 0, deltaPx: 2600, min: -20, max: 20, step: 0.1 })).toBe(20)
+describe('scrubValue — the drag is relative, so it carries the mode too', () => {
+  const range = { min: -20, max: 20, step: 0.1 } as const
+
+  it('the default mode still clamps to the range', () => {
+    expect(scrubValue({ ...range, startValue: 35, deltaPx: 0 })).toBe(20)
+    expect(scrubValue({ ...range, startValue: 0, deltaPx: 2600 })).toBe(20)
+  })
+
+  it('a soft-range drag leaves an out-of-range value where it is', () => {
+    // The scrub is `startValue + (deltaPx / 260) × range` — RELATIVE. The terminal clamp
+    // was the only thing dragging 35 back to 20, and a 3px slip is enough to trigger it:
+    // on a Transform row that write is fanned across the whole selection as a −15 delta.
+    expect(scrubValue({ ...range, startValue: 35, deltaPx: 0, entry: 'unclamped' })).toBe(35)
+  })
+
+  it('a small soft-range drag moves by the travel it earned, not to the bound', () => {
+    // 3px of a 260px track across a span of 40 = 0.46, then snapped onto the 0.1 grid.
+    expect(scrubValue({ ...range, startValue: 35, deltaPx: 3, entry: 'unclamped' })).toBeCloseTo(35.5, 10)
+    expect(scrubValue({ ...range, startValue: 35, deltaPx: -3, entry: 'unclamped' })).toBeCloseTo(34.5, 10)
+  })
+
+  it('a soft-range drag can still walk a value back into the range', () => {
+    expect(scrubValue({ ...range, startValue: 35, deltaPx: -130, entry: 'unclamped' })).toBeCloseTo(15, 10)
+  })
+
+  it('click-to-position stays absolute, and therefore stays bounded, in both modes', () => {
+    // Not scrubValue's job — the row resolves a track click through `parseTyped` with no
+    // mode, which is the assertion in `StudioRow wiring` below. Pinned here as the pair
+    // to the drag so the distinction is written down in one place: a DRAG is relative and
+    // follows the value; a CLICK names a place on the track, and the track is the range.
+    expect(parseTyped('35', -20, 20, 0.1)).toBe(20)
   })
 })
 
@@ -149,15 +176,22 @@ describe('StudioRow wiring', () => {
     expect(src).toContain("entry?: 'unclamped'")
   })
 
-  it('hands it to typed entry and to the arrow keys', () => {
-    // onCommit (the text field) and onKeydown (via nudgeValue) are the two ENTRY paths.
-    expect(src.match(/entry:\s*entryMode\.value/g)?.length).toBe(2)
+  it('hands it to typed entry, the arrow keys and the drag', () => {
+    // The three RELATIVE gestures: onCommit (the text field), onKeydown (via nudgeValue)
+    // and move() (via scrubValue). Each moves the value from where it already is.
+    expect(src.match(/entry:\s*entryMode\.value/g)?.length).toBe(3)
   })
 
-  it('does NOT hand it to click-to-position, which is a track gesture', () => {
+  it('does NOT hand it to click-to-position, the one ABSOLUTE gesture', () => {
     // Clicking the track means "put the value here on the track", so it resolves inside
-    // the declared range in both modes — same as a drag.
+    // the declared range in both modes.
     expect(src).toContain('parseTyped(String(raw), min.value, max.value, step.value) ?? num.value')
+  })
+
+  it('makes Home/End inert on a soft-range row', () => {
+    // There is no "end" to jump to when the bounds are a description, and from a value
+    // outside them the jump would be a large destructive write one key from the arrows.
+    expect(src).toContain("if (entryMode.value === 'unclamped') { e.preventDefault(); return }")
   })
 })
 

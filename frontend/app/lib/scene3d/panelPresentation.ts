@@ -119,7 +119,7 @@ const RAD2DEG = 180 / Math.PI
  *  read) has no geometry and uses 1, which makes Size read as the raw scale. */
 export type SceneReadCtx = { baseSize?: readonly number[] }
 
-const materialField =(mat: SceneObject['material'], field: string): ParamValue => {
+const materialField = (mat: SceneObject['material'], field: string): ParamValue => {
   if (field === 'gradientYaw' || field === 'gradientPitch') {
     return gradientAngles(mat)[field === 'gradientYaw' ? 'yaw' : 'pitch']
   }
@@ -438,13 +438,23 @@ const OPAL_OVERRIDE: Record<string, RowPatch> = {
   'object.material.envMapIntensity': { label: 'Reflection intensity' },
 }
 
-/** Size rows: the schema's scale multiplier bounds, expressed in the world units the
- *  row actually shows. Label follows — the shipped inputs said Size, not Scale. The
- *  soft-range flag is NOT touched here: rescaling a description leaves it a description. */
+/**
+ * Size rows: the schema's scale multiplier bounds, expressed in the world units the
+ * row actually shows. Label follows — the shipped inputs said Size, not Scale. The
+ * soft-range flag is NOT touched here: rescaling a description leaves it a description.
+ *
+ * STEP 0.01, not the schema's 0.05, and it has to be: `readSceneControl` rounds world
+ * Size to TWO DECIMALS, so a 1.37-wide object's row reads "1.37" — while `parseTyped`
+ * snaps to the step. At 0.05 the row therefore advertised a number it would not write:
+ * click the readout of that object and click away (RowSlider commits on blur, and the
+ * draft it seeds is the displayed 1.37) and the object silently shrank to 1.35, fanned
+ * across the whole selection. The `<input type="number">` it replaces snapped nothing.
+ * 0.01 is the same two decimals the readout shows, so the row writes what it says.
+ */
 function sizeOverride(axis: 0 | 1 | 2, ctx: SceneReadCtx): RowPatch {
   const base = ctx.baseSize?.[axis] || 1
   const label = ['Size X', 'Size Y', 'Size Z'][axis]!
-  return { label, min: 0.05 * base, max: 10 * base, step: 0.05 }
+  return { label, min: 0.05 * base, max: 10 * base, step: 0.01 }
 }
 
 // ── visibility ───────────────────────────────────────────────────────────────

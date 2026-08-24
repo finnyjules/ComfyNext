@@ -6,7 +6,8 @@ import {
   SCENE_PANEL_ANCHOR_KEYS, SCENE_PANEL_ORDER, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
   ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls, scenePanelVisible, writeMaterialField,
 } from '~/lib/scene3d/panelPresentation'
-import { nudgeValue, parseTyped } from '~/lib/studio/row'
+import { formatValue, nudgeValue, parseTyped } from '~/lib/studio/row'
+import { scrubValue } from '~/lib/studio/scrub'
 import { groupIntoSections } from '~/lib/studio/sections'
 import { setByPath } from '~/lib/studio/path'
 import { POST_SECTIONS } from '~/lib/studio/post/controls'
@@ -71,9 +72,11 @@ const ROW: Record<string, Row> = {
   'object.rotation.0': { label: 'Rotation X', kind: 'slider', min: -180, max: 180, step: 1, entry: 'unclamped' },
   'object.rotation.1': { label: 'Rotation Y', kind: 'slider', min: -180, max: 180, step: 1, entry: 'unclamped' },
   'object.rotation.2': { label: 'Rotation Z', kind: 'slider', min: -180, max: 180, step: 1, entry: 'unclamped' },
-  'object.scale.0': { label: 'Size X', kind: 'slider', min: 0.05, max: 10, step: 0.05, entry: 'unclamped' },
-  'object.scale.1': { label: 'Size Y', kind: 'slider', min: 0.05, max: 10, step: 0.05, entry: 'unclamped' },
-  'object.scale.2': { label: 'Size Z', kind: 'slider', min: 0.05, max: 10, step: 0.05, entry: 'unclamped' },
+  // Step 0.01, not the schema's 0.05 — the Size readout is two decimals (readSceneControl
+  // rounds world Size to 2dp), and a row must not advertise a number it will not write.
+  'object.scale.0': { label: 'Size X', kind: 'slider', min: 0.05, max: 10, step: 0.01, entry: 'unclamped' },
+  'object.scale.1': { label: 'Size Y', kind: 'slider', min: 0.05, max: 10, step: 0.01, entry: 'unclamped' },
+  'object.scale.2': { label: 'Size Z', kind: 'slider', min: 0.05, max: 10, step: 0.01, entry: 'unclamped' },
 
   // Material — shared head
   [`${M}type`]: { label: 'Material', kind: 'select', options: MATERIAL_TYPES },
@@ -562,6 +565,36 @@ describe('Scene3D panel parity — Transform', () => {
       const size = rowOf('object.scale.0')
       expect(parseTyped('42', size.min, size.max, size.step, { entry: size.entry })).toBe(42)
     })
+
+    it('a drag on an out-of-range row moves from where it is, it does not snap to the bound', () => {
+      // The scrub is relative, so before the mode reached it a 3px slip on a row reading
+      // 35 wrote 20 — and `axisDeltaWrites` fanned the −15 across the whole selection.
+      const r = rowOf('object.position.0')
+      const args = { startValue: 35, min: r.min, max: r.max, step: r.step } as const
+      expect(scrubValue({ ...args, deltaPx: 0, entry: r.entry })).toBe(35)
+      expect(scrubValue({ ...args, deltaPx: 0 }), 'the reverted behaviour').toBe(20)
+    })
+  })
+
+  /**
+   * The row must write the number it is showing. World Size is rounded to two decimals by
+   * `readSceneControl`, and `RowSlider` seeds its draft from that display and COMMITS ON
+   * BLUR — so any step coarser than 0.01 turns "click the readout, click away" into a
+   * silent resize of the whole selection. The number grid it replaces snapped nothing.
+   */
+  it('a Size row round-trips its own two-decimal readout', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    o.scale = [1, 1, 1]
+    const base = [1.37, 1, 1] as const
+    const shown = Number(readSceneControl(doc, o, 'object.scale.0', { baseSize: base }))
+    expect(shown).toBe(1.37)
+    const row = panelWith(doc, o, base).get('object.scale.0') as unknown as
+      { min: number; max: number; step: number; entry?: 'unclamped' }
+    expect(formatValue(shown, row.step), 'what RowSlider seeds the field with').toBe('1.37')
+    expect(parseTyped('1.37', row.min, row.max, row.step, { entry: row.entry })).toBe(1.37)
+    // The step this replaces, kept as the record of what it did: a −1.5% silent resize.
+    expect(parseTyped('1.37', row.min, row.max, 0.05, { entry: row.entry })).toBe(1.35)
   })
 })
 
