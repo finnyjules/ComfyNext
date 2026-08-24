@@ -18,9 +18,9 @@ import {
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup, createDecal,
-  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf, opalStopsOf,
+  MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf, opalStopsOf,
   DEFAULT_FONT_URL, DECAL_DEFAULTS, sceneHasShaderFill, sceneHasOpalFlow,
-  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3, type EnvironmentKind,
+  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3,
   type DecalObject, type DecalContent,
 } from '~/lib/scene3d/config'
 import { eulerFromNormal } from '~/lib/scene3d/decals'
@@ -80,8 +80,10 @@ import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPane
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
-import { POST_SECTIONS } from '~/lib/studio/post/controls'
-import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
+import {
+  ENV_BY_LABEL, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
+  readSceneControl, scenePanelChrome, scenePanelControls,
+} from '~/lib/scene3d/panelPresentation'
 import type { PostSettings } from '~/lib/spacetype/post'
 
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), {
@@ -173,7 +175,6 @@ const matOverride = computed<boolean>({
   get: () => selected.value?.kind === 'glb' && selected.value.materialOverride === true,
   set: (v) => { const o = selected.value; if (o?.kind === 'glb') o.materialOverride = v },
 })
-const matEditable = computed(() => selectedIsPrimitive.value || matOverride.value)
 const selectedIsLight = computed(() => selected.value?.kind === 'light')
 const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
 const selectedIsDecal = computed(() => selected.value?.kind === 'decal')
@@ -453,18 +454,6 @@ const wiredGlbUrl = computed<string>(() => {
 function enumProxy<T extends string>(get: () => T, set: (v: T) => void) {
   return computed<string>({ get, set: (v: string) => set(v as T) })
 }
-const lightingPresetProxy = enumProxy(() => doc.lighting.preset, (v) => { doc.lighting.preset = v })
-
-// Environment scene (procedural backdrop the lights render into) — StudioSegmented
-// binds raw strings, so map the doc's EnvironmentKind to short display labels and back.
-const ENV_OPTIONS = ['room', 'dark', 'softbox', 'gels'] as const
-const ENV_BY_LABEL: Record<string, EnvironmentKind> = { room: 'room', dark: 'darkStrips', softbox: 'softbox', gels: 'colorGels' }
-const ENV_LABEL: Record<EnvironmentKind, string> = { room: 'room', darkStrips: 'dark', softbox: 'softbox', colorGels: 'gels' }
-const environmentProxy = computed<string>({
-  get: () => ENV_LABEL[doc.lighting.environment],
-  set: (v) => { doc.lighting.environment = ENV_BY_LABEL[v] ?? 'room' },
-})
-
 const OUTPUT_OPTIONS = ['1024×1024', '1344×768', '768×1344']
 const outputProxy = computed<string>({
   get: () => `${doc.output.width}×${doc.output.height}`,
@@ -544,63 +533,23 @@ function applyPrismPreset(): void {
   doc.background = '#000000'
 }
 
-// Selection field proxies — nullable-safe so vue-tsc stays happy without template narrowing.
-// get() reads the PRIMARY selection only (what the panel displays); set() fans out to every
-// selected object via applyMaterial (what actually gets edited) — see its doc above.
-const matColor = computed<string>({ get: () => selected.value?.material.color ?? '#9aa3af', set: (v) => applyMaterial((m) => { m.color = v }) })
-const matRoughness = computed<number>({ get: () => selected.value?.material.roughness ?? 0.6, set: (v) => applyMaterial((m) => { m.roughness = v }) })
-const matMetalness = computed<number>({ get: () => selected.value?.material.metalness ?? 0, set: (v) => applyMaterial((m) => { m.metalness = v }) })
-
-// Material type + per-type params. Proxies fall back to MATERIAL_DEFAULTS so
-// sliders always have a number; the doc only records what the user touches.
-const matType = computed<MaterialType>({
-  get: () => selected.value?.material.type ?? 'standard',
-  set: (v) => applyMaterial((m) => { m.type = v }),
-})
+// Selection field proxies for the inspector's BESPOKE blocks — the matcap grid, the
+// harmony scheme picker, the two ramp editors and the shader-fill editors. Every other
+// material row is a schema row now and writes through `setMaterialControl` below, which
+// is the same `applyMaterial` fan-out these use: get() reads the PRIMARY selection only
+// (what the panel displays), set() edits every selected object.
+const matType = computed<MaterialType>(() => selected.value?.material.type ?? 'standard')
 function matParam<K extends keyof typeof MATERIAL_DEFAULTS>(key: K) {
   return computed<any>({
     get: () => (selected.value?.material as any)?.[key] ?? MATERIAL_DEFAULTS[key],
     set: (v) => applyMaterial((m) => { (m as any)[key] = v }),
   })
 }
-const matShininess = matParam('shininess')
-const matSpecular = matParam('specular')
-const matToonSteps = matParam('toonSteps')
 const matMatcap = matParam('matcap')
-const matIor = matParam('ior')
-const matTransmission = matParam('transmission')
-const matThickness = matParam('thickness')
-const matFresnelColor = matParam('fresnelColor')
-const matFresnelPower = matParam('fresnelPower')
-const matGradientShading = matParam('gradientShading')
-const matGradientType = matParam('gradientType')
-const matGradientOffset = matParam('gradientOffset')
-const matGradientSpread = matParam('gradientSpread')
-// Palette: when paletteMode is 'harmony' the ramp is GENERATED from these
-// scalars (see rampStopsOf in config.ts) instead of the authored gradientStops
-// the ramp editor writes — same matParam proxy pattern as every other field here.
-const matPaletteMode = matParam('paletteMode')
-const matPaletteHue = matParam('paletteHue')
-const matPaletteSat = matParam('paletteSat')
-const matPaletteLight = matParam('paletteLight')
+// Palette: when paletteMode is 'harmony' the ramp is GENERATED from hue/sat/light + this
+// scheme (see rampStopsOf in config.ts) instead of the authored gradientStops the ramp
+// editor writes.
 const matPaletteHarmony = matParam('paletteHarmony')
-// Opalescent scalars (the spectrum itself reuses matGradientStops below).
-const matOpalHueShift = matParam('opalHueShift')
-const matOpalFrequency = matParam('opalFrequency')
-const matOpalAngleMix = matParam('opalAngleMix')
-const matOpalFlowSpeed = matParam('opalFlowSpeed')
-const matOpalStrength = matParam('opalStrength')
-
-// Direction angles read through gradientAngles() so an untouched material still
-// reflects its legacy `gradientAxis` seed; writing always stores explicit angles.
-function angleProxy(key: 'yaw' | 'pitch') {
-  return computed<number>({
-    get: () => (selected.value ? gradientAngles(selected.value.material)[key] : MATERIAL_DEFAULTS[key === 'yaw' ? 'gradientYaw' : 'gradientPitch']),
-    set: (v) => applyMaterial((m) => { m[key === 'yaw' ? 'gradientYaw' : 'gradientPitch'] = v }),
-  })
-}
-const matGradientYaw = angleProxy('yaw')
-const matGradientPitch = angleProxy('pitch')
 
 // The X/Y/Z presets must write the ANGLES, not `gradientAxis` — once explicit
 // angles exist on the material the axis field is only a seed and would look dead.
@@ -611,7 +560,10 @@ function applyAxisPreset(axis: 'x' | 'y' | 'z') {
 }
 function isAxisPreset(axis: 'x' | 'y' | 'z') {
   const p = AXIS_PRESETS[axis]
-  return matGradientYaw.value === p.yaw && matGradientPitch.value === p.pitch
+  // Through gradientAngles(), so an untouched material still matches on its legacy
+  // `gradientAxis` seed — the same read the Yaw/Pitch rows resolve through.
+  const now = selected.value ? gradientAngles(selected.value.material) : { yaw: MATERIAL_DEFAULTS.gradientYaw, pitch: MATERIAL_DEFAULTS.gradientPitch }
+  return now.yaw === p.yaw && now.pitch === p.pitch
 }
 
 // Stops: read through gradientStopsOf() so an untouched material shows the pair
@@ -632,26 +584,12 @@ const matOpalStops = computed<GradientStop[]>({
   get: () => (selected.value ? opalStopsOf(selected.value.material) : []),
   set: (v) => applyMaterial((m) => { m.gradientStops = v.map((s) => ({ ...s })) }),
 })
-const matClearcoat = matParam('clearcoat')
-const matClearcoatRoughness = matParam('clearcoatRoughness')
-const matSheen = matParam('sheen')
-const matSheenColor = matParam('sheenColor')
-const matEmissive = matParam('emissive')
-const matEmissiveIntensity = matParam('emissiveIntensity')
-const matOpacity = matParam('opacity')
-const matDispersion = matParam('dispersion')
-const matAttenuationColor = matParam('attenuationColor')
-const matAttenuationDistance = matParam('attenuationDistance')
-const matIridescence = matParam('iridescence')
-const matIridescenceIOR = matParam('iridescenceIOR')
-const matEnvMapIntensity = matParam('envMapIntensity')
 
 // ── shaderFill (object anchor only — Task 7) ─────────────────────────────────
 // Hand-wired: Scene3D has no control-schema/agent path (unlike Space Type/Shape Studio's
 // declarative control schema), so effect/speed/unlit/input-colour live here as plain proxies
 // rather than derived from a shared descriptor list. A known, deliberate gap — see the task
 // report.
-const matUnlit = matParam('unlit')
 const matShader = computed<ShaderSpec>({
   get: () => selected.value?.material.shader ?? DEFAULT_SHADER_SPEC,
   // Deep-cloned per object (JSON round-trip, same as cloneMaterial's own shader
@@ -664,10 +602,11 @@ const matShader = computed<ShaderSpec>({
 // ── Surface relief (Task 5) — orthogonal to material type, so its proxies read/write
 // `material.relief`/`material.normalImage` directly rather than going through matParam.
 // Mirrors the shaderFill proxies' shape: get() falls back to a default, set() only writes
-// once a `relief` object exists (matReliefSource's setter is what creates it).
-const matReliefSource = computed<'none' | 'shader' | 'image'>({
-  get: () => selected.value?.material.relief?.source ?? 'none',
-  set: (v) => {
+// once a `relief` object exists (`setReliefSource` is what creates it).
+/** The Relief source row's write. Not a plain field assignment, which is why it is a
+ *  function of its own rather than a line in `setMaterialControl`. */
+function setReliefSource(v: 'none' | 'shader' | 'image'): void {
+  {
     applyMaterial((mat) => {
       const relief: ReliefSpec = { ...(mat.relief ?? { scale: MATERIAL_DEFAULTS.reliefScale }), source: v }
       // Selecting 'shader' must SEED relief.spec, not just switch the source: matReliefSpec's
@@ -689,41 +628,25 @@ const matReliefSource = computed<'none' | 'shader' | 'image'>({
       if (v === 'shader' && !relief.spec) relief.spec = normalizeShaderSpec({ effectId: 'voronoi_cells' }, 0)
       mat.relief = relief
     })
-  },
-})
-const matReliefScale = computed<number>({
-  get: () => selected.value?.material.relief?.scale ?? MATERIAL_DEFAULTS.reliefScale,
-  set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.scale = v }),
-})
-const matReliefInvert = computed<boolean>({
-  get: () => selected.value?.material.relief?.invert === true,
-  set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.invert = v }),
-})
-// Contrast is applied at texture-build time alongside invert (materials.ts), not at
-// upload/conversion time — so it's a live, adjustable knob for both the Effect and Image
-// relief sources, without needing to re-upload anything. Repaints the material's own bump
-// canvas IN PLACE (materials.ts's updateMaterial) rather than rebuilding — see the C1 fix.
-const matReliefContrast = computed<number>({
-  get: () => selected.value?.material.relief?.contrast ?? MATERIAL_DEFAULTS.reliefContrast,
-  set: (v) => {
-    applyMaterial((mat) => { if (mat.relief) mat.relief.contrast = v })
-    // Minor 6 fix (final review): the flatness warning is measured ONCE, on the pre-contrast
-    // pixels, at upload/generate time — raising Contrast can genuinely fix a flat-reading map,
-    // but the warning (and its "raise Contrast" copy) never re-evaluated, so it sat there
-    // contradicting a surface that now reads fine. Clear it on any contrast edit rather than
-    // re-measuring — contrast is a live per-tick slider now, and re-decoding the whole source
-    // image on every tick just to re-run heightGradient would be real, avoidable cost. The
-    // warning is a per-object measurement, so this now clears it for every selected object
-    // whose contrast the fan-out above just touched, not just the primary.
-    for (const o of selectedObjects.value) delete reliefFlatWarning[o.id]
-  },
-})
-// Tiling is a Texture.repeat property (materials.ts's applyRelief/updateMaterial), never a
-// pixel change — updates in place exactly like scale, so a slider drag never rebuilds.
-const matReliefTiling = computed<number>({
-  get: () => selected.value?.material.relief?.tiling ?? MATERIAL_DEFAULTS.reliefTiling,
-  set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.tiling = v }),
-})
+  }
+}
+/**
+ * Every other `relief.*` row is a plain field on an EXISTING ReliefSpec — the guard is
+ * load-bearing: a write must not fabricate a relief block, only `setReliefSource` creates
+ * one. Scale and tiling update the bump texture in place (materials.ts's updateMaterial),
+ * and contrast is applied at texture-build time alongside invert rather than at
+ * upload/conversion time, so all four are live knobs a drag never rebuilds through.
+ */
+function setReliefField(sub: string, value: string | number | boolean): void {
+  applyMaterial((mat) => { if (mat.relief) (mat.relief as unknown as Record<string, unknown>)[sub] = value })
+  // The flatness warning is measured ONCE, on the pre-contrast pixels, at upload/generate
+  // time — raising Contrast can genuinely fix a flat-reading map, but the warning (and its
+  // "raise Contrast" copy) never re-evaluated, so it sat there contradicting a surface that
+  // now reads fine. Cleared on any contrast edit rather than re-measured: re-decoding the
+  // whole source image on every tick of a live slider would be real, avoidable cost. Per
+  // OBJECT, so it clears for everything the fan-out above just touched, not just the primary.
+  if (sub === 'contrast') for (const o of selectedObjects.value) delete reliefFlatWarning[o.id]
+}
 const matReliefSpec = computed<ShaderSpec>({
   get: () => selected.value?.material.relief?.spec ?? DEFAULT_SHADER_SPEC,
   // Deep-cloned per object, same reasoning as matShader above — a relief spec
@@ -731,9 +654,6 @@ const matReliefSpec = computed<ShaderSpec>({
   // across this whole fan-out unless each object gets its own copy.
   set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.spec = JSON.parse(JSON.stringify(v)) }),
 })
-/** Relief needs lighting to perturb. An unlit shaderFill is a MeshBasicMaterial with no
- *  bump slot at all — disable rather than silently no-op (materials.ts applyRelief). */
-const reliefAvailable = computed(() => !(matType.value === 'shaderFill' && matUnlit.value))
 // The uploaded/converted image, whichever channel currently holds it: relief.image
 // (bump path) normally, or normalImage once "Already a normal map" moved it there.
 // Read-only: writes go through the upload handler / matIsNormalMap below.
@@ -766,7 +686,7 @@ const matIsNormalMap = computed<boolean>({
 // I3 fix (final review): `normalImage` is a field independent of `relief.source` (see its doc
 // in config.ts) — materials.ts correctly keeps applying it no matter what Relief is set to,
 // but the ONLY control that could touch it ("Already a normal map") used to render solely
-// under `matReliefSource === 'image'`. Switching Relief to None/Effect after checking that box
+// under an Image relief source. Switching Relief to None/Effect after checking that box
 // left the normal shading bound with no way to clear it. This is a plain discard, independent
 // of matIsNormalMap's move-between-fields dance above (there is no relief.image to move it
 // back to once the user has explicitly walked away from Image source).
@@ -849,13 +769,6 @@ function onDecalFontPick(payload: { kind: 'google'; family: string } | { kind: '
     ? `google:${payload.family}@${existing.weight}`
     : `google:${payload.family}`
 }
-
-// Transparency group defaults open for glass. StudioSection's isOpen/@toggle
-// pattern, scoped to the one sub-group with a dynamic default: the watch
-// re-applies the default on material-type switches, @toggle keeps user toggles
-// from being clobbered by later re-renders.
-const transparencyOpen = ref(matType.value === 'glass')
-watch(matType, (t) => { transparencyOpen.value = t === 'glass' })
 
 // Image-material upload: file → dataURL → ComfyUI input dir → material.image.
 // State is scoped to the object the upload was started FOR (not "whatever is
@@ -1059,10 +972,9 @@ async function generateReliefFromPrompt() {
 }
 
 // Numeric transform fields (per-axis) — position/scale stored & shown raw, rotation
-// stored in radians but edited in degrees. Setters replace the whole array so the
-// deep doc watcher fires (engine syncs); gizmo drags mutate the same arrays, so the
-// computed getters re-read and the inputs update — two-way, no extra wiring.
-const RAD2DEG = 180 / Math.PI
+// stored in radians but edited in degrees (the read half lives in panelPresentation.ts's
+// readSceneControl). Writes replace the whole array so the deep doc watcher fires (engine
+// syncs); gizmo drags mutate the same arrays, so the rows re-read — two-way, no extra wiring.
 const DEG2RAD = Math.PI / 180
 /** Apply one transform-row edit across the WHOLE selection, as the spec's
  *  multi-select rule requires: the typed number lands on the primary and every
@@ -1088,27 +1000,20 @@ function writeAxis(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: 
     o[prop] = next
   }
 }
-function axisField(prop: 'position' | 'scale', axis: 0 | 1 | 2) {
-  return computed<number>({
-    get: () => selected.value?.[prop][axis] ?? (prop === 'scale' ? 1 : 0),
-    set: (v) => {
-      if (!selected.value || !Number.isFinite(v)) return
-      writeAxis(prop, axis, v)
-    },
-  })
+/** One Transform row's write, in the units the ROW shows: degrees for rotation, world
+ *  Size (scale × the object's un-scaled extent) for scale. `readSceneControl` does the
+ *  same two conversions in the read direction — see panelPresentation.ts. */
+function writeTransform(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: number): void {
+  if (!selected.value || !Number.isFinite(v)) return
+  if (prop === 'rotation') { writeAxis('rotation', axis, v * DEG2RAD); return }
+  if (prop === 'scale') {
+    const base = baseSize.value[axis] || 1
+    if (!base) return
+    writeAxis('scale', axis, v / base)
+    return
+  }
+  writeAxis('position', axis, v)
 }
-function rotField(axis: 0 | 1 | 2) {
-  return computed<number>({
-    get: () => (selected.value ? selected.value.rotation[axis] * RAD2DEG : 0),
-    set: (v) => {
-      if (!selected.value || !Number.isFinite(v)) return
-      writeAxis('rotation', axis, v * DEG2RAD)
-    },
-  })
-}
-const posX = axisField('position', 0), posY = axisField('position', 1), posZ = axisField('position', 2)
-const rotX = rotField(0), rotY = rotField(1), rotZ = rotField(2)
-const sclX = axisField('scale', 0), sclY = axisField('scale', 1), sclZ = axisField('scale', 2)
 
 // Geometry params for the selected primitive. Reads resolve through the schema
 // (stored value clamped, else the spec default); writes create the params bag on
@@ -1244,16 +1149,6 @@ const baseSize = computed<[number, number, number]>(() => {
     : engine?.baseSizeOf(o.id) ?? [1, 1, 1]
   return lastBaseSize
 })
-function sizeAxis(i: 0 | 1 | 2, scl: { value: number }) {
-  return computed<number>({
-    get: () => Math.round(scl.value * (baseSize.value[i] || 1) * 100) / 100,
-    set: (v: number) => {
-      const base = baseSize.value[i] || 1
-      if (!Number.isFinite(v) || !base) return
-      scl.value = v / base
-    },
-  })
-}
 // The Geometry panel's rows, straight from the schema — never a hand-written list.
 const geoSpecs = computed(() => {
   const o = selected.value
@@ -1440,9 +1335,49 @@ watch(() => {
     meshError.value = true
   })
 }, { immediate: true })
-const sizeX = sizeAxis(0, sclX)
-const sizeY = sizeAxis(1, sclY)
-const sizeZ = sizeAxis(2, sclZ)
+// ── The schema-driven inspector panel ────────────────────────────────────────
+// Transform / Material / Camera / Lighting / Background are drawn from SCENE_CONTROLS via
+// the presentation remap in lib/scene3d/panelPresentation.ts (see its doc for why a remap
+// rather than the schema itself). `baseSize` is passed through because the Size rows show
+// world units, which only the built geometry knows.
+const panelControls = computed(() => scenePanelControls(doc, selected.value, { baseSize: baseSize.value }))
+const panelChrome = computed(() => scenePanelChrome(selected.value ? matType.value : null))
+
+/** The panel's `value` prop. `post.*` keeps its own resolver (doc.post is a plain
+ *  PostSettings object, not part of the object/doc path space); everything else goes
+ *  through the one reader the parity spec and the visibility gates also use. */
+function readControl(key: string): string | number | boolean {
+  if (key.startsWith('post.')) return readPost(key)
+  return readSceneControl(doc, selected.value, key, { baseSize: baseSize.value }) as string | number | boolean
+}
+
+/** Plain material fields — the generic half of what the deleted `matParam` proxies did,
+ *  including the multi-selection fan-out that makes "select the logo's paths, pick gold"
+ *  one action instead of twelve. */
+function setMaterialControl(field: string, value: string | number | boolean): void {
+  if (field === 'relief.source') { setReliefSource(value as 'none' | 'shader' | 'image'); return }
+  if (field.startsWith('relief.')) { setReliefField(field.slice('relief.'.length), value); return }
+  applyMaterial((m) => { (m as unknown as Record<string, unknown>)[field] = value })
+}
+
+/** The panel's `@set`. One dispatch over the same dotted keys `readControl` resolves. */
+function setControl(key: string, value: string | number | boolean): void {
+  if (key.startsWith('post.')) { setPost(key, value); return }
+  if (key === 'showFloor') { doc.showFloor = value === true; return }
+  if (key === 'camera.fov') { doc.camera.fov = Number(value); return }
+  if (key === 'lighting.preset') { doc.lighting.preset = String(value) as SceneDoc['lighting']['preset']; return }
+  // The row offers the segmented control's SHORT labels, not the EnvironmentKind values.
+  if (key === 'lighting.environment') { doc.lighting.environment = ENV_BY_LABEL[String(value)] ?? 'room'; return }
+  if (key.startsWith('lighting.')) {
+    ;(doc.lighting as Record<string, unknown>)[key.slice('lighting.'.length)] = Number(value)
+    return
+  }
+  if (key.startsWith('object.material.')) { setMaterialControl(key.slice('object.material.'.length), value); return }
+  const axis = Number(key.slice(-1)) as 0 | 1 | 2
+  if (key.startsWith('object.position.')) { writeTransform('position', axis, Number(value)); return }
+  if (key.startsWith('object.rotation.')) { writeTransform('rotation', axis, Number(value)); return }
+  if (key.startsWith('object.scale.')) writeTransform('scale', axis, Number(value))
+}
 
 // ── Engine lifecycle ──────────────────────────────────────────────────────────
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -3710,35 +3645,20 @@ async function onClose() {
         <span class="tabular-nums">{{ selectedIds.length }} objects selected</span>
         <span class="ml-auto shrink-0 text-[10px] text-[#4f8cff]/60">edits apply to all</span>
       </div>
-      <StudioSection v-if="selected" title="Transform" @pointerdown.capture="onControlsPointerDown">
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Position</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="posX" type="number" step="0.1" aria-label="Position X" class="studio-num" />
-            <input v-model.number="posY" type="number" step="0.1" aria-label="Position Y" class="studio-num" />
-            <input v-model.number="posZ" type="number" step="0.1" aria-label="Position Z" class="studio-num" />
-          </div>
-        </div>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Rotation°</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="rotX" type="number" step="1" aria-label="Rotation X" class="studio-num" />
-            <input v-model.number="rotY" type="number" step="1" aria-label="Rotation Y" class="studio-num" />
-            <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
-          </div>
-        </div>
-        <!-- A decal's `scale` is unused by the engine exactly as a light's is (its
-             on-surface footprint comes from `size`), so the same gate covers both —
-             otherwise these three inputs would write numbers nothing reads. -->
-        <div v-if="selected && !selectedIsLight && !selectedIsDecal">
-          <label class="mb-1 block text-[11px] text-white/55">Size</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
-            <input v-model.number="sizeY" type="number" step="0.05" aria-label="Size Y" class="studio-num" />
-            <input v-model.number="sizeZ" type="number" step="0.05" aria-label="Size Z" class="studio-num" />
-          </div>
-        </div>
-      </StudioSection>
+      <!-- Transform, drawn from SCENE_CONTROLS' Transform group. Its own panel because the
+           hand-written Geometry section (and the sculpt panel that replaces it) sits between
+           it and the Material card below, and one panel cannot interleave a hand-written
+           section. Rotation rows are degrees and Size rows are world units — the conversions
+           the old rotX/sizeX proxies did now live in panelPresentation.ts, once, shared with
+           the write path. -->
+      <div class="flex flex-col gap-2" @pointerdown.capture="onControlsPointerDown">
+        <StudioControlPanel
+          :controls="panelControls"
+          :order="SCENE_TRANSFORM_SECTIONS"
+          :value="readControl"
+          @set="setControl"
+        />
+      </div>
 
       <!-- Gap 3 fix: sculpt mode replaces ONLY the Geometry section below (a
            sibling swap, not nested inside it) with Scene3DSculptPanel — brush
@@ -3968,390 +3888,6 @@ async function onClose() {
         </details>
       </StudioSection>
 
-      <StudioSection v-if="selected && (selectedIsPrimitive || selectedIsGlb)" title="Material" @pointerdown.capture="onControlsPointerDown">
-        <!-- Imported models keep their baked materials until overridden. -->
-        <div v-if="selectedIsGlb" class="flex items-center justify-between">
-          <div>
-            <span class="text-[11px] text-white/55">Override materials</span>
-            <p class="text-[10px] text-white/35">Replace the model's built-in look</p>
-          </div>
-          <StudioSwitch v-model="matOverride" />
-        </div>
-
-        <div v-if="matEditable">
-          <StudioSelect label="Material" v-model="matType" :options="MATERIAL_TYPES" />
-        </div>
-
-        <!-- physical surface: standard + glass share the grouped panel -->
-        <template v-if="matEditable && (matType === 'standard' || matType === 'glass')">
-          <div>
-            <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Surface</p>
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <span class="text-[11px] text-white/55">Color</span>
-                <StudioColor v-model="matColor" />
-              </div>
-              <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
-            </div>
-          </div>
-
-          <details class="group">
-            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Coat &amp; sheen</summary>
-            <div class="space-y-3 pt-1">
-              <StudioSlider v-model="matClearcoat" label="Clearcoat" hint="Adds a thin glossy varnish layer on top" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matClearcoatRoughness" label="Coat roughness" hint="How blurred or sharp that varnish coat looks" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matSheen" label="Sheen" hint="Soft fabric-like edge highlight" :min="0" :max="1" :step="0.01" />
-              <div class="flex items-center justify-between">
-                <span class="text-[11px] text-white/55">Sheen colour</span>
-                <StudioColor v-model="matSheenColor" />
-              </div>
-            </div>
-          </details>
-
-          <details class="group">
-            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Glow</summary>
-            <div class="space-y-3 pt-1">
-              <div class="flex items-center justify-between">
-                <span class="text-[11px] text-white/55">Emissive</span>
-                <StudioColor v-model="matEmissive" />
-              </div>
-              <StudioSlider v-model="matEmissiveIntensity" label="Intensity" hint="How brightly the material glows on its own" :min="0" :max="5" :step="0.05" />
-            </div>
-          </details>
-
-          <details class="group" :open="transparencyOpen" @toggle="transparencyOpen = ($event.target as HTMLDetailsElement).open">
-            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Transparency</summary>
-            <div class="space-y-3 pt-1">
-              <div class="flex items-center justify-between">
-                <span class="text-[11px] text-white/55">Prism look</span>
-                <StudioButton variant="secondary" @click="applyPrismPreset">Prism</StudioButton>
-              </div>
-              <StudioSlider v-model="matOpacity" label="Opacity" hint="How see-through the whole surface is" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matTransmission" label="Transmission" hint="Lets light pass through, like glass" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matIor" label="IOR" hint="How strongly light bends passing through" :min="1" :max="2.33" :step="0.01" />
-              <StudioSlider v-model="matThickness" label="Thickness" hint="How solid the glass feels as light travels in" :min="0" :max="2" :step="0.05" />
-              <StudioSlider v-model="matDispersion" label="Dispersion" hint="Splits refracted light into rainbow fringes" :min="0" :max="5" :step="0.05" />
-              <div class="flex items-center justify-between">
-                <span class="text-[11px] text-white/55">Attenuation</span>
-                <StudioColor v-model="matAttenuationColor" />
-              </div>
-              <StudioSlider v-model="matAttenuationDistance" label="Attenuation dist" hint="How deep light travels before tinting (0 = off)" :min="0" :max="10" :step="0.1" />
-            </div>
-          </details>
-
-          <details class="group">
-            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Iridescence</summary>
-            <div class="space-y-3 pt-1">
-              <StudioSlider v-model="matIridescence" label="Amount" hint="Strength of the soap-bubble colour shift" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matIridescenceIOR" label="IOR" hint="Tunes which colours the bubble film shifts to" :min="1" :max="2.33" :step="0.01" />
-            </div>
-          </details>
-
-          <details class="group">
-            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Reflection</summary>
-            <div class="space-y-3 pt-1">
-              <StudioSlider v-model="matEnvMapIntensity" label="Intensity" hint="How strongly reflections from the surroundings show" :min="0" :max="3" :step="0.05" />
-            </div>
-          </details>
-        </template>
-
-        <!-- phong: retro-CG specular/shininess model, kept deliberately distinct from the
-             PBR types (standard/glass) — see MaterialType's doc in config.ts. No roughness/
-             metalness here; Phong has no such properties. -->
-        <template v-else-if="matEditable && matType === 'phong'">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Color</span>
-            <StudioColor v-model="matColor" />
-          </div>
-          <StudioSlider v-model="matShininess" label="Shininess" hint="How tight and glossy the highlight is — higher is sharper" :min="0" :max="200" :step="1" />
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Specular</span>
-            <StudioColor v-model="matSpecular" />
-          </div>
-        </template>
-
-        <!-- toon -->
-        <template v-else-if="matEditable && matType === 'toon'">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Color</span>
-            <StudioColor v-model="matColor" />
-          </div>
-          <StudioSlider v-model="matToonSteps" label="Steps" hint="Number of flat cel-shading bands" :min="2" :max="5" :step="1" />
-        </template>
-
-        <!-- matcap -->
-        <template v-else-if="matEditable && matType === 'matcap'">
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Matcap</label>
-            <div class="flex items-center gap-1.5">
-              <button v-for="id in MATCAP_IDS" :key="id" type="button" :title="id"
-                class="size-8 overflow-hidden rounded-full border transition-colors"
-                :class="matMatcap === id ? 'border-white/80' : 'border-white/15 hover:border-white/40'"
-                @click="matMatcap = id">
-                <img :src="matcapThumb(id)" class="size-full" alt="" />
-              </button>
-            </div>
-          </div>
-        </template>
-
-        <!-- fresnel -->
-        <template v-else-if="matEditable && matType === 'fresnel'">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Color</span>
-            <StudioColor v-model="matColor" />
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Rim colour</span>
-            <StudioColor v-model="matFresnelColor" />
-          </div>
-          <StudioSlider v-model="matFresnelPower" label="Power" hint="How tightly the rim glow hugs the edges" :min="1" :max="8" :step="0.1" />
-        </template>
-
-        <!-- gradient -->
-        <template v-else-if="matEditable && matType === 'gradient'">
-          <!-- Palette: Manual keeps the authored ramp editor below; Harmony instead
-               GENERATES the ramp from hue/sat/light + a harmony scheme (rampStopsOf
-               in config.ts) — the two are mutually exclusive views onto the same
-               `gradientStops` field, so only one editor shows at a time. -->
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Palette</label>
-            <StudioSegmented v-model="matPaletteMode" :options="['manual', 'harmony']" />
-          </div>
-          <template v-if="matPaletteMode === 'harmony'">
-            <StudioSlider v-model="matPaletteHue" label="Hue" hint="Seed hue the harmony scheme is built from" :min="0" :max="360" :step="1" />
-            <StudioSlider v-model="matPaletteSat" label="Saturation" hint="How vivid the generated colours are" :min="0" :max="1" :step="0.01" />
-            <StudioSlider v-model="matPaletteLight" label="Lightness" hint="How light or dark the generated colours are" :min="0.2" :max="0.9" :step="0.01" />
-            <div>
-              <label class="mb-1 block text-[11px] text-white/55">Harmony</label>
-              <select
-                v-model="matPaletteHarmony"
-                class="w-full rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 outline-none focus:border-white/25"
-              >
-                <option v-for="h in HARMONY_TYPES" :key="h" :value="h">{{ HARMONY_LABELS[h] }}</option>
-              </select>
-            </div>
-          </template>
-          <StudioGradientRamp v-else v-model="matGradientStops" />
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Type</label>
-            <StudioSegmented v-model="matGradientType" :options="['linear', 'radial']" />
-          </div>
-          <div v-if="matGradientType === 'linear'" class="space-y-3">
-            <div>
-              <label class="mb-1 block text-[11px] text-white/55">Direction</label>
-              <div class="flex items-center gap-1.5">
-                <button v-for="ax in (['x', 'y', 'z'] as const)" :key="ax" type="button"
-                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
-                  :class="isAxisPreset(ax) ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
-                  @click="applyAxisPreset(ax)">{{ ax }}</button>
-              </div>
-            </div>
-            <StudioSlider v-model="matGradientYaw" label="Yaw" hint="Ramp direction around the Y axis" :min="0" :max="360" :step="1" />
-            <StudioSlider v-model="matGradientPitch" label="Pitch" hint="Ramp direction elevation, up or down" :min="-90" :max="90" :step="1" />
-          </div>
-          <StudioSlider v-model="matGradientOffset" label="Offset" hint="Slides the ramp along its direction" :min="-1" :max="1" :step="0.01" />
-          <StudioSlider v-model="matGradientSpread" label="Spread" hint="Compresses (&lt;1) or stretches (&gt;1) the ramp" :min="0.1" :max="3" :step="0.01" />
-          <!-- Faceted/prismatic shading needs the per-face extent attributes only
-               primitive geometry bakes; imported GLB meshes always ramp smooth. -->
-          <div v-if="selectedIsPrimitive">
-            <label class="mb-1 block text-[11px] text-white/55">Shading</label>
-            <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted', 'prismatic', 'scatter', 'ombre']" />
-          </div>
-        </template>
-
-        <!-- opalescent: thin-film / holographic. Spectrum reuses the SAME gradient-stop editor
-             (bound to matGradientStops, which reads material.gradientStops) so switching between
-             gradient and opalescent keeps the palette; the scalars steer how it maps + flows. -->
-        <template v-else-if="matEditable && matType === 'opalescent'">
-          <StudioGradientRamp v-model="matOpalStops" />
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Base tint</span>
-            <StudioColor v-model="matColor" />
-          </div>
-          <StudioSlider v-model="matOpalHueShift" label="Hue shift" hint="Rotates the whole rainbow around the colour wheel" :min="0" :max="360" :step="1" />
-          <StudioSlider v-model="matOpalFrequency" label="Spectrum bands" hint="How many rainbow bands wrap the surface" :min="0.5" :max="5" :step="0.05" />
-          <StudioSlider v-model="matOpalAngleMix" label="Angle response" hint="Blends the flow from surface-shape-driven to viewing-angle-driven" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matOpalStrength" label="Rainbow strength" hint="How much rainbow shows over the base colour" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matOpalFlowSpeed" label="Flow speed" hint="Animates the spectrum over time — 0 keeps it still" :min="0" :max="2" :step="0.01" />
-          <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections — high turns the rainbow into chrome" :min="0" :max="1" :step="0.01" />
-          <!-- Finish: matte soap-bubble at clearcoat 0, wet chrome-holo as it rises. -->
-          <StudioSlider v-model="matClearcoat" label="Clearcoat" hint="Adds a thin glossy varnish layer on top — the wet look" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matClearcoatRoughness" label="Coat roughness" hint="How blurred or sharp that varnish coat looks" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matEnvMapIntensity" label="Reflection intensity" hint="How strongly reflections from the surroundings show" :min="0" :max="3" :step="0.05" />
-        </template>
-
-        <!-- image -->
-        <template v-else-if="matEditable && matType === 'image'">
-          <input ref="texFileInput" type="file" accept="image/*" class="hidden" @change="onTexFilePicked" />
-          <div class="flex items-center gap-2">
-            <img v-if="selected.material.image" class="size-12 rounded object-cover"
-              :src="texViewUrl(selected.material.image)" alt="" />
-            <StudioButton :disabled="texUploading === selected.id" @click="triggerTexUpload">
-              <span class="flex items-center gap-1.5">
-                <Loader2 v-if="texUploading === selected.id" class="h-3.5 w-3.5 animate-spin" />
-                <Upload v-else class="h-3.5 w-3.5" />
-                {{ texUploading === selected.id ? 'Uploading…' : selected.material.image ? 'Replace image' : 'Upload image' }}
-              </span>
-            </StudioButton>
-          </div>
-          <p v-if="texUploadError[selected.id] || (selected.material.image && texLoadError[selected.material.image])"
-            class="text-[11px] text-red-400/90">texture failed</p>
-          <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
-        </template>
-
-        <!-- shaderFill: a catalog effect wrapped onto the mesh's own UVs (object anchor only —
-             frame anchor is out of scope here entirely; materials.ts never reads `shader.anchor`,
-             see SceneMaterial.shader's doc in config.ts). The full editor (effect picker + derived
-             per-effect params + speed + nested input fill) — same component Space Type, Shape
-             Studio and the Compositor mount, bound straight to `matShader` since its ShaderSpec
-             shape already matches this editor's `modelValue` prop 1:1. `show-anchor="false"`
-             hides the anchor toggle rather than leaving it offered-but-inert (the bug Shape
-             Studio currently has). -->
-        <template v-else-if="matEditable && matType === 'shaderFill'">
-          <ShaderFillEditor v-model="matShader" :show-anchor="false" />
-          <div class="flex items-center justify-between">
-            <div>
-              <span class="text-[11px] text-white/55">Unlit</span>
-              <p class="text-[10px] text-white/35">Glows flat instead of being shaded by scene lights</p>
-            </div>
-            <StudioSwitch v-model="matUnlit" />
-          </div>
-          <StudioSlider v-if="!matUnlit" v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-if="!matUnlit" v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
-        </template>
-
-        <!-- Surface relief: a grayscale height texture perturbing .bumpMap, orthogonal to
-             material type — sits after the per-type chain so it applies to every branch above.
-             NB: never call this a "normal pass" in copy — passes.ts already emits a
-             screen-space `normal` G-buffer for ControlNet, a completely different thing. -->
-        <div v-if="matEditable">
-          <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Surface relief</p>
-          <p v-if="!reliefAvailable" class="text-[10px] text-white/35">
-            Unlit materials have no lighting to catch relief. Turn off Unlit to use it.
-          </p>
-          <div v-else class="space-y-3">
-            <div class="flex items-center justify-between">
-              <span class="text-[11px] text-white/55">Relief</span>
-              <div class="flex items-center gap-1.5">
-                <button type="button"
-                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
-                  :class="matReliefSource === 'none' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
-                  @click="matReliefSource = 'none'">None</button>
-                <button type="button"
-                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
-                  :class="matReliefSource === 'shader' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
-                  @click="matReliefSource = 'shader'">Effect</button>
-                <button type="button"
-                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
-                  :class="matReliefSource === 'image' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
-                  @click="matReliefSource = 'image'">Image</button>
-              </div>
-            </div>
-            <!-- I3 fix (final review): `normalImage` is independent of `matReliefSource` (see
-                 config.ts's doc) — materials.ts keeps applying it no matter what Relief is set
-                 to, but the ONLY control that could clear it used to live inside the Image
-                 branch below, so switching Relief to None/Effect after checking "Already a
-                 normal map" left the tilt bound with no way to remove it. Visible whenever a
-                 normal map is actually set, regardless of source. -->
-            <div v-if="selected?.material.normalImage" class="flex items-center justify-between rounded border border-white/10 bg-white/[0.03] px-2 py-1.5">
-              <div>
-                <span class="text-[11px] text-white/55">Normal map bound</span>
-                <p class="text-[10px] text-white/35">Applied regardless of the Relief source above</p>
-              </div>
-              <button type="button" class="text-[11px] text-white/55 underline hover:text-white/85" @click="removeNormalMap">Remove</button>
-            </div>
-            <template v-if="matReliefSource !== 'none'">
-              <template v-if="!(matReliefSource === 'image' && matIsNormalMap)">
-                <StudioSlider v-model="matReliefScale" label="Depth"
-                  hint="How raised or recessed the surface detail looks" :min="0" :max="4" :step="0.01" />
-                <StudioSlider v-model="matReliefContrast" label="Contrast"
-                  hint="Deepens the light and dark areas so the relief catches the light." :min="1" :max="6" :step="0.1" />
-                <StudioSlider v-model="matReliefTiling" label="Tiling"
-                  hint="How many times the pattern repeats across the surface — higher is finer." :min="0.25" :max="12" :step="0.25" />
-                <div class="flex items-center justify-between">
-                  <span class="text-[11px] text-white/55">Invert</span>
-                  <StudioSwitch v-model="matReliefInvert" />
-                </div>
-              </template>
-
-              <!-- image: reuses the texture-upload structure at :1801-1827 (hidden file
-                   input, StudioButton + Loader2 spinner, object-id-keyed uploading state,
-                   target captured before await). No conversion choice here (C2 fix, final
-                   review): the uploaded file's ORIGINAL bytes are stored as-is; materials.ts
-                   converts to a height field exactly once, at texture-build time. -->
-              <template v-if="matReliefSource === 'image'">
-                <input ref="reliefFileInput" type="file" accept="image/*" class="hidden" @change="onReliefFilePicked" />
-                <div class="flex items-center gap-2">
-                  <img v-if="matReliefImage" class="size-12 rounded object-cover"
-                    :src="texViewUrl(matReliefImage)" alt="" />
-                  <StudioButton :disabled="reliefUploading === selected.id" @click="triggerReliefUpload">
-                    <span class="flex items-center gap-1.5">
-                      <Loader2 v-if="reliefUploading === selected.id" class="h-3.5 w-3.5 animate-spin" />
-                      <Upload v-else class="h-3.5 w-3.5" />
-                      {{ reliefUploading === selected.id ? 'Uploading…' : matReliefImage ? 'Replace image' : 'Upload image' }}
-                    </span>
-                  </StudioButton>
-                  <!-- AI height generation (Task 6): text → fal FLUX tile → fal depth model,
-                       via /api/scene3d/gen-map. Explicit button + inline prompt panel — never
-                       automatic, costs money and takes seconds. -->
-                  <StudioButton :disabled="reliefGenBusy === selected.id" @click="toggleReliefGen">
-                    <span class="flex items-center gap-1.5">
-                      <Loader2 v-if="reliefGenBusy === selected.id" class="h-3.5 w-3.5 animate-spin" />
-                      <Sparkles v-else class="h-3.5 w-3.5" />
-                      {{ reliefGenBusy === selected.id ? 'Generating…' : 'Generate…' }}
-                    </span>
-                  </StudioButton>
-                </div>
-                <p v-if="reliefUploadError[selected.id] || (matReliefImage && texLoadError[matReliefImage])"
-                  class="text-[11px] text-red-400/90">texture failed</p>
-                <p v-else-if="reliefFlatWarning[selected.id]" class="text-[11px] text-amber-400/80">
-                  This image is very smooth — raise Contrast, or try one with finer detail.
-                </p>
-                <div v-if="reliefGenOpen" class="space-y-1.5 rounded border border-white/10 bg-white/[0.03] p-2">
-                  <textarea
-                    v-model="reliefGenPrompt"
-                    rows="2"
-                    placeholder="Hammered copper, worn oak planks…"
-                    :disabled="reliefGenBusy === selected.id"
-                    class="w-full resize-none rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 outline-none focus:border-white/25"
-                  />
-                  <StudioButton
-                    variant="primary"
-                    :disabled="!reliefGenPrompt.trim() || reliefGenBusy === selected.id"
-                    @click="generateReliefFromPrompt"
-                  >
-                    <span class="flex items-center gap-1.5">
-                      <Loader2 v-if="reliefGenBusy === selected.id" class="h-3.5 w-3.5 animate-spin" />
-                      <Sparkles v-else class="h-3.5 w-3.5" />
-                      {{ reliefGenBusy === selected.id ? 'Generating height map…' : 'Generate' }}
-                    </span>
-                  </StudioButton>
-                </div>
-                <p v-if="reliefGenError[selected.id]" class="text-[11px] text-red-400/90">
-                  Height generation failed — try again.
-                </p>
-                <div v-if="matReliefImage" class="flex items-center justify-between">
-                  <div>
-                    <span class="text-[11px] text-white/55">Already a normal map</span>
-                    <p class="text-[10px] text-white/35">For maps baked in Blender or from a game asset</p>
-                  </div>
-                  <StudioSwitch v-model="matIsNormalMap" />
-                </div>
-              </template>
-
-              <!-- shader: same ShaderFillEditor binding as the shaderFill branch above, just
-                   pointed at relief.spec instead of material.shader. -->
-              <template v-if="matReliefSource === 'shader'">
-                <ShaderFillEditor v-model="matReliefSpec" :show-anchor="false" />
-              </template>
-            </template>
-          </div>
-        </div>
-      </StudioSection>
-
       <StudioSection v-if="selectedIsLight" title="Light" @pointerdown.capture="onControlsPointerDown">
         <!-- Light controls: a peer of the material sub-groups above, gated on
              selectedIsLight (not selectedIsPrimitive) since lights aren't primitives. -->
@@ -4427,59 +3963,251 @@ async function onClose() {
         </div>
       </StudioSection>
 
-      <StudioSection title="Camera">
-        <StudioSlider v-model="doc.camera.fov" label="FOV" hint="Camera field of view — how wide the lens sees" :min="15" :max="100" :step="1" />
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Output</label>
-          <StudioSegmented v-model="outputProxy" :options="OUTPUT_OPTIONS" />
-        </div>
-      </StudioSection>
+      <!-- Material / Camera / Lighting / Background — DRAWN FROM SCENE_CONTROLS, not
+           hand-written. `panelControls` is the presentation-remapped copy built by
+           lib/scene3d/panelPresentation.ts: same rows, same order, same captions the
+           hand-written sections had, re-grouped into the cards they were drawn in
+           (including the five sub-blocks that were bare <details> inside Material) and
+           with an inert `ui.*` anchor row wherever a bespoke widget sat, so its slot
+           below lands in the shipped position. The shared post stack's own cards follow
+           in POST_SECTIONS order — one panel, not two.
+           The Material card sits BELOW the hand-written Light/Decal cards rather than
+           above them, as it did: a light or a decal is never a primitive or a GLB, so the
+           two can never be on screen together and the move is invisible.
+           The capture wrapper reproduces the `@pointerdown.capture` the Transform/
+           Geometry/Material StudioSections carried — StudioControlPanel has no such hook,
+           and a capture listener on an ancestor has the same effect. `flex flex-col
+           gap-2` reproduces the controls column's own gap inside the wrapper. -->
+      <div class="flex flex-col gap-2" @pointerdown.capture="onControlsPointerDown">
+        <StudioControlPanel
+          :controls="panelControls"
+          :order="SCENE_PANEL_SECTIONS"
+          :sections="panelChrome"
+          :value="readControl"
+          @set="setControl"
+        >
+          <!-- Imported models keep their baked materials until overridden. -->
+          <template #control-ui.material.override>
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-[11px] text-white/55">Override materials</span>
+                <p class="text-[10px] text-white/35">Replace the model's built-in look</p>
+              </div>
+              <StudioSwitch v-model="matOverride" />
+            </div>
+          </template>
 
-      <StudioSection title="Lighting">
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Preset</label>
-          <StudioSegmented v-model="lightingPresetProxy" :options="LIGHTING_PRESETS" />
-        </div>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Environment</label>
-          <StudioSegmented v-model="environmentProxy" :options="[...ENV_OPTIONS]" />
-        </div>
-        <StudioSlider v-model="doc.lighting.sunAzimuth" label="Sun azimuth" hint="Compass direction the sunlight comes from" :min="0" :max="360" :step="1" />
-        <StudioSlider v-model="doc.lighting.sunElevation" label="Sun elevation" hint="How high the sun sits above the horizon" :min="5" :max="90" :step="1" />
-        <StudioSlider v-model="doc.lighting.sunIntensity" label="Sun intensity" hint="How bright the main sunlight is" :min="0" :max="3" :step="0.05" />
-        <StudioSlider v-model="doc.lighting.ambient" label="Ambient" hint="Soft fill light that lifts the shadows" :min="0" :max="2" :step="0.05" />
-      </StudioSection>
+          <template #control-ui.material.surface>
+            <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Surface</p>
+          </template>
 
-      <StudioSection title="Background">
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Floor</span>
-          <StudioSwitch v-model="doc.showFloor" />
-        </div>
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Transparent</span>
-          <StudioSwitch v-model="bgTransparent" />
-        </div>
-        <div v-if="!bgTransparent" class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Color</span>
-          <StudioColor v-model="bgColorProxy" />
-        </div>
-      </StudioSection>
+          <template #control-ui.material.prism>
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] text-white/55">Prism look</span>
+              <StudioButton variant="secondary" @click="applyPrismPreset">Prism</StudioButton>
+            </div>
+          </template>
 
-      <!-- Shared post-processing — reuses Space Type's PostChain (bloom, colour grade,
-           chromatic aberration, lens blur, ambient occlusion, duotone, vignette, grain).
-           Applies to the viewport AND the beauty bake (see passes.ts). Schema-driven:
-           SCENE_CONTROLS is scene3d/controls.ts's single source (agent + inspector alike,
-           `...postControls({ host: 'three-depth' })` spliced in there), filtered down to
-           just its post.* members by POST_SECTIONS as the order allow-list — mirrors
-           GradientStudioSurface.vue's Effects panel (passes the full GRADIENT_CONTROLS,
-           not a fresh postControls() call, so both consumers stay the same array). One
-           collapsible card per effect, in POST_SECTIONS order. -->
-      <StudioControlPanel
-        :controls="SCENE_CONTROLS"
-        :order="POST_SECTIONS"
-        :value="(k) => readPost(k)"
-        @set="(k, v) => setPost(k, v)"
-      />
+          <template #control-ui.material.matcap>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Matcap</label>
+              <div class="flex items-center gap-1.5">
+                <button v-for="id in MATCAP_IDS" :key="id" type="button" :title="id"
+                  class="size-8 overflow-hidden rounded-full border transition-colors"
+                  :class="matMatcap === id ? 'border-white/80' : 'border-white/15 hover:border-white/40'"
+                  @click="matMatcap = id">
+                  <img :src="matcapThumb(id)" class="size-full" alt="" />
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- Palette: Manual keeps the authored ramp editor; Harmony instead GENERATES the
+               ramp from hue/sat/light + a scheme (rampStopsOf in config.ts) — the two are
+               mutually exclusive views onto the same `gradientStops` field, so only one
+               editor is ever visible. The scheme picker stays bespoke because its options
+               carry display labels (HARMONY_LABELS) a bare select row cannot show. -->
+          <template #control-ui.material.harmony>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Harmony</label>
+              <select
+                v-model="matPaletteHarmony"
+                class="w-full rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 outline-none focus:border-white/25"
+              >
+                <option v-for="h in HARMONY_TYPES" :key="h" :value="h">{{ HARMONY_LABELS[h] }}</option>
+              </select>
+            </div>
+          </template>
+
+          <template #control-ui.material.gradientStops>
+            <StudioGradientRamp v-model="matGradientStops" />
+          </template>
+
+          <template #control-ui.material.gradientDirection>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Direction</label>
+              <div class="flex items-center gap-1.5">
+                <button v-for="ax in (['x', 'y', 'z'] as const)" :key="ax" type="button"
+                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
+                  :class="isAxisPreset(ax) ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
+                  @click="applyAxisPreset(ax)">{{ ax }}</button>
+              </div>
+            </div>
+          </template>
+
+          <!-- Opalescent reuses the SAME gradient-stop field, falling back to the vivid
+               cyclic default (opalStopsOf) rather than the grey color→gradientB pair, so a
+               fresh opal shows a rainbow and switching types carries the palette across. -->
+          <template #control-ui.material.opalStops>
+            <StudioGradientRamp v-model="matOpalStops" />
+          </template>
+
+          <template #control-ui.material.image>
+            <div v-if="selected" class="space-y-3">
+              <input ref="texFileInput" type="file" accept="image/*" class="hidden" @change="onTexFilePicked" />
+              <div class="flex items-center gap-2">
+                <img v-if="selected.material.image" class="size-12 rounded object-cover"
+                  :src="texViewUrl(selected.material.image)" alt="" />
+                <StudioButton :disabled="texUploading === selected.id" @click="triggerTexUpload">
+                  <span class="flex items-center gap-1.5">
+                    <Loader2 v-if="texUploading === selected.id" class="h-3.5 w-3.5 animate-spin" />
+                    <Upload v-else class="h-3.5 w-3.5" />
+                    {{ texUploading === selected.id ? 'Uploading…' : selected.material.image ? 'Replace image' : 'Upload image' }}
+                  </span>
+                </StudioButton>
+              </div>
+              <p v-if="texUploadError[selected.id] || (selected.material.image && texLoadError[selected.material.image])"
+                class="text-[11px] text-red-400/90">texture failed</p>
+            </div>
+          </template>
+
+          <!-- shaderFill: a catalog effect wrapped onto the mesh's own UVs (object anchor
+               only — materials.ts never reads `shader.anchor`, see SceneMaterial.shader's
+               doc in config.ts). Same component Space Type, Shape Studio and the Compositor
+               mount; `show-anchor="false"` hides the anchor toggle rather than leaving it
+               offered-but-inert. -->
+          <template #control-ui.material.shader>
+            <ShaderFillEditor v-model="matShader" :show-anchor="false" />
+          </template>
+
+          <!-- Surface relief: a grayscale height texture perturbing .bumpMap, orthogonal to
+               material type. NB: never call this a "normal pass" in copy — passes.ts already
+               emits a screen-space `normal` G-buffer for ControlNet, a completely different
+               thing. -->
+          <template #control-ui.relief.unavailable>
+            <p class="text-[10px] text-white/35">
+              Unlit materials have no lighting to catch relief. Turn off Unlit to use it.
+            </p>
+          </template>
+
+          <!-- `normalImage` is independent of the Relief source (see config.ts's doc):
+               materials.ts keeps applying it whatever Relief is set to, so the control that
+               clears it has to be visible whenever one is bound, not only inside the Image
+               branch. -->
+          <template #control-ui.relief.normalMapBound>
+            <div class="flex items-center justify-between rounded border border-white/10 bg-white/[0.03] px-2 py-1.5">
+              <div>
+                <span class="text-[11px] text-white/55">Normal map bound</span>
+                <p class="text-[10px] text-white/35">Applied regardless of the Relief source above</p>
+              </div>
+              <button type="button" class="text-[11px] text-white/55 underline hover:text-white/85" @click="removeNormalMap">Remove</button>
+            </div>
+          </template>
+
+          <!-- image: the uploaded file's ORIGINAL bytes are stored as-is; materials.ts
+               converts to a height field exactly once, at texture-build time. -->
+          <template #control-ui.relief.image>
+            <div v-if="selected" class="space-y-3">
+              <input ref="reliefFileInput" type="file" accept="image/*" class="hidden" @change="onReliefFilePicked" />
+              <div class="flex items-center gap-2">
+                <img v-if="matReliefImage" class="size-12 rounded object-cover"
+                  :src="texViewUrl(matReliefImage)" alt="" />
+                <StudioButton :disabled="reliefUploading === selected.id" @click="triggerReliefUpload">
+                  <span class="flex items-center gap-1.5">
+                    <Loader2 v-if="reliefUploading === selected.id" class="h-3.5 w-3.5 animate-spin" />
+                    <Upload v-else class="h-3.5 w-3.5" />
+                    {{ reliefUploading === selected.id ? 'Uploading…' : matReliefImage ? 'Replace image' : 'Upload image' }}
+                  </span>
+                </StudioButton>
+                <!-- AI height generation: text → fal FLUX tile → fal depth model, via
+                     /api/scene3d/gen-map. Explicit button — never automatic, it costs money. -->
+                <StudioButton :disabled="reliefGenBusy === selected.id" @click="toggleReliefGen">
+                  <span class="flex items-center gap-1.5">
+                    <Loader2 v-if="reliefGenBusy === selected.id" class="h-3.5 w-3.5 animate-spin" />
+                    <Sparkles v-else class="h-3.5 w-3.5" />
+                    {{ reliefGenBusy === selected.id ? 'Generating…' : 'Generate…' }}
+                  </span>
+                </StudioButton>
+              </div>
+              <p v-if="reliefUploadError[selected.id] || (matReliefImage && texLoadError[matReliefImage])"
+                class="text-[11px] text-red-400/90">texture failed</p>
+              <p v-else-if="reliefFlatWarning[selected.id]" class="text-[11px] text-amber-400/80">
+                This image is very smooth — raise Contrast, or try one with finer detail.
+              </p>
+              <div v-if="reliefGenOpen" class="space-y-1.5 rounded border border-white/10 bg-white/[0.03] p-2">
+                <textarea
+                  v-model="reliefGenPrompt"
+                  rows="2"
+                  placeholder="Hammered copper, worn oak planks…"
+                  :disabled="reliefGenBusy === selected.id"
+                  class="w-full resize-none rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 outline-none focus:border-white/25"
+                />
+                <StudioButton
+                  variant="primary"
+                  :disabled="!reliefGenPrompt.trim() || reliefGenBusy === selected.id"
+                  @click="generateReliefFromPrompt"
+                >
+                  <span class="flex items-center gap-1.5">
+                    <Loader2 v-if="reliefGenBusy === selected.id" class="h-3.5 w-3.5 animate-spin" />
+                    <Sparkles v-else class="h-3.5 w-3.5" />
+                    {{ reliefGenBusy === selected.id ? 'Generating height map…' : 'Generate' }}
+                  </span>
+                </StudioButton>
+              </div>
+              <p v-if="reliefGenError[selected.id]" class="text-[11px] text-red-400/90">
+                Height generation failed — try again.
+              </p>
+              <div v-if="matReliefImage" class="flex items-center justify-between">
+                <div>
+                  <span class="text-[11px] text-white/55">Already a normal map</span>
+                  <p class="text-[10px] text-white/35">For maps baked in Blender or from a game asset</p>
+                </div>
+                <StudioSwitch v-model="matIsNormalMap" />
+              </div>
+            </div>
+          </template>
+
+          <!-- shader: the same ShaderFillEditor binding as the shaderFill branch above,
+               just pointed at relief.spec instead of material.shader. -->
+          <template #control-ui.relief.shader>
+            <ShaderFillEditor v-model="matReliefSpec" :show-anchor="false" />
+          </template>
+
+          <template #control-ui.camera.output>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Output</label>
+              <StudioSegmented v-model="outputProxy" :options="OUTPUT_OPTIONS" />
+            </div>
+          </template>
+
+          <!-- Background transparency remembers the last real colour, so toggling back
+               restores it instead of landing on black — which is why the colour is a
+               stateful proxy and not a plain doc leaf, and therefore not in the schema. -->
+          <template #control-ui.background.transparent>
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] text-white/55">Transparent</span>
+              <StudioSwitch v-model="bgTransparent" />
+            </div>
+          </template>
+
+          <template #control-ui.background.color>
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] text-white/55">Color</span>
+              <StudioColor v-model="bgColorProxy" />
+            </div>
+          </template>
+        </StudioControlPanel>
+      </div>
       </template>
       <template v-else>
         <StudioSection title="Motion">

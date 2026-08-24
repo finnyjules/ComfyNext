@@ -613,3 +613,30 @@ describe('Scene3D panel contract', () => {
     for (const c of post) expect(POST_SECTIONS.includes(String(c.group)), c.key).toBe(true)
   })
 })
+describe('Scene3D surface wiring', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('../../app/components/vue-canvas/Scene3DStudioSurface.vue', import.meta.url)),
+    'utf-8',
+  )
+
+  it('supplies a slot for every bespoke-block anchor', () => {
+    for (const key of SCENE_PANEL_ANCHOR_KEYS) {
+      expect(src, key).toContain(`#control-${key}`)
+    }
+  })
+
+  it('keeps the heavy-geometry deferral by wrapping the panels in a capture listener', () => {
+    expect(src).toContain('@pointerdown.capture="onControlsPointerDown"')
+  })
+
+  it('no longer hand-writes the migrated sections', () => {
+    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background']) {
+      expect(src, title).not.toContain(`<StudioSection title="${title}"`)
+      expect(src, title).not.toContain(`title="${title}" @pointerdown`)
+    }
+    // The sections that stay hand-written must still be here.
+    expect(src).toContain('title="Geometry"')
+    expect(src).toContain('title="Light"')
+    expect(src).toContain('title="Decal"')
+  })
+})
