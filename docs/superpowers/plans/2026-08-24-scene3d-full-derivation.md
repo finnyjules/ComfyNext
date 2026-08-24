@@ -85,6 +85,6 @@
 - Labels: Gradient focus.shape options render "Off — blur everything / Radial — sharp spot / Linear — tilt-shift band" over raw stored values; Scene3D Relief None/Effect/Image live-proven by Task 3's reviewer (persisted config dumps raw `shader`).
 - Playwright: scene3d-grouping + scene3d-svg-import — 6/6 passed serially (one parallel-run flake, passed twice after).
 
-**Suites:** covering sets green at every task; vocabulary dumps byte-identical at every commit (zero agent/motion/sweep growth); vue-tsc flat at 420 throughout.
+**Suites:** covering sets green at every task; vue-tsc flat at 420 throughout. Vocabulary: ZERO GROWTH at every commit — no key added to or removed from the agent, motion or sweep lists, and Task 4's ~60 new entries are all `agent: false, animatable: false`. Not literally byte-identical, and the one field diff is planned: Task 3 restored `layer.ramp.shape`'s label from 'Radial shape' to 'Shape' (template truth), which the Gradient agent dump carries. Task 4's own dumps ARE byte-identical against their parents — read-side rounding, per-kind narrowing and the Size/Transform patches all live in `panelPresentation`, downstream of `SCENE_CONTROLS`, which is what every vocabulary reads.
 
 **Invariant recorded (third occurrence this plan):** in presentation patches, `min/max/step/label` are description but `default` is BEHAVIOUR — any patch that moves a row's units or range must move its default too.

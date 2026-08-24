@@ -663,6 +663,47 @@ describe('Scene3D panel parity — Transform', () => {
    * BLUR — so any step coarser than 0.01 turns "click the readout, click away" into a
    * silent resize of the whole selection. The number grid it replaces snapped nothing.
    */
+  /**
+   * THE NO-OP GESTURE, for all nine rows.
+   *
+   * `RowSlider` seeds its typed-entry draft from `formatValue(value, step)` and commits on
+   * blur unconditionally — click the readout, click away, and whatever the row DISPLAYS is
+   * sent back through `@set`. So `readSceneControl` has to be a fixed point of
+   * format∘parse, or the row writes a number it only ever showed as a rounding: a position
+   * of 2.38472 displayed "2.4" and then wrote 2.4, and `axisDeltaWrites` fanned the
+   * 0.01528 across the whole selection. The number grid these rows replaced wrote nothing
+   * at all without an input event, so this was net-new damage.
+   */
+  it('every Transform row round-trips its own readout — read → format → parse → same', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    // Values a gizmo drag leaves behind: full precision, nowhere near the row's step.
+    o.position = [2.38472, -0.04991, 35.55551]
+    o.rotation = [0.5, -1.2345, 3.05]
+    o.scale = [1.333333, 0.7071, 2.4]
+    const base = [1.37, 1, 2.4] as const
+    for (const key of TRANSFORM_ROWS) {
+      const row = panelWith(doc, o, base).get(key) as unknown as
+        { min: number; max: number; step: number; entry?: 'unclamped' }
+      const shown = Number(readSceneControl(doc, o, key, { baseSize: base }))
+      const seeded = formatValue(shown, row.step)
+      const committed = parseTyped(seeded, row.min, row.max, row.step, { entry: row.entry })
+      expect(committed, `${key}: what blur sends back is what the row read`).toBe(shown)
+    }
+  })
+
+  it('rotation and position read at the precision their rows show', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    o.position = [2.38472, 0, 0]
+    o.rotation = [0.5, 0, 0] // 28.6478…°
+    expect(readSceneControl(doc, o, 'object.position.0'), 'step 0.1 → one decimal').toBe(2.4)
+    expect(readSceneControl(doc, o, 'object.rotation.0'), 'step 1 → whole degrees').toBe(29)
+    // The write-side inverse stays EXACT: degrees → radians on the rounded number, no
+    // second rounding, so the value the user sees is the value the document gets.
+    expect(29 * (Math.PI / 180)).toBeCloseTo(0.50615, 5)
+  })
+
   it('a Size row round-trips its own two-decimal readout', () => {
     const doc = defaultDoc()
     const o = prim('standard')
@@ -1214,6 +1255,23 @@ describe('Scene3D panel contract', () => {
     expect(scenePanelVisible(roughness, doc, null)).toBe(false)
   })
 
+  it('no row shows option labels paired with someone else\'s options', () => {
+    // `optionLabels[i]` names `options[i]`. A presentation patch that replaces the values
+    // without replacing the labels would leave the two lists positionally desynced and the
+    // row would caption a value with a label that belongs to another one.
+    const doc = defaultDoc()
+    const selections: Array<SceneObject | null> = [
+      ...MATERIAL_TYPES.map(prim), primOf('gem'), createLight('spot', []), textDecal(), null,
+    ]
+    for (const obj of selections) {
+      for (const c of panel(doc, obj)) {
+        const labels = (c as { optionLabels?: string[] }).optionLabels
+        if (!labels) continue
+        expect((c as { options?: string[] }).options, `${c.key} options`).toHaveLength(labels.length)
+      }
+    }
+  })
+
   it('the panel order is the design cards plus the shared post stack, in that order', () => {
     expect(SCENE_PANEL_SECTIONS).toEqual([...SCENE_PANEL_ORDER, ...POST_SECTIONS])
     // Transform renders through its OWN panel, above the hand-written Geometry section —
@@ -1491,6 +1549,17 @@ describe('Scene3D surface wiring', () => {
     const doc = defaultDoc()
     const keys = scenePanelControls(doc, prim('standard')).map((c) => c.key)
     expect(keys.filter((k) => /^object\.(position|rotation|scale)\./.test(k))).toEqual([...TRANSFORM_ROWS])
+  })
+
+  /**
+   * Rounding the READ makes the row self-consistent, but it cannot make the WRITE a no-op
+   * on its own: `axisDeltaWrites` takes its delta from the object's raw stored value, so a
+   * row reading 2.4 over a stored 2.38472 still moved the primary and still fanned the
+   * 0.01528 across the selection. The guard compares the incoming value against the row's
+   * OWN reading, so an unchanged number changes nothing and the stored precision survives.
+   */
+  it('refuses a commit that carries exactly what the row already shows', () => {
+    expect(src).toContain("if (v === readSceneControl(doc, selected.value, `object.${prop}.${axis}`")
   })
 
   it('writes the transform keys back through setControl, in the units the rows show', () => {

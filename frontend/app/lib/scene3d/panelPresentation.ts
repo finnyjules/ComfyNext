@@ -137,6 +137,15 @@ const RELIEF_DEFAULTS: Record<string, ParamValue> = {
 
 const RAD2DEG = 180 / Math.PI
 
+/** Round to `1 / perUnit`, normalising negative zero away. `Math.round(-0.049 * 10) / 10`
+ *  is `-0`, which is `=== 0` but not `Object.is` 0 — enough for the row's readout to
+ *  render "-0.0" where the document holds a plain small negative, and enough to make a
+ *  round-trip assertion fail on a value that is arithmetically identical. */
+const roundTo = (v: number, perUnit: number): number => {
+  const r = Math.round(v * perUnit) / perUnit
+  return r === 0 ? 0 : r
+}
+
 /** World size ÷ scale for one axis, i.e. the primitive's un-scaled extent. The surface
  *  measures it off the built geometry; every other caller (the parity spec, a headless
  *  read) has no geometry and uses 1, which makes Size read as the raw scale. */
@@ -202,9 +211,20 @@ export function readSceneControl(
     if (key === 'object.spin') return Math.round(((obj as { spin?: number }).spin ?? 0) * RAD2DEG)
     // The two conversions the deleted row proxies did, in the read direction. `writeAxis`
     // in the surface is their exact inverse.
+    //
+    // ROUNDED TO THE ROW'S OWN PRECISION, all three of them, and it is not cosmetic.
+    // `RowSlider` seeds its typed-entry draft from `formatValue(value, step)` and commits
+    // on blur unconditionally — so whatever the row DISPLAYS is what a click-and-click-away
+    // sends back. Returning a raw 2.38472 on a step-0.1 row meant the row showed 2.4 and
+    // then wrote 2.4: a gesture that changed nothing moved the object. Rounding here makes
+    // the read a fixed point of format∘parse, so the value coming back is the value that
+    // went out (the parity spec asserts exactly that round-trip). `object.spin` above and
+    // `object.scale.*` below already did this; position and rotation were the two that did
+    // not. Nothing downstream of the panel reads this — the engine, the gizmo and
+    // `axisDeltaWrites` all read the document's own exact numbers.
     const axis = Number(key.slice(-1)) as 0 | 1 | 2
-    if (key.startsWith('object.position.')) return obj.position[axis] ?? 0
-    if (key.startsWith('object.rotation.')) return (obj.rotation[axis] ?? 0) * RAD2DEG
+    if (key.startsWith('object.position.')) return roundTo(obj.position[axis] ?? 0, 10)
+    if (key.startsWith('object.rotation.')) return roundTo((obj.rotation[axis] ?? 0) * RAD2DEG, 1)
     if (key.startsWith('object.scale.')) {
       const base = ctx.baseSize?.[axis] || 1
       return Math.round((obj.scale[axis] ?? 1) * base * 100) / 100
@@ -612,6 +632,9 @@ type RowPatch = {
   max?: number
   step?: number
   options?: string[]
+  /** Positionally paired with `options` — supply both or neither. Supplying `options`
+   *  alone DROPS whatever labels the schema declared (see `withPresentation`). */
+  optionLabels?: string[]
   default?: string | number | boolean
 }
 
@@ -792,6 +815,12 @@ function withPresentation(
   if (dyn) patches.push(dyn)
   if (c.key.startsWith('object.scale.')) patches.push(sizeOverride(Number(c.key.slice(-1)) as 0 | 1 | 2, ctx))
   for (const p of patches) {
+    // `optionLabels` is PAIRED WITH `options` BY POSITION (Task 3), so a patch that
+    // replaces the options list orphans any labels the schema declared alongside the old
+    // one — silently, and the row would then show label[i] against a value it does not
+    // belong to. Replacing the values drops the labels; a patch that wants both supplies
+    // both. (`lighting.environment` is the only `options` patch today and carries none.)
+    if (p.options && out.optionLabels && !p.optionLabels) delete out.optionLabels
     for (const [k, v] of Object.entries(p)) {
       if (k === 'hint' && v === null) delete out.hint
       else out[k] = v

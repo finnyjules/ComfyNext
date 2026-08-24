@@ -958,6 +958,16 @@ function writeAxis(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: 
  *  same two conversions in the read direction — see panelPresentation.ts. */
 function writeTransform(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: number): void {
   if (!selected.value || !Number.isFinite(v)) return
+  // A commit carrying exactly what the row is already SHOWING is not an edit, and must not
+  // touch the document. Rounding the read (panelPresentation.ts) makes the row
+  // self-consistent, but it cannot make this write a no-op on its own: `axisDeltaWrites`
+  // takes its delta from the object's RAW value, so a row displaying 2.4 over a stored
+  // 2.38472 still moved the primary and still fanned the 0.01528 across the selection —
+  // the gizmo leaves values at full precision all day. Comparing against the row's own
+  // reading is what closes that: an unchanged number changes nothing, and the stored
+  // precision survives. A real edit differs from the reading by at least one step and
+  // falls straight through.
+  if (v === readSceneControl(doc, selected.value, `object.${prop}.${axis}`, { baseSize: baseSize.value })) return
   if (prop === 'rotation') { writeAxis('rotation', axis, v * DEG2RAD); return }
   if (prop === 'scale') {
     const base = baseSize.value[axis] || 1
