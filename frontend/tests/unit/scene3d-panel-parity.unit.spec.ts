@@ -566,6 +566,33 @@ describe('Scene3D panel parity — Transform', () => {
     expect(rendered(defaultDoc(), null, SCENE_TRANSFORM_SECTIONS)).toEqual([])
   })
 
+  /**
+   * Same invariant the per-kind geometry patch established: a narrowing patch carries
+   * `default` WITH its bounds, or double-click writes a number from the units the row no
+   * longer speaks. The schema's Size default is 1 — the scale MULTIPLIER — so on an object
+   * measuring 2.4 across, a reset asked for "1 world unit" (scale 0.42) when what "reset
+   * the size" means is scale 1. `resetValue` emits the default verbatim (no step snap, no
+   * clamp) and `writeTransform` divides it by the same base, so the default has to be the
+   * base extent itself, unrounded.
+   */
+  it('a Size reset restores scale 1, not one world unit', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    o.scale = [3, 3, 3]
+    for (const [axis, base] of ([[0, 2.4], [1, 0.5], [2, 1.3733333333]] as const)) {
+      const row = panelWith(doc, o, [2.4, 0.5, 1.3733333333]).get(`object.scale.${axis}`) as unknown as
+        { default: number; min: number; max: number }
+      expect(row.default, `axis ${axis} resets to the base extent`).toBeCloseTo(base, 10)
+      // …which is exactly what the write path turns back into a multiplier of 1.
+      expect(row.default / base, `axis ${axis} → scale`).toBeCloseTo(1, 10)
+      // The schema's own default is the multiplier this rescales FROM.
+      expect((SCENE_CONTROLS.find((c) => c.key === `object.scale.${axis}`) as { default: number }).default).toBe(1)
+    }
+    // With no measured extent the row reads as the raw multiplier, so 1 is already right.
+    const bare = byKey(doc, o).get('object.scale.0') as unknown as { default: number }
+    expect(bare.default).toBe(1)
+  })
+
   it('Size bounds and value follow the measured base extent, not the raw multiplier', () => {
     const doc = defaultDoc()
     const o = prim('standard')
@@ -576,6 +603,7 @@ describe('Scene3D panel parity — Transform', () => {
     expect(x.label).toBe('Size X')
     expect(x.min).toBeCloseTo(0.075, 10)
     expect(x.max).toBeCloseTo(15, 10)
+    expect((x as unknown as { default: number }).default, 'the default rescales with them').toBeCloseTo(1.5, 10)
     expect(x.entry, 'a rescaled range is still a soft one').toBe('unclamped')
     expect(readSceneControl(doc, o, 'object.scale.0', { baseSize: [1.5, 1, 1] })).toBe(3)
   })

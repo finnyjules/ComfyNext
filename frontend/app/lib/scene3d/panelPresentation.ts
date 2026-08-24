@@ -711,11 +711,24 @@ const OPAL_OVERRIDE: Record<string, RowPatch> = {
  * draft it seeds is the displayed 1.37) and the object silently shrank to 1.35, fanned
  * across the whole selection. The `<input type="number">` it replaces snapped nothing.
  * 0.01 is the same two decimals the readout shows, so the row writes what it says.
+ *
+ * DEFAULT rescales with the bounds, and for the same reason `dynamicPatch` carries one
+ * (see its own note): a narrowing patch that moves a row's units but leaves its default
+ * behind makes double-click write a number from the OLD units. The schema's default is
+ * 1 — the scale MULTIPLIER — so on an object whose base extent is 2.4 a reset asked for
+ * "1 world unit", i.e. scale 0.42, when what "reset the size" means is scale 1. `1 × base`
+ * is that, expressed in the units this row shows.
+ *
+ * Deliberately NOT rounded to the readout's two decimals, unlike `readSceneControl`'s
+ * display value: `resetValue` (lib/studio/row.ts) emits the default verbatim — no step
+ * snap, no clamp — and `writeTransform` divides it straight back by the same base. The
+ * exact base therefore restores scale to exactly 1; a 2dp base of 1.3733… would restore
+ * 1.37 / 1.3733… = 0.9976 instead, which is a reset that does not quite reset.
  */
 function sizeOverride(axis: 0 | 1 | 2, ctx: SceneReadCtx): RowPatch {
   const base = ctx.baseSize?.[axis] || 1
   const label = ['Size X', 'Size Y', 'Size Z'][axis]!
-  return { label, min: 0.05 * base, max: 10 * base, step: 0.01 }
+  return { label, min: 0.05 * base, max: 10 * base, step: 0.01, default: 1 * base }
 }
 
 // ── visibility ───────────────────────────────────────────────────────────────
