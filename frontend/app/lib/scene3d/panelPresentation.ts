@@ -82,6 +82,7 @@ export const SCENE_GEOMETRY_SECTIONS = [
  *  mutually exclusive with Material — a light or a decal is never a primitive or a GLB —
  *  so no state ever shows two of the three, whatever the order says. */
 export const SCENE_PANEL_ORDER = [
+  'Light',
   'Material',
   'Material/Coat & sheen',
   'Material/Glow',

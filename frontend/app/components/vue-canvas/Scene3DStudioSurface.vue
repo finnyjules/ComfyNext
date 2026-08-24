@@ -18,7 +18,7 @@ import {
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup, createDecal,
-  MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf, opalStopsOf,
+  MATERIAL_DEFAULTS, LIGHT_KINDS, gradientAngles, gradientStopsOf, opalStopsOf,
   DEFAULT_FONT_URL, DECAL_DEFAULTS, sceneHasShaderFill, sceneHasOpalFlow,
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3,
   type DecalObject, type DecalContent,
@@ -177,7 +177,6 @@ const matOverride = computed<boolean>({
   set: (v) => { const o = selected.value; if (o?.kind === 'glb') o.materialOverride = v },
 })
 const selectedIsLight = computed(() => selected.value?.kind === 'light')
-const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
 const selectedIsDecal = computed(() => selected.value?.kind === 'decal')
 const selectedDecal = computed<DecalObject | null>(() => (selected.value?.kind === 'decal' ? selected.value : null))
 const activeTab = ref<'build' | 'motion'>('build')  // inspector tab: Build (existing sections) vs Motion (Task 5)
@@ -695,30 +694,8 @@ function removeNormalMap() {
   applyMaterial((mat) => { mat.normalImage = undefined })
 }
 
-// Light field proxies — same shape as matParam, but the fields live flat on the
-// LightObject itself (not nested under .material). Falls back to LIGHT_DEFAULTS
-// so sliders always have a number even before the selected light's field is touched.
-function lightParam<K extends keyof typeof LIGHT_DEFAULTS>(key: K) {
-  return computed<any>({
-    get: () => (selectedLight.value as any)?.[key] ?? LIGHT_DEFAULTS[key],
-    set: (v) => { if (selectedLight.value) (selectedLight.value as any)[key] = v },
-  })
-}
-const lightColor = lightParam('color')
-const lightIntensity = lightParam('intensity')
-// Point/spot are physical (candela, inverse-square), so their useful range runs
-// far higher than an area light's — scale the slider ceiling to the light kind.
-const lightIntensityMaxValue = computed(() => lightIntensityMax(selectedLight.value?.light ?? 'point'))
-const lightDistance = lightParam('distance')
-const lightDecay = lightParam('decay')
-const lightAngle = lightParam('angle')
-const lightPenumbra = lightParam('penumbra')
-const lightWidth = lightParam('width')
-const lightHeight = lightParam('height')
-const lightCastShadow = lightParam('castShadow')
-
-// Decal field proxies — same shape as lightParam (flat on the object, defaults
-// from DECAL_DEFAULTS so a slider always has a number).
+// Decal field proxies (flat on the object, defaults from DECAL_DEFAULTS so a
+// slider always has a number).
 function decalParam<K extends 'size' | 'depth' | 'spin' | 'opacity'>(key: K) {
   return computed<number>({
     get: () => selectedDecal.value?.[key] ?? DECAL_DEFAULTS[key],
@@ -1356,6 +1333,19 @@ function setControl(key: string, value: string | number | boolean): void {
     return
   }
   if (key.startsWith('object.modifiers.')) { setMod(key.slice('object.modifiers.'.length), Number(value)); return }
+  // Light fields sit FLAT on the LightObject — `object.light` is already taken, it holds
+  // the KIND — and a decal's projection fields sit flat on the DecalObject (see
+  // controls.ts). Both write onto the PRIMARY selection only, exactly as the deleted
+  // `lightParam`/`decalParam` proxies did: unlike a material edit there has never been a
+  // multi-selection fan-out here. This branch also keeps a stray `object.*` key OUT of
+  // the doc-level fallback below, which would otherwise invent a `doc.object` bag that
+  // nothing reads.
+  if (key.startsWith('object.')) {
+    const o = selected.value
+    if (!o) return
+    setByPath(o, key.slice('object.'.length), value)
+    return
+  }
   // Generic fallback: any key the branches above don't special-case (a novel Camera/
   // Background/doc-level control the panel now draws via panelPresentation.ts's
   // permissive `panelCardOf`) still has to write somewhere. Mirrors `setPost`'s own
@@ -3849,42 +3839,6 @@ async function onClose() {
         </template>
         </StudioControlPanel>
       </div>
-
-      <StudioSection v-if="selectedIsLight" title="Light" @pointerdown.capture="onControlsPointerDown">
-        <!-- Light controls: a peer of the material sub-groups above, gated on
-             selectedIsLight (not selectedIsPrimitive) since lights aren't primitives. -->
-        <template v-if="selectedIsLight">
-          <div>
-            <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Light</p>
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <span class="text-[11px] text-white/55">Color</span>
-                <StudioColor v-model="lightColor" />
-              </div>
-              <StudioSlider v-model="lightIntensity" label="Intensity" hint="Brightness of this light — point/spot use physical falloff, so they scale much higher" :min="0" :max="lightIntensityMaxValue" :step="1" />
-
-              <template v-if="selectedLight?.light === 'point' || selectedLight?.light === 'spot'">
-                <StudioSlider v-model="lightDistance" label="Distance" hint="How far the light reaches — 0 means infinite" :min="0" :max="30" :step="0.5" />
-                <StudioSlider v-model="lightDecay" label="Decay" hint="How quickly the light fades over distance" :min="0" :max="3" :step="0.1" />
-                <div class="flex items-center justify-between">
-                  <span class="text-[11px] text-white/55">Cast shadow</span>
-                  <StudioSwitch v-model="lightCastShadow" />
-                </div>
-              </template>
-
-              <template v-if="selectedLight?.light === 'spot'">
-                <StudioSlider v-model="lightAngle" label="Angle" hint="Cone half-angle of the spot beam" :min="0.05" :max="1.4" :step="0.01" />
-                <StudioSlider v-model="lightPenumbra" label="Penumbra" hint="Softness of the spot beam's edge" :min="0" :max="1" :step="0.05" />
-              </template>
-
-              <template v-if="selectedLight?.light === 'rect'">
-                <StudioSlider v-model="lightWidth" label="Width" hint="Width of the area light panel" :min="0.2" :max="10" :step="0.1" />
-                <StudioSlider v-model="lightHeight" label="Height" hint="Height of the area light panel" :min="0.2" :max="10" :step="0.1" />
-              </template>
-            </div>
-          </div>
-        </template>
-      </StudioSection>
 
       <!-- Decal: content (text or image) then the four projection params. There is no
            gizmo for a decal (see the selection watch) — "Reposition" re-arms the same

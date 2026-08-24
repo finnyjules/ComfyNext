@@ -508,7 +508,7 @@ describe('Scene3D panel parity — selection states', () => {
   it('a selected light draws no migrated Material card at all', () => {
     const doc = defaultDoc()
     const cards = designCards(doc, createLight('point', []))
-    expect(cards.map((s) => s.title)).toEqual(Object.keys(DOC_SCENARIO))
+    expect(cards.map((s) => s.title)).toEqual(['Light', ...Object.keys(DOC_SCENARIO)])
     expect(panel(doc, createLight('point', [])).some((c) => c.key.startsWith(M))).toBe(false)
   })
 
@@ -856,6 +856,74 @@ describe('Scene3D panel parity — Geometry', () => {
   })
 })
 
+/** The Light card, character for character. Point/spot and spot-only and rect-only rows
+ *  each came from their own `<template v-if>` in the markup. */
+const LIGHT_ROW: Record<string, Row> = {
+  'object.color': { label: 'Color', kind: 'color' },
+  'object.intensity': {
+    label: 'Intensity', kind: 'slider', min: 0, max: 600, step: 1,
+    hint: 'Brightness of this light — point/spot use physical falloff, so they scale much higher',
+  },
+  'object.distance': { label: 'Distance', kind: 'slider', min: 0, max: 30, step: 0.5, hint: 'How far the light reaches — 0 means infinite' },
+  'object.decay': { label: 'Decay', kind: 'slider', min: 0, max: 3, step: 0.1, hint: 'How quickly the light fades over distance' },
+  'object.castShadow': { label: 'Cast shadow', kind: 'switch' },
+  'object.angle': { label: 'Angle', kind: 'slider', min: 0.05, max: 1.4, step: 0.01, hint: 'Cone half-angle of the spot beam' },
+  'object.penumbra': { label: 'Penumbra', kind: 'slider', min: 0, max: 1, step: 0.05, hint: "Softness of the spot beam's edge" },
+  'object.width': { label: 'Width', kind: 'slider', min: 0.2, max: 10, step: 0.1, hint: 'Width of the area light panel' },
+  'object.height': { label: 'Height', kind: 'slider', min: 0.2, max: 10, step: 0.1, hint: 'Height of the area light panel' },
+}
+
+const LIGHT_SCENARIO: Record<LightKind, readonly string[]> = {
+  point: ['object.color', 'object.intensity', 'object.distance', 'object.decay', 'object.castShadow'],
+  spot: [
+    'object.color', 'object.intensity', 'object.distance', 'object.decay', 'object.castShadow',
+    'object.angle', 'object.penumbra',
+  ],
+  rect: ['object.color', 'object.intensity', 'object.width', 'object.height'],
+}
+
+describe('Scene3D panel parity — Light', () => {
+  for (const kind of ['point', 'spot', 'rect'] as LightKind[]) {
+    it(`${kind}: draws the shipped rows, in the shipped order`, () => {
+      const doc = defaultDoc()
+      const card = designCards(doc, createLight(kind, [])).find((s) => s.title === 'Light')!
+      expect(card.keys).toEqual([...LIGHT_SCENARIO[kind]])
+    })
+
+    it(`${kind}: every row carries the shipped label, bounds and tooltip`, () => {
+      const doc = defaultDoc()
+      const rows = byKey(doc, createLight(kind, []))
+      for (const key of LIGHT_SCENARIO[kind]) {
+        // Intensity's ceiling is the ONE bound the template computed per light kind
+        // (lightIntensityMaxValue → lightIntensityMax): 600 for the physical point/spot,
+        // 60 for an area panel.
+        const want = key === 'object.intensity' && kind === 'rect'
+          ? { ...LIGHT_ROW[key]!, max: 60 }
+          : LIGHT_ROW[key]!
+        expectRow(rows.get(key), `${kind}.${key}`, want)
+      }
+    })
+  }
+
+  it('an untouched light reads LIGHT_DEFAULTS rather than undefined', () => {
+    const doc = defaultDoc()
+    const l = createLight('spot', []) as SceneObject & { distance?: number; castShadow?: boolean }
+    delete l.distance
+    delete l.castShadow
+    expect(readSceneControl(doc, l, 'object.color')).toBe('#ffffff')
+    expect(readSceneControl(doc, l, 'object.intensity'), 'point/spot spawn at 80').toBe(80)
+    expect(readSceneControl(doc, l, 'object.distance')).toBe(0)
+    expect(readSceneControl(doc, l, 'object.castShadow')).toBe(false)
+  })
+
+  it('no light row is offered to a primitive, a GLB, a decal or an empty selection', () => {
+    const doc = defaultDoc()
+    for (const obj of [prim('standard'), createGlbObject('x.glb', []), imageDecal(), null]) {
+      expect(designCards(doc, obj).some((s) => s.title === 'Light')).toBe(false)
+    }
+  })
+})
+
 describe('Scene3D panel parity — reading values', () => {
   it('rotation reads in degrees though the document stores radians', () => {
     const doc = defaultDoc()
@@ -1106,6 +1174,20 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     ])
   })
 
+  it('draws an unmapped Light-group key in the Light card', () => {
+    const doc = defaultDoc()
+    const novelLight: SceneControl = {
+      key: 'object.zzLightProbe', label: 'Probe', kind: 'slider',
+      min: 0, max: 1, step: 0.01, default: 0, group: 'Light',
+      agent: false, animatable: false,
+    } as SceneControl
+    const controls = [...SCENE_CONTROLS, novelLight]
+    const rows = scenePanelControls(doc, createLight('point', []), controls)
+      .filter((c) => c.group === 'Light')
+      .map((c) => c.key)
+    expect(rows).toEqual([...LIGHT_SCENARIO.point, 'object.zzLightProbe'])
+  })
+
   it('an unmapped Material key writes through the exact seam setMaterialControl uses, and reads back', () => {
     // `writeMaterialField` IS `setMaterialControl`'s generic fallback in
     // Scene3DStudioSurface.vue (`applyMaterial((m) => writeMaterialField(m, field,
@@ -1163,14 +1245,13 @@ describe('Scene3D surface wiring', () => {
   })
 
   it('no longer hand-writes any migrated section', () => {
-    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background', 'Geometry']) {
+    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background', 'Geometry', 'Light']) {
       expect(src, title).not.toContain(`<StudioSection title="${title}"`)
       expect(src, title).not.toContain(`title="${title}" @pointerdown`)
     }
     // The sections that genuinely stay hand-written — editors, not control rows.
     expect(src).toContain('title="Motion"')
-    // …and the two still on their way (their own commits follow this one).
-    expect(src).toContain('title="Light"')
+    // …and the one still on its way (its own commit follows this one).
     expect(src).toContain('title="Decal"')
   })
 
@@ -1179,16 +1260,18 @@ describe('Scene3D surface wiring', () => {
    * exactly that card (and nothing else in the column) while a stroke session is open,
    * and one StudioControlPanel cannot have a sibling swapped out of its middle.
    */
-  it('migrates Geometry — its own panel, sharing the one row list', () => {
+  it('migrates Geometry and Light — their rows come from the one row list', () => {
     expect(src).toContain('SCENE_GEOMETRY_SECTIONS')
     // The per-row proxies that fed only the deleted markup are gone.
-    for (const proxy of ['geoSpecs', 'paramOf', 'MODIFIER_GROUPS', 'CLONER_KEYS']) {
+    for (const proxy of ['geoSpecs', 'paramOf', 'MODIFIER_GROUPS', 'CLONER_KEYS', 'lightParam']) {
       expect(src, proxy).not.toContain(`const ${proxy} `)
       expect(src, proxy).not.toContain(`function ${proxy}(`)
     }
     // …and the write branches the new rows dispatch on exist.
     expect(src).toContain("key.startsWith('object.params.')")
     expect(src).toContain("key.startsWith('object.modifiers.')")
+    // …and the flat-leaf branch a light's colour/intensity/… writes through.
+    expect(src).toContain("setByPath(o, key.slice('object.'.length), value)")
   })
 
   /**
