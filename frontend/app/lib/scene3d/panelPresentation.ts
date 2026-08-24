@@ -1,6 +1,7 @@
 import type { ControlSpec, ParamValue } from '~/lib/spacetype/effect'
 import { POST_SECTIONS } from '~/lib/studio/post/controls'
 import { showIfVisible } from '~/lib/studio/sections'
+import { getByPath } from '~/lib/studio/path'
 import {
   DEFAULT_MATERIAL, MATERIAL_DEFAULTS, gradientAngles,
   type MaterialType, type SceneDoc, type SceneObject,
@@ -119,12 +120,30 @@ const materialField = (mat: SceneObject['material'], field: string): ParamValue 
 }
 
 /**
+ * The generic single-field write `setMaterialControl`'s fallback applies to every selected
+ * object (Scene3DStudioSurface.vue's `applyMaterial((m) => writeMaterialField(m, field,
+ * value))`), pulled out here so a test can exercise the SAME assignment `setControl`'s
+ * `object.material.*` branch performs — the plain field a `materialField` read of the same
+ * key sees straight back — without mounting the surface component.
+ */
+export function writeMaterialField(mat: SceneObject['material'], field: string, value: ParamValue): void {
+  (mat as unknown as Record<string, unknown>)[field] = value
+}
+
+/**
  * One canonical reader for every migrated key — the panel's `value` prop, the `showIf`
  * evaluation inside `scenePanelVisible`, and the parity spec all go through it.
  *
  * `post.*` is NOT handled here: `doc.post` is a plain PostSettings object the surface
  * already reads with `readPost`, and folding it in would duplicate that. Neither are
  * `object.position/rotation/scale` — see "Transform is not migrated" above.
+ *
+ * The final `getByPath(doc, key)` fallback mirrors `setControl`'s generic
+ * `setByPath(doc, key, value)` default case (Scene3DStudioSurface.vue) — every doc-level
+ * key that isn't one of the special cases above (a novel Camera or Background control,
+ * for instance) reads back exactly where the generic writer put it, keeping read and
+ * write symmetric for keys neither side special-cases. `object.*` keys are excluded from
+ * this fallback: they need an active `obj` and have no meaning read off `doc` directly.
  */
 export function readSceneControl(
   doc: SceneDoc, obj: SceneObject | null | undefined, key: string,
@@ -135,9 +154,12 @@ export function readSceneControl(
   if (key.startsWith('lighting.')) {
     return (doc.lighting as unknown as Record<string, ParamValue>)[key.slice('lighting.'.length)] ?? 0
   }
-  if (!obj) return 0
-  if (key.startsWith('object.material.')) return materialField(obj.material, key.slice('object.material.'.length))
-  return 0
+  if (key.startsWith('object.')) {
+    if (!obj) return 0
+    if (key.startsWith('object.material.')) return materialField(obj.material, key.slice('object.material.'.length))
+    return 0
+  }
+  return (getByPath(doc, key) as ParamValue | undefined) ?? 0
 }
 
 // ── the environment segmented's display labels ───────────────────────────────

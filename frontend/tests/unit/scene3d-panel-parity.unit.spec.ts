@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import {
   SCENE_PANEL_ANCHOR_KEYS, SCENE_PANEL_ORDER, SCENE_PANEL_SECTIONS,
-  ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls, scenePanelVisible,
+  ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls, scenePanelVisible, writeMaterialField,
 } from '~/lib/scene3d/panelPresentation'
 import { groupIntoSections } from '~/lib/studio/sections'
+import { setByPath } from '~/lib/studio/path'
 import { POST_SECTIONS } from '~/lib/studio/post/controls'
 import { SCENE_CONTROLS, type SceneControl } from '~/lib/scene3d/controls'
 import {
@@ -598,6 +599,23 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     min: 0, max: 1, step: 0.01, default: 0, group: 'Lighting',
     agent: false, animatable: false,
   } as SceneControl
+  // Camera has only `camera.fov` today; a novel key keeps the `camera.` prefix so the
+  // generic doc-level fallback resolves it under the existing `doc.camera` object.
+  const novelCamera: SceneControl = {
+    key: 'camera.zzProbe', label: 'Camera probe', kind: 'slider',
+    min: 0, max: 1, step: 0.01, default: 0, group: 'Camera',
+    agent: false, animatable: false,
+  } as SceneControl
+  // Background's one real schema key (`showFloor`) is a BARE doc-level key, not
+  // `background.`-prefixed — `background` itself already names the colour/transparency
+  // string field (see panelPresentation.ts's module doc), so a `background.`-prefixed
+  // path would collide with it. A novel Background control follows `showFloor`'s own
+  // bare-key convention instead.
+  const novelBackground: SceneControl = {
+    key: 'zzBackgroundProbe', label: 'Background probe', kind: 'slider',
+    min: 0, max: 1, step: 0.01, default: 0, group: 'Background',
+    agent: false, animatable: false,
+  } as SceneControl
 
   it('draws an unmapped Material-group key in the Material card, after the mapped rows', () => {
     const doc = defaultDoc()
@@ -617,6 +635,24 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     expect(rows).toEqual([...DOC_SCENARIO.Lighting, 'lighting.zzProbe'])
   })
 
+  it('draws an unmapped Camera-group key in the Camera card', () => {
+    const doc = defaultDoc()
+    const controls = [...SCENE_CONTROLS, novelCamera]
+    const rows = scenePanelControls(doc, null, controls)
+      .filter((c) => c.group === 'Camera')
+      .map((c) => c.key)
+    expect(rows).toEqual([...DOC_SCENARIO.Camera, 'camera.zzProbe'])
+  })
+
+  it('draws an unmapped Background-group key in the Background card', () => {
+    const doc = defaultDoc()
+    const controls = [...SCENE_CONTROLS, novelBackground]
+    const rows = scenePanelControls(doc, null, controls)
+      .filter((c) => c.group === 'Background')
+      .map((c) => c.key)
+    expect(rows).toEqual([...DOC_SCENARIO.Background, 'zzBackgroundProbe'])
+  })
+
   it('an unmapped key still returns null for a NOT-YET-migrated group (Transform)', () => {
     const doc = defaultDoc()
     const novelTransform: SceneControl = {
@@ -628,20 +664,39 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     expect(keys).not.toContain('object.zzTransformProbe')
   })
 
-  it('an unmapped Material key writes through the same generic path setMaterialControl uses, and reads back', () => {
-    // Scene3DStudioSurface.vue's setControl routes `object.material.*` keys with no
-    // special case through `setMaterialControl`'s own generic fallback
-    // (`applyMaterial((m) => { (m as Record<string, unknown>)[field] = value })`), which
-    // for a single object is exactly this direct assignment.
+  it('an unmapped Material key writes through the exact seam setMaterialControl uses, and reads back', () => {
+    // `writeMaterialField` IS `setMaterialControl`'s generic fallback in
+    // Scene3DStudioSurface.vue (`applyMaterial((m) => writeMaterialField(m, field,
+    // value))`) — calling it here exercises the real production write path, not a
+    // hand-rolled stand-in for it.
     const doc = defaultDoc()
     const o = prim('standard')
-    ;(o.material as unknown as Record<string, unknown>).zzProbe = 0.7
+    writeMaterialField(o.material, 'zzProbe', 0.7)
     expect(readSceneControl(doc, o, 'object.material.zzProbe')).toBe(0.7)
+  })
+
+  it('an unmapped Camera key writes through the exact seam setControl\'s default case uses, and reads back', () => {
+    // `setByPath` IS `setControl`'s generic default case in Scene3DStudioSurface.vue
+    // (`setByPath(doc, key, value)`) — calling it here exercises the real production
+    // write path. Regression guard for the read/write asymmetry a prior review caught:
+    // `readSceneControl` used to have no generic doc-level fallback, so this write was
+    // silently unreadable.
+    const doc = defaultDoc()
+    setByPath(doc, 'camera.zzProbe', 0.9)
+    expect(readSceneControl(doc, null, 'camera.zzProbe')).toBe(0.9)
+  })
+
+  it('an unmapped Background key writes through the same seam and reads back', () => {
+    const doc = defaultDoc()
+    setByPath(doc, 'zzBackgroundProbe', 0.4)
+    expect(readSceneControl(doc, null, 'zzBackgroundProbe')).toBe(0.4)
   })
 
   it('the real, unmutated SCENE_CONTROLS array never picked up the novel test entries', () => {
     expect(SCENE_CONTROLS.some((c) => c.key === 'object.material.zzProbe')).toBe(false)
     expect(SCENE_CONTROLS.some((c) => c.key === 'lighting.zzProbe')).toBe(false)
+    expect(SCENE_CONTROLS.some((c) => c.key === 'camera.zzProbe')).toBe(false)
+    expect(SCENE_CONTROLS.some((c) => c.key === 'zzBackgroundProbe')).toBe(false)
   })
 })
 

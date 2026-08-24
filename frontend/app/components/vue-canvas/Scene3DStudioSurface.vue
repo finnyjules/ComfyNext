@@ -82,7 +82,7 @@ import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 import {
   ENV_BY_LABEL, SCENE_PANEL_SECTIONS,
-  readSceneControl, scenePanelChrome, scenePanelControls,
+  readSceneControl, scenePanelChrome, scenePanelControls, writeMaterialField,
 } from '~/lib/scene3d/panelPresentation'
 import { setByPath } from '~/lib/studio/path'
 import type { PostSettings } from '~/lib/spacetype/post'
@@ -1386,7 +1386,7 @@ function readControl(key: string): string | number | boolean {
 function setMaterialControl(field: string, value: string | number | boolean): void {
   if (field === 'relief.source') { setReliefSource(value as 'none' | 'shader' | 'image'); return }
   if (field.startsWith('relief.')) { setReliefField(field.slice('relief.'.length), value); return }
-  applyMaterial((m) => { (m as unknown as Record<string, unknown>)[field] = value })
+  applyMaterial((m) => writeMaterialField(m, field, value))
 }
 
 /** The panel's `@set`. One dispatch over the same dotted keys `readControl` resolves. */
