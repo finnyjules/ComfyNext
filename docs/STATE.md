@@ -14,10 +14,10 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ (mode-gated controls) | ✅ descriptor | 11,202 |
 | Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger, preset gallery, **colour tracks**, and 4 per-glyph effects (blink · axis scatter · grade flicker · draw-on) | ✅ | ✅ descriptor (unverified live) | — |
-| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~6,300 (+ SVG import) |
+| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree (Material/Camera/Lighting/Background **schema-drawn**) | ✅ descriptor (object.* + id-addressed) | ~6,300 (+ SVG import) |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
-| Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
+| Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (**schema-drawn** from GRADIENT_CONTROLS) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
 | Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask, + mode-gated params) | ✅ descriptor (+ mask) | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
 | Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ + **layer stack** (rail, per-layer scoping, placement) | ✅ descriptor (active layer only) | ~1,900 (lib/geoshape + studio.ts) |
@@ -30,6 +30,10 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Derived inspectors — Gradient + 3D Studio panels drawn from the control list — LANDED 2026-08-24
+
+Act 1's legacy-retrofit proof, done. The two biggest hand-written inspector panels now render from their `ControlSpec` schemas via the shared `StudioControlPanel`: **Gradient** fully (all Design sections + post folded into ONE panel; −723 lines of template), **3D Studio** for Material/Camera/Lighting/Background (Transform deliberately stays bespoke: its shipped inputs are unbounded, and slider rows clamp typed entry — migrating it needs a soft-range `StudioRow` first, the named follow-up; Geometry/Light/Decal/motion also stay hand-written). Presentation concerns (on-screen card titles/order/dynamic captions/bespoke-block anchors) live in per-studio `panelPresentation.ts` modules that remap a COPY — schema declaration order, group strings, and every agent/motion/sweep vocabulary stayed byte-identical (dump-verified), except two deliberate schema grants: `object.material.unlit` + `showFloor` switches. Parity is pinned by characterization specs transcribed from the deleted templates (125 Gradient + 61 Scene3D assertions incl. multi-layer per-layer-layout-override scenarios), and `bindable: false` rows suppress the bind menu (live-verified both directions via MutationObserver). New shared capabilities: `ControlMeta.bindable?: false`, per-section chrome (`sections` prop: badge/open), component-mount test infra (@vue/test-utils + scoped happy-dom). **What this buys:** an agent-emitted `ControlSpec[]` now gets inspector + agent + motion + sweeps with zero hand-written UI in Gradient; Scene3D still routes new keys through an allow-list (`panelCardOf`/`setControl` whitelist — the one place "new controls appear automatically" doesn\'t hold yet). Riders: select display-label field (Relief shows raw `none/shader/image`), focus.shape prose in hints, Scene3D allow-list, gradient embed 284KB>90KB ceiling (pre-existing, A/B-proven, spun off). Spec/plan + verification record: `docs/superpowers/specs|plans/2026-08-24-derived-inspector-retrofit*`.
 
 ### Compositor — feather elements (soft edge-mask) — LANDED 2026-08-18
 

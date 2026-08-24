@@ -356,3 +356,23 @@ git commit -m "feat(scene3d): Transform/Material/Camera/Lighting/Background draw
 git add docs/STATE.md docs/ROADMAP.md
 git commit -m "docs(factory): Act 1 status — Gradient retrofit landed, Scene3D core sections derived"
 ```
+
+---
+
+## Verification Record (2026-08-24, Task 6)
+
+**Live browser, dev server :3002, real pointer input (not synthetic events):**
+
+*Gradient (/dev/gradient-studio-lab):*
+- All sections render derived with correct chrome: Canvas "both layers", Color with active-layer badge, Flow "all layouts", the Liquid group split into "Depth & light" + "Liquid surface" cards, Focus, Shape with layer badge, post stack (one card per effect with header switches), Export.
+- Write path: Angle row drag 90→312, gradient visibly rotated. Layout flips (linear→radial→liquid→linear stripes) add/remove exactly the shipped rows (Center X/Y + Inner radius on radial; Flow/Depth & light/Liquid surface on liquid; Relief + Shape on banded).
+- Dynamic caption: Shape shows "Randomness" in bands mode (override path live).
+- Bind menu: right-click "Hue drift" → "Turn into variable" appears (proven via in-page MutationObserver — the Browser pane's focus cycling closes menus before screenshots); right-click "Count" (bindable:false) → no menu. Fix da35f485c verified live.
+- Console: no new errors (only stale Vite optimize-dep noise from first boot, cleared by reload).
+
+*Scene3D (/dev/scene3d-lab):*
+- No selection: Camera (FOV), Lighting (Preset/Environment/Sun azimuth/elevation/intensity/Ambient), Background, post stack incl. Ambient occlusion — all derived.
+- Sphere selected: Transform = bespoke unbounded number inputs (typed 35 into Position X, accepted, no min/max attrs — the clamping revert verified live); Geometry/Modifiers/Cloner untouched hand-written; Material derived with shipped structure (Standard select, SURFACE, Color, Roughness, Metalness, Coat & sheen / Glow / Transparency / Iridescence cards).
+- Write path: Roughness drag 0.60→0.02 written into the scene doc (lab debug dump) and sphere highlight visibly tightened.
+
+**Whole-branch:** unit suite 15 failed files / 30 failed tests — all pre-existing (other sessions' WIP + known baseline; branch's own covering specs all green). Typecheck flat at 420. The gradient embed size failure (284KB vs 90KB ceiling) was A/B-proven pre-existing: merge-base builds 283,734B; this branch adds 577B. Spun off as its own task.
