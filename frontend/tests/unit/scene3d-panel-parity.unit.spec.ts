@@ -54,6 +54,9 @@ type Row = {
   max?: number
   step?: number
   options?: readonly string[]
+  /** Positionally paired with `options` — Task 3's presentation-only display text.
+   *  Only asserted where a row actually carries one. */
+  optionLabels?: readonly string[]
   hint?: string
   /** Soft range — the bounds draw the row but do not gate what may be entered. */
   entry?: 'unclamped'
@@ -140,7 +143,12 @@ const ROW: Record<string, Row> = {
   [`${M}unlit`]: { label: 'Unlit', kind: 'switch', hint: 'Glows flat instead of being shaded by scene lights' },
 
   // Surface relief — the source picker was a three-button grid with NO tooltip
-  [`${M}relief.source`]: { label: 'Relief', kind: 'select', options: ['none', 'shader', 'image'] },
+  // optionLabels: template truth (64492f314:4241-4250) — the three-button grid's own
+  // text, 'None'/'Effect'/'Image', not the raw 'none'/'shader'/'image' values.
+  [`${M}relief.source`]: {
+    label: 'Relief', kind: 'select', options: ['none', 'shader', 'image'],
+    optionLabels: ['None', 'Effect', 'Image'],
+  },
   [`${M}relief.scale`]: { label: 'Depth', kind: 'slider', min: 0, max: 4, step: 0.01, hint: 'How raised or recessed the surface detail looks' },
   [`${M}relief.contrast`]: { label: 'Contrast', kind: 'slider', min: 1, max: 6, step: 0.1, hint: 'Deepens the light and dark areas so the relief catches the light.' },
   [`${M}relief.tiling`]: { label: 'Tiling', kind: 'slider', min: 0.25, max: 12, step: 0.25, hint: 'How many times the pattern repeats across the surface — higher is finer.' },
@@ -315,6 +323,9 @@ function expectRow(c: ControlSpec | undefined, key: string, want: Row) {
   if (want.max !== undefined) expect((c as { max: number }).max, `${key} max`).toBeCloseTo(want.max, 10)
   if (want.step !== undefined) expect((c as { step: number }).step, `${key} step`).toBeCloseTo(want.step, 10)
   if (want.options) expect((c as { options: string[] }).options, `${key} options`).toEqual([...want.options])
+  if (want.optionLabels) {
+    expect((c as { optionLabels?: string[] }).optionLabels, `${key} optionLabels`).toEqual([...want.optionLabels])
+  }
   expect(c!.hint ?? null, `${key} hint`).toBe(want.hint ?? null)
   // Asserted for EVERY row, present or absent: a row that quietly picked up a soft range
   // would stop clamping entry, which is a behaviour change nobody asked for.

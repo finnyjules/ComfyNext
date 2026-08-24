@@ -92,7 +92,13 @@ export type ControlSpec = (
   // `maxStops` mirrors the consuming shader's array size.
   | { key: string; label: string; kind: 'gradientStops'; default: string; maxStops?: number; group: string }
   | { key: string; label: string; kind: 'color'; default: string; group: string }
-  | { key: string; label: string; kind: 'select'; options: string[]; default: string; group: string }
+  // `optionLabels`, when present, is positionally paired with `options` — index i's
+  // display text for index i's stored value. Omitted (or shorter than `options`) falls
+  // back to the raw option string for the missing slots. PRESENTATION only: the value
+  // read/written/emitted is always the `options[i]` string, never the label — same
+  // contract as `label` is to `key`. Stripped from every derived agent vocabulary
+  // alongside `bindable`/`entry`, so the model always sees and writes raw option values.
+  | { key: string; label: string; kind: 'select'; options: string[]; optionLabels?: string[]; default: string; group: string }
   | { key: string; label: string; kind: 'font'; default: string; group: string }
   // An interactive bézier path drawn on the preview (String effect). Stored as one JSON
   // string in params (StringPathDoc); the surface renders the StringPathEditor overlay.

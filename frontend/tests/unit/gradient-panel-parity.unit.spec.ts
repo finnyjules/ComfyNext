@@ -70,6 +70,10 @@ interface Row {
   max?: number
   step?: number
   options?: readonly (string | number)[]
+  /** Positionally paired with `options` — index i's display text for index i's stored
+   *  value. Task 3 (option display labels): presentation only, never asserted unless
+   *  the row actually carries one. */
+  optionLabels?: readonly string[]
   /** `false` = the shipped row carried `:bindable="false"` (or was not wrapped in a
    *  BindableRow at all), so it offered no Collection binding. */
   bindable?: false
@@ -124,7 +128,10 @@ const RELIEF: Row[] = [
 /** Focus — template 1453-1500. blur + region always; the rest only off "off". */
 const FOCUS = (shape: 'off' | 'radial' | 'linear' = 'off'): Row[] => [
   sl('Focus', 'Focus', 'focus.blur', 'Blur', 0, 100, 1),
-  sel('Focus', 'Focus', 'focus.shape', 'Focus region', ['off', 'radial', 'linear']),
+  // optionLabels: template truth (9c20f8b72, GradientStudioSurface.vue ~1465-1467) —
+  // the old native <select>'s three <option> texts.
+  { ...sel('Focus', 'Focus', 'focus.shape', 'Focus region', ['off', 'radial', 'linear']),
+    optionLabels: ['Off — blur everything', 'Radial — sharp spot', 'Linear — tilt-shift band'] },
   ...(shape === 'off' ? [] : [
     sl('Focus', 'Focus', 'focus.radius', 'Focus size', 0, 1, 0.01),
     sl('Focus', 'Focus', 'focus.softness', 'Focus falloff', 0, 100, 1),
@@ -273,7 +280,9 @@ const SCENARIOS: Scenario[] = [
     rows: [
       ...CANVAS({ innerRadius: true, center: true }),
       sl('Gradient', 'Color', 'layer.ramp.radius', 'Radius', 0.05, 2, 0.01),
-      sel('Gradient', 'Color', 'layer.ramp.shape', 'Radial shape', ['circle', 'ellipse']),
+      // label: template truth (9c20f8b72, GradientStudioSurface.vue:1066) — the visible
+      // `<label>` read 'Shape'; 'Radial shape' was only the BindableRow promote-name.
+      sel('Gradient', 'Color', 'layer.ramp.shape', 'Shape', ['circle', 'ellipse']),
       ...FLOW,
       ...COLOR_PARAMS({ steps: true, hueDrift: true, repeat: true, falloff: true }),
       ...FOCUS(),
@@ -516,6 +525,9 @@ describe('Gradient panel parity — the hand-written panel is the contract', () 
             expect(hit!.step, `${want.key} step`).toBe(want.step)
           }
           if (want.options) expect(hit!.options, `${want.key} options`).toEqual([...want.options])
+          if (want.optionLabels) {
+            expect((hit!.spec as any).optionLabels, `${want.key} optionLabels`).toEqual([...want.optionLabels])
+          }
           expect(hit!.bindable, `${want.key} bindable`).toBe(want.bindable)
         }
       })

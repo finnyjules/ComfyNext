@@ -85,7 +85,11 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   // --- Gradient axis (simple primitives: ramp / radialRamp / conic) ---------
   slider('layer.ramp.angle', 'Angle', 0, 360, 1, 'Gradient', 'Direction of the ramp (linear) / start rotation (conic)', { when: isRampLinear }),
   slider('layer.ramp.radius', 'Radius', 0.05, 2, 0.01, 'Gradient', 'Radial ramp size; 1 ≈ touches the frame edge', { when: (c) => c.canvas.layout === 'radialRamp' }),
-  { key: 'layer.ramp.shape', label: 'Radial shape', kind: 'select', options: ['circle', 'ellipse'], default: 'circle', group: 'Gradient', when: (c) => c.canvas.layout === 'radialRamp', hint: 'circle = aspect-corrected round; ellipse = stretched to the frame' } as GradientControl,
+  // label: template truth (9c20f8b72, GradientStudioSurface.vue:1066) — the visible
+  // `<label>` read 'Shape', not 'Radial shape' (that string was only the BindableRow's
+  // `label` prop, i.e. the promoted-variable display name, and got copied into the
+  // row label by mistake during the retrofit).
+  { key: 'layer.ramp.shape', label: 'Shape', kind: 'select', options: ['circle', 'ellipse'], default: 'circle', group: 'Gradient', when: (c) => c.canvas.layout === 'radialRamp', hint: 'circle = aspect-corrected round; ellipse = stretched to the frame' } as GradientControl,
   slider('layer.ramp.sweep', 'Sweep', 20, 360, 1, 'Gradient', 'Conic arc in degrees', { when: (c) => c.canvas.layout === 'conic' }),
   // bindable:false — shipped as a bare <input type="checkbox">, outside any BindableRow.
   { key: 'layer.ramp.closeLoop', label: 'Close loop', kind: 'switch', default: false, group: 'Gradient', when: (c) => c.canvas.layout === 'conic', bindable: false, hint: 'Wrap the ramp so the first and last colour meet seamlessly' } as GradientControl,
@@ -208,7 +212,12 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
 
   // --- Focus ----------------------------------------------------------------
   slider('focus.blur', 'Blur', 0, 100, 1, 'Focus', 'Soft-focus / defocus amount; 0 = perfectly sharp'),
-  { key: 'focus.shape', label: 'Focus region', kind: 'select', options: ['off', 'radial', 'linear'], default: 'off', group: 'Focus',
+  // optionLabels: template truth (9c20f8b72, GradientStudioSurface.vue ~1465-1467) —
+  // the old native <select>'s three <option> texts, restored here after the retrofit
+  // demoted them to one combined hint string.
+  { key: 'focus.shape', label: 'Focus region', kind: 'select', options: ['off', 'radial', 'linear'],
+    optionLabels: ['Off — blur everything', 'Radial — sharp spot', 'Linear — tilt-shift band'],
+    default: 'off', group: 'Focus',
     hint: 'off = blur the whole thing evenly; radial = keep a round spot sharp; linear = keep an angled band sharp (tilt-shift)' },
   slider('focus.radius', 'Focus size', 0, 1, 0.01, 'Focus', 'Size of the in-focus region (needs a radial/linear shape)'),
   slider('focus.softness', 'Focus falloff', 0, 100, 1, 'Focus', 'How gradually blur ramps in past the focus region'),

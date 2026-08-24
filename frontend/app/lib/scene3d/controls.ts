@@ -267,8 +267,11 @@ export const SCENE_CONTROLS: SceneControl[] = [
   // ReliefSpec doc). `source` picks the origin; scale/contrast/tiling tune it. Orthogonal
   // to material type, so gated only by reliefApplies (isEditableMaterial + not-unlit-
   // shaderFill), not by isPhysicalMaterial/isPhongMaterial.
+  // optionLabels: template truth (64492f314, the three-button grid at ~4241-4250)
+  // showed 'None' / 'Effect' / 'Image', not the raw 'none'/'shader'/'image' values.
   select('object.material.relief.source', 'Relief source', [...RELIEF_SOURCES], 'none', 'Material',
-    'Where the height field comes from — a catalog effect or an uploaded image', { when: reliefApplies }),
+    'Where the height field comes from — a catalog effect or an uploaded image',
+    { when: reliefApplies, optionLabels: ['None', 'Effect', 'Image'] }),
   slider('object.material.relief.scale', 'Relief scale', 0, 4, 0.01, 'Material', MATERIAL_DEFAULTS.reliefScale,
     'How raised or recessed the surface detail looks', { when: reliefApplies }),
   slider('object.material.relief.contrast', 'Relief contrast', 1, 6, 0.1, 'Material', MATERIAL_DEFAULTS.reliefContrast,

@@ -31,3 +31,37 @@ describe('StudioControlPanel chrome', () => {
     expect(sections[1]!.props('open')).toBe(true) // default unchanged
   })
 })
+
+// Task 3 (option display labels): `optionLabels[i]` is presentation-only display text
+// for `options[i]`. The row must SHOW the label but always EMIT/READ the raw option
+// value — a stored value must never change shape because a label was added.
+describe('StudioControlPanel — select optionLabels', () => {
+  const SELECT_CONTROLS: ControlSpec[] = [
+    {
+      key: 's', label: 'Source', kind: 'select',
+      options: ['none', 'shader', 'image'], optionLabels: ['None', 'Effect', 'Image'],
+      default: 'none', group: 'One',
+    } as ControlSpec,
+  ]
+
+  function mountSelectPanel() {
+    return mount(StudioControlPanel, {
+      props: { controls: SELECT_CONTROLS, order: ['One'], value: () => 'shader' },
+    })
+  }
+
+  it('shows the optionLabels text for the current raw value, not the raw value itself', () => {
+    const w = mountSelectPanel()
+    expect(w.text()).toContain('Effect')
+    expect(w.text()).not.toContain('shader')
+  })
+
+  it('emits the raw option VALUE (not the label) when the native select changes', async () => {
+    const w = mountSelectPanel()
+    const select = w.find('select[aria-label="Source"]')
+    await select.setValue('image')
+    const setEvents = w.emitted('set')
+    expect(setEvents).toBeTruthy()
+    expect(setEvents![setEvents!.length - 1]).toEqual(['s', 'image'])
+  })
+})

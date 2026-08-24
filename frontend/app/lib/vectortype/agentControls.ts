@@ -7,13 +7,13 @@ import type { VectorTypeConfig } from './config'
 import { VT_CONTROLS, VT_LAYER_PREFIX, derivedVtControls, visibleVtControls } from './controls'
 import { vtLayerLabels } from './layerLabel'
 
-/** Strip the schema-only fields (`when`/`agent`/`animatable`/`summary`/`entry`) a `VtControl` may
- *  carry, and drop anything explicitly withheld from the agent. Mirrors
+/** Strip the schema-only fields (`when`/`agent`/`animatable`/`summary`/`entry`/`optionLabels`) a
+ *  `VtControl` may carry, and drop anything explicitly withheld from the agent. Mirrors
  *  `shapefx/agentControls.ts` exactly. */
 function stripMeta(specs: ControlSpec[]): ControlSpec[] {
   return specs
     .filter((c) => (c as any).agent !== false)
-    .map(({ when, agent, animatable, summary, entry, ...spec }: any) => spec as ControlSpec)
+    .map(({ when, agent, animatable, summary, entry, optionLabels, ...spec }: any) => spec as ControlSpec)
 }
 
 /** Where a Vector Type layer's `ShaderSpec` lives, relative to the active layer.
@@ -100,7 +100,7 @@ export function vtStackControls(cfg: VectorTypeConfig): ControlSpec[] {
       const id = l?.id
       if (typeof id !== 'string' || id === '' || id.includes('.') || /^\d+$/.test(id)) return
       if (c.when && !c.when(cfg, l)) return
-      const { when, agent, animatable, summary, entry, ...spec } = c as any
+      const { when, agent, animatable, summary, entry, optionLabels, ...spec } = c as any
       out.push({ ...spec, key: `appearance.${id}.${rest}`, label: `${names[i] ?? `Layer ${i + 1}`} · ${c.label}` } as ControlSpec)
     })
   }

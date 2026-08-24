@@ -18,7 +18,10 @@ export function gradientAgentControls(
 ): ControlSpec[] {
   return visibleGradientControls(cfg, opts)
     .filter((c) => (c as any).agent !== false)
-    .map(({ when, agent, animatable, summary, bindable, entry, ...spec }) => spec as ControlSpec)
+    // `optionLabels` (Task 3's select display-text) is presentation-only, same reasoning
+    // as `bindable`/`entry` — stripped so it never silently widens what the model is
+    // offered or shown.
+    .map(({ when, agent, animatable, summary, bindable, entry, optionLabels, ...spec }: any) => spec as ControlSpec)
 }
 
 // Shader-fill controls (Task 8, ~/lib/shaderfill/controls.ts) are NOT wired in here,

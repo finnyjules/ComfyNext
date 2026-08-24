@@ -14,6 +14,17 @@ const emit = defineEmits<{ (e: 'update:value', v: string): void }>()
 // options left the rendered <option> list on the old values.
 const options = computed(() => (props.spec as { options?: string[] }).options ?? [])
 
+// `optionLabels[i]` is the display text for `options[i]`, positionally paired —
+// missing or shorter than `options` falls back to the raw value for that slot.
+// PRESENTATION only: `model`/`v-model` below always carries the raw `options[i]`
+// string, never the label, so a stored value never changes shape because of this.
+const labelFor = (v: string): string => {
+  const labels = (props.spec as { optionLabels?: string[] }).optionLabels
+  if (!labels) return v
+  const i = options.value.indexOf(v)
+  return i >= 0 ? (labels[i] ?? v) : v
+}
+
 // `v-model`, NOT `:value` + `@change`, and the reason is SELECTEDNESS, not the value
 // binding. The failure this guards against: HTML resets a select's selectedness whenever
 // its option list changes, so a value set against an EMPTY select matches nothing
@@ -50,7 +61,10 @@ const model = computed({
        ~6.6px of its mark bleeds back over the gap. 4px of gap therefore read as about
        −2.6px and the caret optically touched the value. 12px lands ~5.4px clear. -->
   <span class="relative flex flex-1 items-center justify-end gap-3 text-[11px] text-white/90">
-    <span class="capitalize">{{ value }}</span>
+    <!-- `capitalize` only applies to the raw fallback — an `optionLabels` string
+         dictates its OWN casing (e.g. focus.shape's 'Off — blur everything' is prose,
+         not a title), so title-casing it here would be wrong. -->
+    <span :class="{ capitalize: !(spec as { optionLabels?: string[] }).optionLabels }">{{ labelFor(value) }}</span>
     <!-- The SAME glyph and treatment as StudioSection's card caret — `›` turned 90°, not
          `⌄` (U+2304). The two sat side by side and disagreed: U+2304 draws smaller than the
          type size suggests and its ink sits off the optical centre, so it read as a
@@ -67,7 +81,10 @@ const model = computed({
       class="absolute inset-x-0 -inset-y-1.5 cursor-pointer opacity-0"
       @pointerdown.stop
     >
-      <option v-for="o in options" :key="o" :value="o" class="bg-neutral-900 capitalize">{{ o }}</option>
+      <option
+        v-for="o in options" :key="o" :value="o" class="bg-neutral-900"
+        :class="{ capitalize: !(spec as { optionLabels?: string[] }).optionLabels }"
+      >{{ labelFor(o) }}</option>
     </select>
   </span>
 </template>

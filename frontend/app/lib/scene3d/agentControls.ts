@@ -5,18 +5,21 @@ import { SCENE_CONTROLS, visibleSceneControls, type SceneControl } from './contr
 import type { SceneDoc, SceneObject } from './config'
 
 /** Strip the schema-only fields (`when`/`agent`/`animatable`/`summary`/`bindable`/
- *  `entry`) a `SceneControl` may carry, and drop anything explicitly withheld from the
- *  agent. Mirrors shapefx/agentControls.ts and vectortype/agentControls.ts exactly.
- *  `bindable` is stripped even though nothing in SCENE_CONTROLS sets it false today — a
+ *  `entry`/`optionLabels`) a `SceneControl` may carry, and drop anything explicitly
+ *  withheld from the agent. Mirrors shapefx/agentControls.ts and vectortype/agentControls.ts
+ *  exactly. `bindable` is stripped even though nothing in SCENE_CONTROLS sets it false today — a
  *  future `bindable: false` scene entry (effect.ts's schema-level twin of a hand-panel's
  *  `:bindable="false"` row) must not leak into agent vocabulary just because this
  *  strip forgot about it. `entry` (the soft-range opt-in the nine Transform rows carry)
  *  is stripped for exactly the same reason: it tells a ROW how to parse a keystroke and
- *  says nothing to a model, so the vocabulary must not shift when a row opts in. */
+ *  says nothing to a model, so the vocabulary must not shift when a row opts in.
+ *  `optionLabels` (Task 3's select display-text) is stripped for the same reason again —
+ *  the Relief source row now carries None/Effect/Image, and the model must still be
+ *  offered and write the raw none/shader/image values. */
 function stripMeta(specs: ControlSpec[]): ControlSpec[] {
   return specs
     .filter((c) => (c as any).agent !== false)
-    .map(({ when, agent, animatable, summary, bindable, entry, ...spec }: any) => spec as ControlSpec)
+    .map(({ when, agent, animatable, summary, bindable, entry, optionLabels, ...spec }: any) => spec as ControlSpec)
 }
 
 export const OBJECT_PREFIX = 'object.'
@@ -96,7 +99,7 @@ export function sceneStackControls(doc: SceneDoc): ControlSpec[] {
   iterateObjectControls(doc, (c, obj, id) => {
     if ((c as { agent?: boolean }).agent === false) return
     const rest = c.key.slice(OBJECT_PREFIX.length)
-    const { when, agent, animatable, summary, bindable, entry, ...spec } = c as any
+    const { when, agent, animatable, summary, bindable, entry, optionLabels, ...spec } = c as any
     out.push({ ...spec, key: `objects.${id}.${rest}`, label: `${obj.name || 'Object'} · ${c.label}` } as ControlSpec)
   })
   return out
