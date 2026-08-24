@@ -33,20 +33,25 @@ describe('stripMeta (via sceneBindableControls doc-level output)', () => {
   })
 
   it('a control with agent: false is excluded entirely', () => {
-    // Transform controls are `animatable: false` but NOT `agent: false` — none of
-    // SCENE_CONTROLS today opt out of the agent, so assert the mechanism itself by
-    // checking that every returned control's source in SCENE_CONTROLS never has
-    // agent === false (i.e. nothing that opted out slipped through).
+    // Transform controls are `animatable: false` but NOT `agent: false`. The inspector-only
+    // material rows Task 5 added (dispersion, the palette/gradient dials, relief.invert, …)
+    // ARE `agent: false`, so this now exercises the filter end-to-end rather than
+    // structurally: none of them may reach the agent's vocabulary or the binding list,
+    // under either the relative `object.*` or the absolute `objects.<id>.*` namespace.
     const doc = defaultDoc()
-    const bindable = sceneBindableControls(doc)
+    const obj = createPrimitive('sphere', doc.objects)
+    doc.objects.push(obj)
     const withheld = SCENE_CONTROLS.filter((c) => (c as any).agent === false).map((c) => c.key)
+    expect(withheld.length, 'the filter needs a real opt-out to exercise').toBeGreaterThan(0)
+
+    const bindable = sceneBindableControls(doc)
+    const agent = sceneAgentControls(doc, obj)
     for (const key of withheld) {
-      expect(bindable.some((c) => c.key === key || c.key.endsWith(`.${key.replace(/^object\./, '')}`))).toBe(false)
+      const rest = key.replace(/^object\./, '')
+      const hit = (c: { key: string }) => c.key === key || c.key === `objects.${obj.id}.${rest}`
+      expect(bindable.some(hit), `${key} bindable`).toBe(false)
+      expect(agent.some(hit), `${key} agent`).toBe(false)
     }
-    // Direct mechanism test: a synthetic control run through the same filter used
-    // internally would drop it — verified structurally since SCENE_CONTROLS has no
-    // agent:false member to exercise end-to-end at time of writing.
-    expect(SCENE_CONTROLS.every((c) => (c as any).agent !== false)).toBe(true)
   })
 })
 

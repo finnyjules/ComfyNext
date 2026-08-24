@@ -67,6 +67,22 @@ describe('SCENE_CONTROLS integrity', () => {
     'object.material.relief.scale': 'reliefScale',
     'object.material.relief.contrast': 'reliefContrast',
     'object.material.relief.tiling': 'reliefTiling',
+    'object.material.opalHueShift': 'opalHueShift',
+    'object.material.opalFrequency': 'opalFrequency',
+    'object.material.opalAngleMix': 'opalAngleMix',
+    'object.material.opalFlowSpeed': 'opalFlowSpeed',
+    'object.material.opalStrength': 'opalStrength',
+    'object.material.dispersion': 'dispersion',
+    'object.material.attenuationDistance': 'attenuationDistance',
+    'object.material.toonSteps': 'toonSteps',
+    'object.material.fresnelPower': 'fresnelPower',
+    'object.material.paletteHue': 'paletteHue',
+    'object.material.paletteSat': 'paletteSat',
+    'object.material.paletteLight': 'paletteLight',
+    'object.material.gradientYaw': 'gradientYaw',
+    'object.material.gradientPitch': 'gradientPitch',
+    'object.material.gradientOffset': 'gradientOffset',
+    'object.material.gradientSpread': 'gradientSpread',
   }
 
   it('slider defaults match MATERIAL_DEFAULTS where a matching entry exists', () => {

@@ -39,9 +39,9 @@ import {
  * `material.unlit` now joins the schema too (`object.material.unlit`, gated to
  * shaderFill exactly like the surface's own Unlit switch) — so the agent can flip
  * lit↔unlit on a shaderFill material, not just tune its roughness while stuck one way.
- * `GlbObject.materialOverride` and `material.relief.invert` are still hand-omitted: the
- * agent can tune `object.material.relief.scale` but cannot flip `relief.invert`.
- * Declaring them as `switch` controls is the fix whenever someone wants it.
+ * `material.relief.invert` has since joined too (Task 5's characterization pass found
+ * the inspector drew it), as an `agent: false` switch — declared for the inspector, still
+ * withheld from the agent. `GlbObject.materialOverride` remains hand-omitted.
  *
  * `showFloor` (scene-level, doc.showFloor) also joins here, under a new 'Background'
  * group — the grid + shadow-catcher ground toggle from the surface's Background panel.
@@ -63,7 +63,6 @@ import {
  *   475-483, not a plain doc leaf) and `output.width/height` — outside the "at minimum"
  *   list this schema was scoped to; add them here in a follow-on if the agent/Collection
  *   story needs them.
- * - `material.relief.invert` — see the booleans note above.
  *
  * Must stay free of `three` imports — this module is dynamically imported by the
  * Collection control resolver (see shapefx/controls.ts's identical constraint).
@@ -146,6 +145,28 @@ const reliefApplies = (doc: SceneDoc, obj?: SceneObject): boolean => {
   if (materialTypeOf(obj) === 'shaderFill' && obj && obj.kind !== 'light' && obj.material.unlit === true) return false
   return true
 }
+
+// Per-type branches the shipped inspector drew but the schema had never described
+// (Task 5's characterization pass found them). Each is `agent: false` — declaring a
+// control for the INSPECTOR must not silently widen what the model may change.
+const isToonMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
+  isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'toon'
+
+const isFresnelMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
+  isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'fresnel'
+
+const isGradientMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
+  isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'gradient'
+
+// Faceted/prismatic shading needs the per-face extent attributes only primitive
+// geometry bakes; an imported GLB always ramps smooth. Mirrors the template's
+// `v-if="selectedIsPrimitive"` on the Shading row inside the gradient branch.
+const isGradientPrimitive = (doc: SceneDoc, obj?: SceneObject): boolean =>
+  isGradientMaterial(doc, obj) && (!obj || obj.kind === 'primitive')
+
+const PALETTE_MODES = ['manual', 'harmony'] as const
+const GRADIENT_TYPES = ['linear', 'radial'] as const
+const GRADIENT_SHADINGS = ['smooth', 'faceted', 'prismatic', 'scatter', 'ombre'] as const
 
 const RELIEF_SOURCES = ['none', 'shader', 'image'] as const
 
@@ -252,6 +273,62 @@ export const SCENE_CONTROLS: SceneControl[] = [
     'Deepens the light and dark areas so the relief catches the light', { when: reliefApplies }),
   slider('object.material.relief.tiling', 'Relief tiling', 0.25, 12, 0.25, 'Material', MATERIAL_DEFAULTS.reliefTiling,
     'How many times the pattern repeats across the surface — higher is finer', { when: reliefApplies }),
+
+  // Glass extras the Transparency block drew: dispersion + the attenuation pair.
+  slider('object.material.dispersion', 'Dispersion', 0, 5, 0.05, 'Material', MATERIAL_DEFAULTS.dispersion,
+    'Splits refracted light into rainbow fringes', { when: isPhysicalMaterial, agent: false }),
+  color('object.material.attenuationColor', 'Attenuation', MATERIAL_DEFAULTS.attenuationColor, 'Material',
+    { when: isPhysicalMaterial, agent: false }),
+  slider('object.material.attenuationDistance', 'Attenuation dist', 0, 10, 0.1, 'Material', MATERIAL_DEFAULTS.attenuationDistance,
+    'How deep light travels before tinting (0 = off)', { when: isPhysicalMaterial, agent: false }),
+
+  // Toon — cel bands.
+  slider('object.material.toonSteps', 'Steps', 2, 5, 1, 'Material', MATERIAL_DEFAULTS.toonSteps,
+    'Number of flat cel-shading bands', { when: isToonMaterial, agent: false }),
+
+  // Fresnel — rim glow.
+  color('object.material.fresnelColor', 'Rim colour', MATERIAL_DEFAULTS.fresnelColor, 'Material',
+    { when: isFresnelMaterial, agent: false }),
+  slider('object.material.fresnelPower', 'Power', 1, 8, 0.1, 'Material', MATERIAL_DEFAULTS.fresnelPower,
+    'How tightly the rim glow hugs the edges', { when: isFresnelMaterial, agent: false }),
+
+  // Gradient — palette source, ramp direction and mapping. The ramp/stop editors and the
+  // harmony scheme picker stay bespoke widgets (the inspector's own blocks); these are the
+  // scalar/enum rows around them. `paletteHarmony` is deliberately absent: its options carry
+  // display labels (HARMONY_LABELS) a bare `select` row cannot show.
+  select('object.material.paletteMode', 'Palette', [...PALETTE_MODES], MATERIAL_DEFAULTS.paletteMode, 'Material', undefined,
+    { when: isGradientMaterial, agent: false }),
+  slider('object.material.paletteHue', 'Hue', 0, 360, 1, 'Material', MATERIAL_DEFAULTS.paletteHue,
+    'Seed hue the harmony scheme is built from',
+    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
+  slider('object.material.paletteSat', 'Saturation', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.paletteSat,
+    'How vivid the generated colours are',
+    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
+  slider('object.material.paletteLight', 'Lightness', 0.2, 0.9, 0.01, 'Material', MATERIAL_DEFAULTS.paletteLight,
+    'How light or dark the generated colours are',
+    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
+  select('object.material.gradientType', 'Type', [...GRADIENT_TYPES], MATERIAL_DEFAULTS.gradientType, 'Material', undefined,
+    { when: isGradientMaterial, agent: false }),
+  slider('object.material.gradientYaw', 'Yaw', 0, 360, 1, 'Material', MATERIAL_DEFAULTS.gradientYaw,
+    'Ramp direction around the Y axis',
+    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.gradientType', equals: 'linear' } }),
+  slider('object.material.gradientPitch', 'Pitch', -90, 90, 1, 'Material', MATERIAL_DEFAULTS.gradientPitch,
+    'Ramp direction elevation, up or down',
+    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.gradientType', equals: 'linear' } }),
+  slider('object.material.gradientOffset', 'Offset', -1, 1, 0.01, 'Material', MATERIAL_DEFAULTS.gradientOffset,
+    'Slides the ramp along its direction', { when: isGradientMaterial, agent: false }),
+  slider('object.material.gradientSpread', 'Spread', 0.1, 3, 0.01, 'Material', MATERIAL_DEFAULTS.gradientSpread,
+    'Compresses (<1) or stretches (>1) the ramp', { when: isGradientMaterial, agent: false }),
+  select('object.material.gradientShading', 'Shading', [...GRADIENT_SHADINGS], MATERIAL_DEFAULTS.gradientShading, 'Material', undefined,
+    { when: isGradientPrimitive, agent: false }),
+
+  // Relief invert — the surface's own Invert switch. Was hand-omitted (see this module's
+  // "Deliberately NOT in this schema" note, now one item shorter): it is a plain boolean on
+  // ReliefSpec, so `switch` models it correctly.
+  {
+    key: 'object.material.relief.invert', label: 'Invert', kind: 'switch', default: false, group: 'Material',
+    when: reliefApplies, agent: false,
+  } as SceneControl,
 
   // --- Lighting (doc-level; no active object needed) -------------------------------
   select('lighting.preset', 'Lighting preset', [...LIGHTING_PRESETS], D.lighting.preset, 'Lighting'),
