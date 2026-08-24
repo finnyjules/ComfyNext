@@ -153,7 +153,11 @@ async function selectOnly(page: Page, name: string) {
  *  it is meant to catch. Measured, not assumed: with `outlineStrokes` disabled,
  *  Lucide `box`'s vertical-stroke child reads X = 1; with it enabled, 0.14. */
 async function readSize(page: Page): Promise<[number, number, number]> {
-  const n = async (label: string) => Number(await dlg(page).getByLabel(label).inputValue())
+  // The Transform panel is schema-drawn now (panelPresentation.ts), so each axis is a
+  // `StudioRow`: the labelled element is the row's `role="slider"` track and the number
+  // lives on `aria-valuenow`, not in an `<input>`.
+  const n = async (label: string) =>
+    Number(await dlg(page).getByLabel(label).getAttribute('aria-valuenow'))
   return [await n('Size X'), await n('Size Y'), await n('Size Z')]
 }
 
@@ -162,7 +166,7 @@ async function readSize(page: Page): Promise<[number, number, number]> {
  *  on the first test below for why count alone doesn't catch the pile-at-
  *  the-origin bug this file's underlying fix addresses. */
 async function readPositionX(page: Page): Promise<number> {
-  return Number(await dlg(page).getByLabel('Position X').inputValue())
+  return Number(await dlg(page).getByLabel('Position X').getAttribute('aria-valuenow'))
 }
 
 /** One stroke width of a Lucide glyph in scene units after import, to an order

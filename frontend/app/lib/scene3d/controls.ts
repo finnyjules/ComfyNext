@@ -380,15 +380,23 @@ export const SCENE_CONTROLS: SceneControl[] = [
   // The path resolver (lib/studio/path.ts) reads these via `o[k]` which works for
   // numeric string keys on arrays. Labels stay human-readable ("Position X", etc.);
   // keys are dotted paths addressing the data, nothing else.
-  slider('object.position.0', 'Position X', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
-  slider('object.position.1', 'Position Y', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
-  slider('object.position.2', 'Position Z', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
-  slider('object.rotation.0', 'Rotation X', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
-  slider('object.rotation.1', 'Rotation Y', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
-  slider('object.rotation.2', 'Rotation Z', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
-  slider('object.scale.0', 'Scale X', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
-  slider('object.scale.1', 'Scale Y', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
-  slider('object.scale.2', 'Scale Z', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
+  //
+  // SOFT RANGE (`entry: 'unclamped'`), and it is what makes the inspector's Transform
+  // card safe to draw from this schema at all. The ranges above are DESCRIPTIVE — the
+  // gizmo puts an object at x = 35 every day, and the number grid these rows replaced
+  // accepted anything. A hard-range row would have shown "35.0" and then rewritten it to
+  // 20 on one arrow press, fanning the −15 difference across the whole selection via
+  // `axisDeltaWrites`. That is exactly why the first migration was reverted (e954626f9).
+  // The flag is presentation only: it is stripped from every derived agent vocabulary.
+  slider('object.position.0', 'Position X', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false, entry: 'unclamped' }),
+  slider('object.position.1', 'Position Y', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false, entry: 'unclamped' }),
+  slider('object.position.2', 'Position Z', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false, entry: 'unclamped' }),
+  slider('object.rotation.0', 'Rotation X', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false, entry: 'unclamped' }),
+  slider('object.rotation.1', 'Rotation Y', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false, entry: 'unclamped' }),
+  slider('object.rotation.2', 'Rotation Z', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false, entry: 'unclamped' }),
+  slider('object.scale.0', 'Scale X', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false, entry: 'unclamped' }),
+  slider('object.scale.1', 'Scale Y', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false, entry: 'unclamped' }),
+  slider('object.scale.2', 'Scale Z', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false, entry: 'unclamped' }),
 ]
 
 /** Controls applicable to `doc`/`obj`, in SCENE_SECTIONS order — the single gate

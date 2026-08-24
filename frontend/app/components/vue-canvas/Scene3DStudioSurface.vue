@@ -81,7 +81,7 @@ import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.v
 import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 import {
-  ENV_BY_LABEL, SCENE_PANEL_SECTIONS,
+  ENV_BY_LABEL, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
   readSceneControl, scenePanelChrome, scenePanelControls, writeMaterialField,
 } from '~/lib/scene3d/panelPresentation'
 import { setByPath } from '~/lib/studio/path'
@@ -973,17 +973,9 @@ async function generateReliefFromPrompt() {
 }
 
 // Numeric transform fields (per-axis) — position/scale stored & shown raw, rotation
-// stored in radians but edited in degrees. Setters replace the whole array so the
-// deep doc watcher fires (engine syncs); gizmo drags mutate the same arrays, so the
-// computed getters re-read and the inputs update — two-way, no extra wiring.
-//
-// These stay HAND-WRITTEN number inputs rather than becoming schema rows like the rest
-// of the inspector: a StudioRow slider clamps typed and keyed entry to the control's
-// declared range (lib/studio/row.ts's parseTyped), and the schema's ranges are a general-
-// purpose description, not a limit the editor ever enforced. A gizmo can place an object
-// at x = 35; one arrow-key press on a clamped row would rewrite it to 20 AND fan the
-// −15 delta across the whole selection. Migrating them needs a soft-range row first.
-const RAD2DEG = 180 / Math.PI
+// stored in radians but edited in degrees (the read half lives in panelPresentation.ts's
+// readSceneControl). Writes replace the whole array so the deep doc watcher fires (engine
+// syncs); gizmo drags mutate the same arrays, so the rows re-read — two-way, no extra wiring.
 const DEG2RAD = Math.PI / 180
 /** Apply one transform-row edit across the WHOLE selection, as the spec's
  *  multi-select rule requires: the typed number lands on the primary and every
@@ -1009,27 +1001,20 @@ function writeAxis(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: 
     o[prop] = next
   }
 }
-function axisField(prop: 'position' | 'scale', axis: 0 | 1 | 2) {
-  return computed<number>({
-    get: () => selected.value?.[prop][axis] ?? (prop === 'scale' ? 1 : 0),
-    set: (v) => {
-      if (!selected.value || !Number.isFinite(v)) return
-      writeAxis(prop, axis, v)
-    },
-  })
+/** One Transform row's write, in the units the ROW shows: degrees for rotation, world
+ *  Size (scale × the object's un-scaled extent) for scale. `readSceneControl` does the
+ *  same two conversions in the read direction — see panelPresentation.ts. */
+function writeTransform(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: number): void {
+  if (!selected.value || !Number.isFinite(v)) return
+  if (prop === 'rotation') { writeAxis('rotation', axis, v * DEG2RAD); return }
+  if (prop === 'scale') {
+    const base = baseSize.value[axis] || 1
+    if (!base) return
+    writeAxis('scale', axis, v / base)
+    return
+  }
+  writeAxis('position', axis, v)
 }
-function rotField(axis: 0 | 1 | 2) {
-  return computed<number>({
-    get: () => (selected.value ? selected.value.rotation[axis] * RAD2DEG : 0),
-    set: (v) => {
-      if (!selected.value || !Number.isFinite(v)) return
-      writeAxis('rotation', axis, v * DEG2RAD)
-    },
-  })
-}
-const posX = axisField('position', 0), posY = axisField('position', 1), posZ = axisField('position', 2)
-const rotX = rotField(0), rotY = rotField(1), rotZ = rotField(2)
-const sclX = axisField('scale', 0), sclY = axisField('scale', 1), sclZ = axisField('scale', 2)
 
 // Geometry params for the selected primitive. Reads resolve through the schema
 // (stored value clamped, else the spec default); writes create the params bag on
@@ -1351,25 +1336,13 @@ watch(() => {
     meshError.value = true
   })
 }, { immediate: true })
-function sizeAxis(i: 0 | 1 | 2, scl: { value: number }) {
-  return computed<number>({
-    get: () => Math.round(scl.value * (baseSize.value[i] || 1) * 100) / 100,
-    set: (v: number) => {
-      const base = baseSize.value[i] || 1
-      if (!Number.isFinite(v) || !base) return
-      scl.value = v / base
-    },
-  })
-}
-const sizeX = sizeAxis(0, sclX)
-const sizeY = sizeAxis(1, sclY)
-const sizeZ = sizeAxis(2, sclZ)
-
 // ── The schema-driven inspector panel ────────────────────────────────────────
-// Material / Camera / Lighting / Background are drawn from SCENE_CONTROLS via the
-// presentation remap in lib/scene3d/panelPresentation.ts (see its doc for why a remap
-// rather than the schema itself, and for why Transform above is NOT part of it).
-const panelControls = computed(() => scenePanelControls(doc, selected.value))
+// Transform / Material / Camera / Lighting / Background are drawn from SCENE_CONTROLS via
+// the presentation remap in lib/scene3d/panelPresentation.ts (see its doc for why a remap
+// rather than the schema itself). The third argument stays `undefined` — it exists only so
+// a test can append a novel control to a COPY of SCENE_CONTROLS. `baseSize` is the fourth
+// because the Size rows show world units, which only the built geometry knows.
+const panelControls = computed(() => scenePanelControls(doc, selected.value, undefined, { baseSize: baseSize.value }))
 const panelChrome = computed(() => scenePanelChrome(selected.value ? matType.value : null))
 
 /** The panel's `value` prop. `post.*` keeps its own resolver (doc.post is a plain
@@ -1377,7 +1350,7 @@ const panelChrome = computed(() => scenePanelChrome(selected.value ? matType.val
  *  through the one reader the parity spec and the visibility gates also use. */
 function readControl(key: string): string | number | boolean {
   if (key.startsWith('post.')) return readPost(key)
-  return readSceneControl(doc, selected.value, key) as string | number | boolean
+  return readSceneControl(doc, selected.value, key, { baseSize: baseSize.value }) as string | number | boolean
 }
 
 /** Plain material fields — the generic half of what the deleted `matParam` proxies did,
@@ -1401,9 +1374,16 @@ function setControl(key: string, value: string | number | boolean): void {
     ;(doc.lighting as Record<string, unknown>)[key.slice('lighting.'.length)] = Number(value)
     return
   }
-  // No `object.position/rotation/scale` branch: the Transform section is hand-written
-  // number inputs (see their proxies above), so the panel never emits a transform key.
   if (key.startsWith('object.material.')) { setMaterialControl(key.slice('object.material.'.length), value); return }
+  // The three Transform branches. They come BEFORE the generic `setByPath` fallback and
+  // must: the rows show degrees and world Size, so writing their values straight onto
+  // `object.rotation.0` / `object.scale.0` would store a degree as a radian and a world
+  // extent as a multiplier — and would skip `axisDeltaWrites`, which is what keeps a
+  // multi-selection edit a DELTA instead of stacking every selected object on one spot.
+  const axis = Number(key.slice(-1)) as 0 | 1 | 2
+  if (key.startsWith('object.position.')) { writeTransform('position', axis, Number(value)); return }
+  if (key.startsWith('object.rotation.')) { writeTransform('rotation', axis, Number(value)); return }
+  if (key.startsWith('object.scale.')) { writeTransform('scale', axis, Number(value)); return }
   // Generic fallback: any key the branches above don't special-case (a novel Camera/
   // Background/doc-level control the panel now draws via panelPresentation.ts's
   // permissive `panelCardOf`) still has to write somewhere. Mirrors `setPost`'s own
@@ -3681,42 +3661,22 @@ async function onClose() {
         <span class="tabular-nums">{{ selectedIds.length }} objects selected</span>
         <span class="ml-auto shrink-0 text-[10px] text-[#4f8cff]/60">edits apply to all</span>
       </div>
-      <!-- Transform stays hand-written while the rest of the inspector is schema-driven.
-           A StudioRow slider CLAMPS typed and keyed entry to the control's declared range
-           (lib/studio/row.ts's parseTyped); these inputs never did. The schema's ±20 /
-           ±π / 0.05–10 are a general-purpose description of the parameters, not a limit
-           the editor enforced — a gizmo places objects well outside them, and one arrow
-           press on a clamped row would silently rewrite the value AND fan the difference
-           across the selection as a delta. Migrating these needs a soft-range row kind. -->
-      <StudioSection v-if="selected" title="Transform" @pointerdown.capture="onControlsPointerDown">
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Position</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="posX" type="number" step="0.1" aria-label="Position X" class="studio-num" />
-            <input v-model.number="posY" type="number" step="0.1" aria-label="Position Y" class="studio-num" />
-            <input v-model.number="posZ" type="number" step="0.1" aria-label="Position Z" class="studio-num" />
-          </div>
-        </div>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Rotation°</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="rotX" type="number" step="1" aria-label="Rotation X" class="studio-num" />
-            <input v-model.number="rotY" type="number" step="1" aria-label="Rotation Y" class="studio-num" />
-            <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
-          </div>
-        </div>
-        <!-- A decal's `scale` is unused by the engine exactly as a light's is (its
-             on-surface footprint comes from `size`), so the same gate covers both —
-             otherwise these three inputs would write numbers nothing reads. -->
-        <div v-if="selected && !selectedIsLight && !selectedIsDecal">
-          <label class="mb-1 block text-[11px] text-white/55">Size</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
-            <input v-model.number="sizeY" type="number" step="0.05" aria-label="Size Y" class="studio-num" />
-            <input v-model.number="sizeZ" type="number" step="0.05" aria-label="Size Z" class="studio-num" />
-          </div>
-        </div>
-      </StudioSection>
+      <!-- Transform, drawn from SCENE_CONTROLS' Transform group. Its own panel because the
+           hand-written Geometry section (and the sculpt panel that replaces it) sits between
+           it and the Material card below, and one panel cannot interleave a hand-written
+           section. Rotation rows are degrees and Size rows are world units — the conversions
+           the old rotX/sizeX proxies did now live in panelPresentation.ts, once, shared with
+           the write path. All nine carry `entry: 'unclamped'`, so the declared ranges paint
+           the row without gating what you may type into it: the gizmo puts an object at
+           x = 35 and the row has to keep it there (see the schema's own note). -->
+      <div class="flex flex-col gap-2" @pointerdown.capture="onControlsPointerDown">
+        <StudioControlPanel
+          :controls="panelControls"
+          :order="SCENE_TRANSFORM_SECTIONS"
+          :value="readControl"
+          @set="setControl"
+        />
+      </div>
 
       <!-- Gap 3 fix: sculpt mode replaces ONLY the Geometry section below (a
            sibling swap, not nested inside it) with Scene3DSculptPanel — brush

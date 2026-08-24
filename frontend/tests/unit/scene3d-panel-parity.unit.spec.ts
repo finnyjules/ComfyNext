@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import {
-  SCENE_PANEL_ANCHOR_KEYS, SCENE_PANEL_ORDER, SCENE_PANEL_SECTIONS,
+  SCENE_PANEL_ANCHOR_KEYS, SCENE_PANEL_ORDER, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
   ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls, scenePanelVisible, writeMaterialField,
 } from '~/lib/scene3d/panelPresentation'
+import { nudgeValue, parseTyped } from '~/lib/studio/row'
 import { groupIntoSections } from '~/lib/studio/sections'
 import { setByPath } from '~/lib/studio/path'
 import { POST_SECTIONS } from '~/lib/studio/post/controls'
@@ -17,25 +18,23 @@ import {
 } from '~/lib/scene3d/config'
 
 /**
- * CHARACTERIZATION of the 3D Studio inspector's Material / Camera / Lighting / Background
- * sections, transcribed from the hand-written template that drew them
+ * CHARACTERIZATION of the 3D Studio inspector's Transform / Material / Camera / Lighting /
+ * Background sections, transcribed from the hand-written template that drew them
  * (Scene3DStudioSurface.vue, lines 3971-4353 / 4430-4462 as of 64492f314), NOT from
  * `SCENE_CONTROLS`. Where the two disagreed the template won and the schema or the
  * presentation remap was reconciled to it.
  *
- * TRANSFORM IS NOT MIGRATED, and that is a decision this file records rather than tests:
- * a `StudioRow` slider clamps typed and keyed entry to the declared range
- * (`lib/studio/row.ts`'s `parseTyped`), while the nine Position/Rotation/Size rows are
- * unbounded `<input type="number">`. The schema's ranges describe the parameters; they are
- * not a limit the editor ever enforced, and a gizmo routinely places objects outside them
- * — so a single arrow press on a clamped row would rewrite the value AND fan the difference
- * across the whole selection as a delta. The rows were migrated and then reverted; the
- * `does not migrate the Transform section` assertion below is what keeps them reverted
- * until a soft-range row kind exists.
+ * TRANSFORM, THE SECOND TIME. These nine rows were migrated (c9023b9a2) and then reverted
+ * (e954626f9), because a `StudioRow` slider clamped typed AND keyed entry to the declared
+ * range while the `<input type="number">` grid it replaced never did. The schema's ±20 /
+ * ±180° / 0.05–10 describe the parameters; the gizmo routinely places an object at x = 35,
+ * where one ArrowRight rewrote the value to 20 and `axisDeltaWrites` fanned the −15
+ * difference across the whole selection. They are back now that a row can carry a SOFT
+ * range (`entry: 'unclamped'`, lib/studio/row.ts), and the assertions below pin BOTH ends
+ * of that: the panel emits the nine keys with the flag, and the value 35 survives entry.
  *
- * Geometry, Transform, Light, Decal, sculpt/merge and the object-motion sections stay
- * hand-written and are out of scope; they are asserted here only by their ABSENCE from the
- * panel.
+ * Geometry, Light, Decal, sculpt/merge and the object-motion sections stay hand-written and
+ * are out of scope; they are asserted here only by their ABSENCE from the panel.
  *
  * Deliberate, recorded divergences from the shipped markup:
  *   - Every migrated control is now a 28px StudioRow: a `StudioSegmented` pill row and a
@@ -55,11 +54,27 @@ type Row = {
   step?: number
   options?: readonly string[]
   hint?: string
+  /** Soft range — the bounds draw the row but do not gate what may be entered. */
+  entry?: 'unclamped'
 }
 
 const M = 'object.material.'
 
 const ROW: Record<string, Row> = {
+  // Transform — three 3-column grids of `<input type="number">`, aria-labelled per axis.
+  // Rotation was ALWAYS edited in degrees (rotField's RAD2DEG proxy) though the doc stores
+  // radians; Size was ALWAYS `scale × baseSize` (sizeAxis), not the raw multiplier. Every
+  // one is a SOFT range — the grid it replaces accepted any number at all.
+  'object.position.0': { label: 'Position X', kind: 'slider', min: -20, max: 20, step: 0.1, entry: 'unclamped' },
+  'object.position.1': { label: 'Position Y', kind: 'slider', min: -20, max: 20, step: 0.1, entry: 'unclamped' },
+  'object.position.2': { label: 'Position Z', kind: 'slider', min: -20, max: 20, step: 0.1, entry: 'unclamped' },
+  'object.rotation.0': { label: 'Rotation X', kind: 'slider', min: -180, max: 180, step: 1, entry: 'unclamped' },
+  'object.rotation.1': { label: 'Rotation Y', kind: 'slider', min: -180, max: 180, step: 1, entry: 'unclamped' },
+  'object.rotation.2': { label: 'Rotation Z', kind: 'slider', min: -180, max: 180, step: 1, entry: 'unclamped' },
+  'object.scale.0': { label: 'Size X', kind: 'slider', min: 0.05, max: 10, step: 0.05, entry: 'unclamped' },
+  'object.scale.1': { label: 'Size Y', kind: 'slider', min: 0.05, max: 10, step: 0.05, entry: 'unclamped' },
+  'object.scale.2': { label: 'Size Z', kind: 'slider', min: 0.05, max: 10, step: 0.05, entry: 'unclamped' },
+
   // Material — shared head
   [`${M}type`]: { label: 'Material', kind: 'select', options: MATERIAL_TYPES },
 
@@ -276,6 +291,19 @@ const designCards = (doc: SceneDoc, obj: SceneObject | null) =>
 const byKey = (doc: SceneDoc, obj: SceneObject | null) =>
   new Map(panel(doc, obj).map((c) => [c.key, c]))
 
+/** The nine Transform rows, in the order the three shipped grids drew them. */
+const TRANSFORM_ROWS = [
+  'object.position.0', 'object.position.1', 'object.position.2',
+  'object.rotation.0', 'object.rotation.1', 'object.rotation.2',
+  'object.scale.0', 'object.scale.1', 'object.scale.2',
+] as const
+
+/** The panel with a measured base extent, which only the Size rows care about. The
+ *  surface passes the built geometry's own bounding box; everything else (this file, a
+ *  headless read) leaves it out, and Size then reads as the raw scale multiplier. */
+const panelWith = (doc: SceneDoc, obj: SceneObject | null, baseSize: readonly number[]) =>
+  new Map(scenePanelControls(doc, obj, undefined, { baseSize }).map((c) => [c.key, c]))
+
 function expectRow(c: ControlSpec | undefined, key: string, want: Row) {
   expect(c, key).toBeTruthy()
   expect(c!.kind, `${key} kind`).toBe(want.kind)
@@ -285,6 +313,9 @@ function expectRow(c: ControlSpec | undefined, key: string, want: Row) {
   if (want.step !== undefined) expect((c as { step: number }).step, `${key} step`).toBeCloseTo(want.step, 10)
   if (want.options) expect((c as { options: string[] }).options, `${key} options`).toEqual([...want.options])
   expect(c!.hint ?? null, `${key} hint`).toBe(want.hint ?? null)
+  // Asserted for EVERY row, present or absent: a row that quietly picked up a soft range
+  // would stop clamping entry, which is a behaviour change nobody asked for.
+  expect(c!.entry ?? null, `${key} entry`).toBe(want.entry ?? null)
 }
 
 // ── the assertions ───────────────────────────────────────────────────────────
@@ -453,7 +484,107 @@ describe('Scene3D panel parity — selection states', () => {
   })
 })
 
+describe('Scene3D panel parity — Transform', () => {
+  it('draws nine axis rows for a primitive, in Position/Rotation/Size order', () => {
+    const doc = defaultDoc()
+    const cards = rendered(doc, prim('standard'), SCENE_TRANSFORM_SECTIONS)
+    expect(cards.map((s) => s.title)).toEqual(['Transform'])
+    expect(cards[0]!.keys).toEqual([...TRANSFORM_ROWS])
+  })
+
+  it('every axis row carries its shipped label, step and range', () => {
+    const doc = defaultDoc()
+    const rows = byKey(doc, prim('standard'))
+    for (const key of TRANSFORM_ROWS) expectRow(rows.get(key), key, ROW[key]!)
+  })
+
+  it('withholds the Size rows from a light and from a decal — the engine ignores their scale', () => {
+    const doc = defaultDoc()
+    const light = rendered(doc, createLight('point', []), SCENE_TRANSFORM_SECTIONS)[0]!.keys
+    const decal = rendered(doc, createDecal('img', { type: 'image', image: 'a.png' }, [0, 0, 0], [0, 0, 0], []), SCENE_TRANSFORM_SECTIONS)[0]!.keys
+    expect(light).toEqual(TRANSFORM_ROWS.slice(0, 6))
+    expect(decal).toEqual(TRANSFORM_ROWS.slice(0, 6))
+  })
+
+  it('draws no Transform card with nothing selected', () => {
+    expect(rendered(defaultDoc(), null, SCENE_TRANSFORM_SECTIONS)).toEqual([])
+  })
+
+  it('Size bounds and value follow the measured base extent, not the raw multiplier', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    o.scale = [2, 1, 1]
+    const x = panelWith(doc, o, [1.5, 1, 1]).get('object.scale.0') as unknown as {
+      min: number; max: number; label: string; entry?: string
+    }
+    expect(x.label).toBe('Size X')
+    expect(x.min).toBeCloseTo(0.075, 10)
+    expect(x.max).toBeCloseTo(15, 10)
+    expect(x.entry, 'a rescaled range is still a soft one').toBe('unclamped')
+    expect(readSceneControl(doc, o, 'object.scale.0', { baseSize: [1.5, 1, 1] })).toBe(3)
+  })
+
+  /**
+   * THE REVERT, undone — and the reason it is safe this time.
+   *
+   * A gizmo drag puts an object at x = 35 on a row whose declared range is ±20. Before
+   * `entry: 'unclamped'`, the row showed "35.0" and then one ArrowRight wrote 20, which
+   * `axisDeltaWrites` fanned out as a −15 shift on every other selected object. These
+   * three cases are that failure table, inverted: entering from 35 must stay near 35.
+   */
+  describe('a value the range does not contain survives entry', () => {
+    const rowOf = (key: string) => {
+      const spec = byKey(defaultDoc(), prim('standard')).get(key) as unknown as
+        { min: number; max: number; step: number; entry?: 'unclamped' }
+      return { ...spec, entry: spec.entry }
+    }
+
+    it('every one of the nine rows declares the soft range', () => {
+      for (const key of TRANSFORM_ROWS) expect(rowOf(key).entry, key).toBe('unclamped')
+    })
+
+    it('typing 35 into Position X keeps 35, where a hard range would have kept 20', () => {
+      const r = rowOf('object.position.0')
+      expect(parseTyped('35', r.min, r.max, r.step, { entry: r.entry })).toBe(35)
+      expect(parseTyped('35', r.min, r.max, r.step)).toBe(20)
+    })
+
+    it('ArrowRight from 35 gives 35.1, not 20', () => {
+      const r = rowOf('object.position.0')
+      const args = { value: 35, min: r.min, max: r.max, step: r.step } as const
+      expect(nudgeValue({ ...args, direction: 1, entry: r.entry })).toBe(35.1)
+      expect(nudgeValue({ ...args, direction: 1 }), 'the reverted behaviour').toBe(20)
+    })
+
+    it('a rotation past ±180° and a Size past ×10 hold too', () => {
+      const rot = rowOf('object.rotation.0')
+      expect(parseTyped('240', rot.min, rot.max, rot.step, { entry: rot.entry })).toBe(240)
+      const size = rowOf('object.scale.0')
+      expect(parseTyped('42', size.min, size.max, size.step, { entry: size.entry })).toBe(42)
+    })
+  })
+})
+
 describe('Scene3D panel parity — reading values', () => {
+  it('rotation reads in degrees though the document stores radians', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    o.rotation = [Math.PI / 2, 0, -Math.PI]
+    expect(readSceneControl(doc, o, 'object.rotation.0')).toBeCloseTo(90, 10)
+    expect(readSceneControl(doc, o, 'object.rotation.2')).toBeCloseTo(-180, 10)
+  })
+
+  it('position reads raw, and scale reads as world Size once a base extent is known', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    o.position = [35, -2, 0]
+    o.scale = [2, 1, 1]
+    expect(readSceneControl(doc, o, 'object.position.0'), 'a gizmo drag past the range').toBe(35)
+    // No base extent: Size falls back to the raw multiplier rather than inventing one.
+    expect(readSceneControl(doc, o, 'object.scale.0')).toBe(2)
+    expect(readSceneControl(doc, o, 'object.scale.0', { baseSize: [1.5, 1, 1] })).toBe(3)
+  })
+
   it('an untouched material reads its default rather than undefined', () => {
     const doc = defaultDoc()
     const o = prim('standard')
@@ -532,7 +663,9 @@ describe('Scene3D panel contract', () => {
 
   it('every card the remap emits is listed in the panel order — nothing is silently dropped', () => {
     const doc = defaultDoc()
-    const allowed = new Set([...SCENE_PANEL_ORDER, ...POST_SECTIONS])
+    // Both panels' orders: the surface renders SCENE_TRANSFORM_SECTIONS above the
+    // hand-written Geometry card and SCENE_PANEL_SECTIONS below it, from one row list.
+    const allowed = new Set([...SCENE_TRANSFORM_SECTIONS, ...SCENE_PANEL_ORDER, ...POST_SECTIONS])
     for (const type of MATERIAL_TYPES) {
       for (const c of panel(doc, prim(type))) expect(allowed.has(String(c.group)), c.key).toBe(true)
     }
@@ -555,7 +688,11 @@ describe('Scene3D panel contract', () => {
 
   it('the panel order is the design cards plus the shared post stack, in that order', () => {
     expect(SCENE_PANEL_SECTIONS).toEqual([...SCENE_PANEL_ORDER, ...POST_SECTIONS])
+    // Transform renders through its OWN panel, above the hand-written Geometry section —
+    // one StudioControlPanel cannot interleave a hand-written card, so it cannot share
+    // this order with the cards that sit below Geometry.
     expect(SCENE_PANEL_ORDER).not.toContain('Transform')
+    expect(SCENE_TRANSFORM_SECTIONS).toEqual(['Transform'])
   })
 
   it('the four bare <details> sub-blocks stay collapsed, and Transparency opens for glass', () => {
@@ -653,15 +790,30 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     expect(rows).toEqual([...DOC_SCENARIO.Background, 'zzBackgroundProbe'])
   })
 
-  it('an unmapped key still returns null for a NOT-YET-migrated group (Transform)', () => {
+  it('an unmapped key still returns null for a NOT-YET-migrated group (Geometry)', () => {
+    // Transform used to be this test's example; Task 2 migrated it, so the example moved
+    // to Geometry — still hand-written, still Task 4's job.
+    const doc = defaultDoc()
+    const novelGeometry: SceneControl = {
+      key: 'object.zzGeometryProbe', label: 'Probe', kind: 'slider',
+      min: 0, max: 1, step: 0.01, default: 0, group: 'Geometry',
+    } as SceneControl
+    const controls = [...SCENE_CONTROLS, novelGeometry]
+    const keys = scenePanelControls(doc, prim('standard'), controls).map((c) => c.key)
+    expect(keys).not.toContain('object.zzGeometryProbe')
+  })
+
+  it('draws an unmapped Transform-group key in the Transform card', () => {
     const doc = defaultDoc()
     const novelTransform: SceneControl = {
       key: 'object.zzTransformProbe', label: 'Probe', kind: 'slider',
       min: 0, max: 1, step: 0.01, default: 0, group: 'Transform',
     } as SceneControl
     const controls = [...SCENE_CONTROLS, novelTransform]
-    const keys = scenePanelControls(doc, prim('standard'), controls).map((c) => c.key)
-    expect(keys).not.toContain('object.zzTransformProbe')
+    const rows = scenePanelControls(doc, prim('standard'), controls)
+      .filter((c) => c.group === 'Transform')
+      .map((c) => c.key)
+    expect(rows).toEqual([...TRANSFORM_ROWS, 'object.zzTransformProbe'])
   })
 
   it('an unmapped Material key writes through the exact seam setMaterialControl uses, and reads back', () => {
@@ -697,6 +849,8 @@ describe('Scene3D panel parity — Task 1: unknown schema keys draw and write', 
     expect(SCENE_CONTROLS.some((c) => c.key === 'lighting.zzProbe')).toBe(false)
     expect(SCENE_CONTROLS.some((c) => c.key === 'camera.zzProbe')).toBe(false)
     expect(SCENE_CONTROLS.some((c) => c.key === 'zzBackgroundProbe')).toBe(false)
+    expect(SCENE_CONTROLS.some((c) => c.key === 'object.zzTransformProbe')).toBe(false)
+    expect(SCENE_CONTROLS.some((c) => c.key === 'object.zzGeometryProbe')).toBe(false)
   })
 })
 
@@ -717,7 +871,7 @@ describe('Scene3D surface wiring', () => {
   })
 
   it('no longer hand-writes the migrated sections', () => {
-    for (const title of ['Material', 'Camera', 'Lighting', 'Background']) {
+    for (const title of ['Transform', 'Material', 'Camera', 'Lighting', 'Background']) {
       expect(src, title).not.toContain(`<StudioSection title="${title}"`)
       expect(src, title).not.toContain(`title="${title}" @pointerdown`)
     }
@@ -728,23 +882,35 @@ describe('Scene3D surface wiring', () => {
   })
 
   /**
-   * The clamping revert, pinned from both ends: the panel must emit no transform row, and
-   * the surface must still hand-write the nine unbounded number inputs. Re-migrating them
-   * — which is only safe once a StudioRow can carry a SOFT range — has to delete these
-   * assertions, which is the point.
+   * The revert, undone — pinned from both ends, the way `does not migrate the Transform
+   * section` (the assertion this replaces) pinned it the other way. The panel must emit
+   * the nine keys, the bespoke number grid must be gone, and the surface must actually
+   * pass the base extent the Size rows are expressed in.
    */
-  it('does not migrate the Transform section', () => {
-    expect(src).toContain('<StudioSection v-if="selected" title="Transform"')
+  it('migrates the Transform section, with the base extent the Size rows need', () => {
+    expect(src).toContain('SCENE_TRANSFORM_SECTIONS')
+    expect(src).toContain('baseSize: baseSize.value')
+    // The nine hand-written inputs, and the per-axis proxies that fed only them, are gone.
     for (const axis of ['X', 'Y', 'Z']) {
       for (const field of ['Position', 'Rotation', 'Size']) {
-        expect(src, `${field} ${axis}`).toContain(`aria-label="${field} ${axis}"`)
+        expect(src, `${field} ${axis}`).not.toContain(`aria-label="${field} ${axis}"`)
       }
+    }
+    for (const proxy of ['axisField', 'rotField', 'sizeAxis']) {
+      expect(src, proxy).not.toContain(`function ${proxy}(`)
     }
     const doc = defaultDoc()
-    for (const obj of [prim('standard'), createLight('point', []), null]) {
-      for (const c of scenePanelControls(doc, obj)) {
-        expect(/^object\.(position|rotation|scale)\./.test(c.key), c.key).toBe(false)
-      }
-    }
+    const keys = scenePanelControls(doc, prim('standard')).map((c) => c.key)
+    expect(keys.filter((k) => /^object\.(position|rotation|scale)\./.test(k))).toEqual([...TRANSFORM_ROWS])
+  })
+
+  it('writes the transform keys back through setControl, in the units the rows show', () => {
+    // The three write branches the revert deleted. Their absence was invisible: a panel
+    // row whose key nothing dispatches on simply does nothing when you drag it.
+    expect(src).toContain("key.startsWith('object.position.')")
+    expect(src).toContain("key.startsWith('object.rotation.')")
+    expect(src).toContain("key.startsWith('object.scale.')")
+    // …and the multi-selection DELTA rule still owns the arithmetic.
+    expect(src).toContain('axisDeltaWrites')
   })
 })

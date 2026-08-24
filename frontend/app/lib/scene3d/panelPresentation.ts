@@ -27,7 +27,7 @@ import { SCENE_CONTROLS, type SceneControl } from './controls'
  * deleted template drew, per selection state × material type.
  *
  * ## Everything here is `bindable: false`, deliberately
- * The shipped inspector's Material/Camera/Lighting/Background controls were
+ * The shipped inspector's Transform/Material/Camera/Lighting/Background controls were
  * `StudioSlider`/`StudioColor`/`StudioSegmented`/`StudioSwitch` — none of which emit a
  * `menu`/`promote` event, so NO migrated row ever offered Collection binding. A
  * `StudioRow` would offer it by default (the variable glyph renders whenever
@@ -36,27 +36,36 @@ import { SCENE_CONTROLS, type SceneControl } from './controls'
  * same guard Gradient's `onControlMenu` applies. The post rows are NOT touched: they were
  * already drawn by a `StudioControlPanel` and keep whatever they had.
  *
- * ## Transform is not migrated
- * The nine Position/Rotation/Size rows stay hand-written `<input type="number">` grids.
- * A `StudioRow` slider CLAMPS typed and keyed entry to the declared range
- * (`lib/studio/row.ts`'s `parseTyped`), and those ranges are a general-purpose description
- * of the parameters, not a limit the editor ever enforced: a gizmo places objects well
- * outside them, and one arrow press on a clamped row would rewrite the value AND fan the
- * difference across the whole selection as a delta (`axisDeltaWrites`). Migrating them
- * needs a soft-range row kind first. So the degrees-for-radians and world-Size-for-scale
- * conversions stay where they always were, in the surface's own `rotField`/`sizeAxis`
- * proxies, and nothing here reads or writes a transform key.
+ * ## Degrees, world size — the units the panel shows are not the units stored
+ * `object.rotation.*` is radians on disk and was always EDITED in degrees; `object.scale.*`
+ * is a multiplier on disk and was always edited as world Size (`scale × baseSize`). Both
+ * conversions lived in the surface's row proxies; they live here now (`readSceneControl` +
+ * the `Size`/`Rotation` overrides) so the panel, the parity spec and the write path all
+ * read one description of them.
+ *
+ * ## Transform's SOFT range
+ * The nine Position/Rotation/Size rows were migrated once (c9023b9a2) and reverted
+ * (e954626f9): a `StudioRow` clamped typed and keyed entry to the declared range, which
+ * the `<input type="number">` grid never did. The gizmo puts an object at x = 35 on a
+ * ±20 row, and one arrow press rewrote it to 20 AND fanned the −15 delta across the whole
+ * selection (`axisDeltaWrites`). They are back because the schema now says
+ * `entry: 'unclamped'` on all nine (`lib/studio/row.ts`'s `parseTyped`): the bounds still
+ * draw the fill, place the handle and size the drag; they no longer decide what a typed
+ * or arrowed number may be. `sizeOverride` rescales them into world units and the flag
+ * survives that, because a rescaled description is still a description.
  */
 
 // ── section order + chrome ───────────────────────────────────────────────────
 
+/** The Transform card renders on its own, ABOVE the hand-written Geometry section
+ *  (which stays hand-written), so it cannot share a panel with the rest. */
+export const SCENE_TRANSFORM_SECTIONS = ['Transform'] as readonly string[]
+
 /** Material (+ its five shipped sub-blocks, as nesting paths) and the doc-level cards,
- *  in the order the shipped inspector drew them. The hand-written Transform, Light and
- *  Decal cards sit ABOVE this panel in the template. Light and Decal are mutually
- *  exclusive with Material (a light/decal is never a primitive or a GLB), so moving them
- *  ahead of it cannot change what the user sees in any state.
- *
- *  Transform is NOT here — see this module's "Transform is not migrated" note. */
+ *  in the order the shipped inspector drew them. The hand-written Light and Decal cards
+ *  sit ABOVE this panel in the template — they are mutually exclusive with Material
+ *  (a light/decal is never a primitive or a GLB), so moving them ahead of it cannot
+ *  change what the user sees in any state. */
 export const SCENE_PANEL_ORDER = [
   'Material',
   'Material/Coat & sheen',
@@ -103,7 +112,14 @@ const RELIEF_DEFAULTS: Record<string, ParamValue> = {
   invert: false,
 }
 
-const materialField = (mat: SceneObject['material'], field: string): ParamValue => {
+const RAD2DEG = 180 / Math.PI
+
+/** World size ÷ scale for one axis, i.e. the primitive's un-scaled extent. The surface
+ *  measures it off the built geometry; every other caller (the parity spec, a headless
+ *  read) has no geometry and uses 1, which makes Size read as the raw scale. */
+export type SceneReadCtx = { baseSize?: readonly number[] }
+
+const materialField =(mat: SceneObject['material'], field: string): ParamValue => {
   if (field === 'gradientYaw' || field === 'gradientPitch') {
     return gradientAngles(mat)[field === 'gradientYaw' ? 'yaw' : 'pitch']
   }
@@ -135,8 +151,7 @@ export function writeMaterialField(mat: SceneObject['material'], field: string, 
  * evaluation inside `scenePanelVisible`, and the parity spec all go through it.
  *
  * `post.*` is NOT handled here: `doc.post` is a plain PostSettings object the surface
- * already reads with `readPost`, and folding it in would duplicate that. Neither are
- * `object.position/rotation/scale` — see "Transform is not migrated" above.
+ * already reads with `readPost`, and folding it in would duplicate that.
  *
  * The final `getByPath(doc, key)` fallback mirrors `setControl`'s generic
  * `setByPath(doc, key, value)` default case (Scene3DStudioSurface.vue) — every doc-level
@@ -146,7 +161,7 @@ export function writeMaterialField(mat: SceneObject['material'], field: string, 
  * this fallback: they need an active `obj` and have no meaning read off `doc` directly.
  */
 export function readSceneControl(
-  doc: SceneDoc, obj: SceneObject | null | undefined, key: string,
+  doc: SceneDoc, obj: SceneObject | null | undefined, key: string, ctx: SceneReadCtx = {},
 ): ParamValue {
   if (key === 'showFloor') return doc.showFloor
   if (key === 'camera.fov') return doc.camera.fov
@@ -157,6 +172,15 @@ export function readSceneControl(
   if (key.startsWith('object.')) {
     if (!obj) return 0
     if (key.startsWith('object.material.')) return materialField(obj.material, key.slice('object.material.'.length))
+    // The two conversions the deleted row proxies did, in the read direction. `writeAxis`
+    // in the surface is their exact inverse.
+    const axis = Number(key.slice(-1)) as 0 | 1 | 2
+    if (key.startsWith('object.position.')) return obj.position[axis] ?? 0
+    if (key.startsWith('object.rotation.')) return (obj.rotation[axis] ?? 0) * RAD2DEG
+    if (key.startsWith('object.scale.')) {
+      const base = ctx.baseSize?.[axis] || 1
+      return Math.round((obj.scale[axis] ?? 1) * base * 100) / 100
+    }
     return 0
   }
   return (getByPath(doc, key) as ParamValue | undefined) ?? 0
@@ -309,6 +333,11 @@ const SUB_CARDS: Record<string, readonly string[]> = {
 }
 
 const DOC_CARDS: Record<string, readonly string[]> = {
+  Transform: [
+    'object.position.0', 'object.position.1', 'object.position.2',
+    'object.rotation.0', 'object.rotation.1', 'object.rotation.2',
+    'object.scale.0', 'object.scale.1', 'object.scale.2',
+  ],
   Camera: ['camera.fov', 'ui.camera.output'],
   Lighting: [
     'lighting.preset', 'lighting.environment',
@@ -332,9 +361,9 @@ const DOC_CARDS: Record<string, readonly string[]> = {
  * the bespoke-block anchors call this with no third argument; they carry no real schema
  * `group` and must keep resolving through the allow-lists alone.
  *
- * Still returns null for a key whose group ISN'T migrated yet — Transform (Task 2's soft-
- * range row kind) and Geometry/Light/Decal (Task 4) — so those sections stay hand-written
- * exactly as before.
+ * Still returns null for a key whose group ISN'T migrated yet — Geometry/Light/Decal
+ * (Task 4) — so those sections stay hand-written exactly as before. Transform WAS on that
+ * list; Task 2's soft-range row lifted it.
  */
 function panelCardOf(key: string, matType: MaterialType | null, group?: string): string | null {
   for (const [card, keys] of Object.entries(DOC_CARDS)) if (keys.includes(key)) return card
@@ -342,7 +371,7 @@ function panelCardOf(key: string, matType: MaterialType | null, group?: string):
   if (matType && MATERIAL_BODY[matType].includes(key)) return 'Material'
   for (const [card, keys] of Object.entries(SUB_CARDS)) if (keys.includes(key)) return card
   if (group === 'Material') return 'Material'
-  if (group === 'Camera' || group === 'Lighting' || group === 'Background') return group
+  if (group === 'Camera' || group === 'Lighting' || group === 'Background' || group === 'Transform') return group
   return null
 }
 
@@ -391,6 +420,11 @@ const OVERRIDE: Record<string, RowPatch> = {
   'lighting.preset': { label: 'Preset' },
   'lighting.environment': { label: 'Environment', options: [...ENV_OPTIONS], default: 'room' },
   showFloor: { hint: null },
+  // Degrees, and no 'Radians' tooltip: the row has ALWAYS been edited in degrees, so the
+  // schema's hint is a lie about what the user is typing into.
+  'object.rotation.0': { min: -180, max: 180, step: 1, hint: null },
+  'object.rotation.1': { min: -180, max: 180, step: 1, hint: null },
+  'object.rotation.2': { min: -180, max: 180, step: 1, hint: null },
 }
 
 /** Opalescent moves three rows into the main body AND re-captions them — the shipped
@@ -404,6 +438,15 @@ const OPAL_OVERRIDE: Record<string, RowPatch> = {
   'object.material.envMapIntensity': { label: 'Reflection intensity' },
 }
 
+/** Size rows: the schema's scale multiplier bounds, expressed in the world units the
+ *  row actually shows. Label follows — the shipped inputs said Size, not Scale. The
+ *  soft-range flag is NOT touched here: rescaling a description leaves it a description. */
+function sizeOverride(axis: 0 | 1 | 2, ctx: SceneReadCtx): RowPatch {
+  const base = ctx.baseSize?.[axis] || 1
+  const label = ['Size X', 'Size Y', 'Size Z'][axis]!
+  return { label, min: 0.05 * base, max: 10 * base, step: 0.05 }
+}
+
 // ── visibility ───────────────────────────────────────────────────────────────
 
 /**
@@ -412,9 +455,12 @@ const OPAL_OVERRIDE: Record<string, RowPatch> = {
  * `relief.scale/contrast/tiling/invert` are agent- and motion-reachable today; adding a
  * `showIf` to hide them would be a schema change with reach beyond the inspector, so the
  * shipped template's own condition (a source is picked, and the picked image is not
- * already a normal map) lives here instead.
+ * already a normal map) lives here instead. The Size rows repeat the template's
+ * `!selectedIsLight && !selectedIsDecal` — a light's and a decal's `scale` is unused by
+ * the engine, so offering the rows would write numbers nothing reads.
  */
 function panelGate(key: string, obj: SceneObject | null | undefined): boolean {
+  if (key.startsWith('object.scale.')) return !!obj && obj.kind !== 'light' && obj.kind !== 'decal'
   if (key.startsWith('object.material.relief.') && key !== 'object.material.relief.source') {
     const src = materialField(obj!.material, 'relief.source')
     if (src === 'none') return false
@@ -437,23 +483,27 @@ export function scenePanelVisible(
   c: SceneControl | ControlSpec,
   doc: SceneDoc,
   obj: SceneObject | null | undefined,
+  ctx: SceneReadCtx = {},
 ): boolean {
   const key = c.key
   if (key.startsWith('object.') && !obj) return false
   const when = (c as SceneControl).when
   if (when && !when(doc, obj ?? undefined)) return false
   if (!panelGate(key, obj)) return false
-  return showIfVisible(c as ControlSpec, (k) => readSceneControl(doc, obj, k))
+  return showIfVisible(c as ControlSpec, (k) => readSceneControl(doc, obj, k, ctx))
 }
 
 // ── the remap ────────────────────────────────────────────────────────────────
 
-function withPresentation(c: SceneControl, card: string, matType: MaterialType | null): ControlSpec {
+function withPresentation(
+  c: SceneControl, card: string, matType: MaterialType | null, ctx: SceneReadCtx,
+): ControlSpec {
   const out: Record<string, unknown> = { ...c, group: card, bindable: false }
   delete out.when
   const patches: RowPatch[] = []
   if (OVERRIDE[c.key]) patches.push(OVERRIDE[c.key]!)
   if (matType === 'opalescent' && OPAL_OVERRIDE[c.key]) patches.push(OPAL_OVERRIDE[c.key]!)
+  if (c.key.startsWith('object.scale.')) patches.push(sizeOverride(Number(c.key.slice(-1)) as 0 | 1 | 2, ctx))
   for (const p of patches) {
     for (const [k, v] of Object.entries(p)) {
       if (k === 'hint' && v === null) delete out.hint
@@ -477,10 +527,14 @@ const anchorRow = (a: ScenePanelAnchor, card: string): ControlSpec =>
  *
  * `controls` defaults to `SCENE_CONTROLS` and exists so a test can exercise the
  * permissive fall-through with an appended novel control without mutating the shared
- * module-level array.
+ * module-level array. `ctx` carries the measured base extent the Size rows are expressed
+ * in — the surface has it (it built the geometry), nothing else does.
  */
 export function scenePanelControls(
-  doc: SceneDoc, obj: SceneObject | null | undefined, controls: readonly SceneControl[] = SCENE_CONTROLS,
+  doc: SceneDoc,
+  obj: SceneObject | null | undefined,
+  controls: readonly SceneControl[] = SCENE_CONTROLS,
+  ctx: SceneReadCtx = {},
 ): ControlSpec[] {
   const matType = editable(obj) ? typeOf(obj) : null
   const byCard = new Map<string, ControlSpec[]>()
@@ -494,8 +548,8 @@ export function scenePanelControls(
     if (isScenePostGroup(c.group)) { post.push(c); continue }
     const card = panelCardOf(c.key, matType, c.group)
     if (!card) continue
-    if (!scenePanelVisible(c, doc, obj)) continue
-    push(card, withPresentation(c, card, matType))
+    if (!scenePanelVisible(c, doc, obj, ctx)) continue
+    push(card, withPresentation(c, card, matType, ctx))
   }
   for (const a of SCENE_PANEL_ANCHORS) {
     const card = panelCardOf(a.key, matType)

@@ -10,9 +10,9 @@ import { dropNode, waitForBackend } from './_helpers'
  * precisely the way a screenshot cannot catch, so this reads numeric state out
  * of the properties panel.
  *
- * Why reading the Position inputs is a sufficient proxy for WORLD position:
- * those inputs bind the selected object's LOCAL transform (axisField() in
- * Scene3DStudioSurface.vue reads `selected.position[axis]` verbatim). Both
+ * Why reading the Position rows is a sufficient proxy for WORLD position:
+ * those rows show the selected object's LOCAL transform (readSceneControl() in
+ * lib/scene3d/panelPresentation.ts reads `obj.position[axis]` verbatim). Both
  * primitives start at the root, so pre-group local == world. `groupObjects`
  * always creates the group at identity rotation and unit scale (pinned by
  * scene3d-hierarchy.unit.spec.ts), so while they are grouped a child's world
@@ -81,17 +81,36 @@ function row(page: Page, name: string) {
   return page.locator(`[data-testid="object-row"][data-object-name="${name}"]`)
 }
 
+/**
+ * The Transform panel is drawn from the schema now (`SCENE_CONTROLS`' Transform group,
+ * via panelPresentation.ts), so each axis is a `StudioRow` rather than an
+ * `<input type="number">`. The labelled element is the row's TRACK — a `role="slider"`
+ * div carrying `aria-valuenow` — and the number is only an `<input>` while typed entry
+ * is open, which is why reading and writing take two different routes below.
+ */
+async function readRow(page: Page, label: string): Promise<number> {
+  return Number(await page.getByLabel(label).getAttribute('aria-valuenow'))
+}
+
+/** Type an exact value into one row: click its readout to open the field, fill, Enter. */
+async function typeRow(page: Page, label: string, value: string): Promise<void> {
+  const row = page.getByLabel(label).locator('xpath=..')
+  await row.locator('span.font-mono').last().click()
+  const field = row.locator('input')
+  await field.fill(value)
+  await field.press('Enter')
+}
+
 /** Read the selected object's LOCAL position out of the Transform panel. */
 async function readPosition(page: Page): Promise<Vec3> {
   const out: number[] = []
-  for (const label of AXES) out.push(Number(await page.getByLabel(label).inputValue()))
+  for (const label of AXES) out.push(await readRow(page, label))
   return out as Vec3
 }
 
-/** Type a position into the Transform panel (v-model.number commits on `input`,
- *  which `fill` dispatches). */
+/** Type a position into the Transform panel, one row at a time. */
 async function writePosition(page: Page, p: Vec3) {
-  for (let i = 0; i < 3; i++) await page.getByLabel(AXES[i]!).fill(String(p[i]))
+  for (let i = 0; i < 3; i++) await typeRow(page, AXES[i]!, String(p[i]))
 }
 
 /** Select a row and wait for the Transform panel to actually be showing THAT
@@ -202,7 +221,7 @@ test.describe('3D Studio — object grouping (E2E)', () => {
     // ── move the group ───────────────────────────────────────────────────────
     const DELTA_X = 2.5
     await selectOnly(page, 'Group')
-    await page.getByLabel('Position X').fill(String(groupBefore[0]! + DELTA_X))
+    await typeRow(page, 'Position X', String(groupBefore[0]! + DELTA_X))
     await expect
       .poll(async () => (await readPosition(page))[0])
       .toBeCloseTo(groupBefore[0]! + DELTA_X, 5)
@@ -271,7 +290,7 @@ test.describe('3D Studio — object grouping (E2E)', () => {
     // Typing 5 on the primary is a delta of +7. DELTA, not the absolute value:
     // if both objects were set to 5 they would land on top of each other, which
     // is the failure mode the spec's "same delta" wording exists to rule out.
-    await page.getByLabel('Position X').fill('5')
+    await typeRow(page, 'Position X', '5')
     await selectOnly(page, 'Sphere')
     await expect.poll(async () => (await readPosition(page))[0]).toBeCloseTo(5, 5)
     await selectOnly(page, 'Box')
