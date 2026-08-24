@@ -44,6 +44,11 @@ type ControlMeta = {
    * the chevron still lets you open a disabled one to set it up before enabling it.
    */
   sectionToggle?: boolean
+  /** Opt this control out of Collection binding/promotion in the panel UI, even
+   *  though its kind is bindable. Schema-level twin of the hand-written panels'
+   *  `:bindable="false"` rows (Gradient's Shape section). Motion/agent are NOT
+   *  affected — use `animatable`/`agent` for those. */
+  bindable?: false
 }
 
 export type ControlSpec = (

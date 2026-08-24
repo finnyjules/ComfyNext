@@ -28,6 +28,9 @@ const props = defineProps<{
   boundFor?: (key: string) => string | null
   /** Parameterless — dispatches the "open the wired collection" event. */
   goToCollection?: () => void
+  /** Per-section chrome overrides, keyed by section title. Forwarded through to
+   *  StudioSectionTree — see its own doc-comment for the exact contract. */
+  sections?: Record<string, { badge?: string; open?: boolean }>
 }>()
 
 const emit = defineEmits<{
@@ -47,6 +50,7 @@ const sections = computed(() => groupIntoSections(props.controls, props.order, p
     :value="value"
     :bound-for="boundFor"
     :go-to-collection="goToCollection"
+    :sections="props.sections"
     @set="(k, v) => emit('set', k, v)"
     @promote="(c) => emit('promote', c)"
     @menu="(e, c) => emit('menu', e, c)"

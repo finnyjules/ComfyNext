@@ -20,6 +20,11 @@ const props = defineProps<{
   value: (key: string) => string | number | boolean
   boundFor?: (key: string) => string | null
   goToCollection?: () => void
+  /** Per-section chrome overrides, keyed by section title (the `group` path's last
+   *  segment as rendered). Applied to the matching StudioSection's badge/open props;
+   *  `sectionToggle` keeps priority over a chrome `open` — a toggle-driven section's
+   *  open state is always the toggle's value. */
+  sections?: Record<string, { badge?: string; open?: boolean }>
 }>()
 
 const emit = defineEmits<{
@@ -51,7 +56,11 @@ const bodyControls = computed(() => props.section.controls.filter(c => !c.sectio
 </script>
 
 <template>
-  <StudioSection :title="section.title" :open="toggle ? value(toggle.key) === true : true">
+  <StudioSection
+    :title="section.title"
+    :open="toggle ? value(toggle.key) === true : (sections?.[section.title]?.open ?? true)"
+    :badge="sections?.[section.title]?.badge"
+  >
     <template v-if="toggle" #badge>
       <!-- .stop lives in StudioSwitch's own click handler, so flipping the switch does
            not also toggle the <details> it sits in the summary of. -->
@@ -76,7 +85,7 @@ const bodyControls = computed(() => props.section.controls.filter(c => !c.sectio
         :spec="c"
         :model-value="value(c.key)"
         :bound="boundFor?.(c.key) ?? null"
-        :bindable="controlKindToVariableType(c.kind) !== null"
+        :bindable="c.bindable !== false && controlKindToVariableType(c.kind) !== null"
         @update:model-value="(v) => emit('set', c.key, v)"
         @promote="emit('promote', c)"
         @menu="(e) => emit('menu', e, c)"
@@ -90,6 +99,7 @@ const bodyControls = computed(() => props.section.controls.filter(c => !c.sectio
       :value="value"
       :bound-for="boundFor"
       :go-to-collection="goToCollection"
+      :sections="sections"
       @set="(k, v) => emit('set', k, v)"
       @promote="(c) => emit('promote', c)"
       @menu="(e, c) => emit('menu', e, c)"

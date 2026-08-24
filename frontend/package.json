@@ -76,6 +76,8 @@
     "@types/pg": "^8.21.0",
     "@types/pngjs": "^6.0.5",
     "@types/three": "^0.171.0",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.10.6",
     "pngjs": "^7.0.0",
     "tailwindcss": "^4.2.1",
