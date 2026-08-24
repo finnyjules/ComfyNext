@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { animatableTargets, animatableRange } from '~/lib/scene3d/motion/targets'
 import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
-import { defaultDoc, createPrimitive } from '~/lib/scene3d/config'
+import { defaultDoc, createPrimitive, type SceneObject } from '~/lib/scene3d/config'
 import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
 import type { SceneMotionTrack } from '~/lib/scene3d/motion/types'
 
@@ -88,6 +88,55 @@ describe('animatableTargets', () => {
     expect(paths).toContain('lighting.sunIntensity')
     expect(paths).toContain('camera.fov')
     expect(paths).toContain('post.bloomStrength')
+  })
+
+  /**
+   * ALLOW-LIST, not a presence check. Every other assertion in this file asks whether a
+   * particular path is offered, so the vocabulary could grow by a dozen entries without
+   * one of them going red — and it silently did: eleven inspector-only material sliders
+   * joined SCENE_CONTROLS and, being sliders, defaulted to animatable. They now carry
+   * `animatable: false`, and this pins the result so the NEXT addition has to be
+   * deliberate. Per material type, because `when` gates most material keys: a scene of
+   * standard boxes offers a different set from a scene of gradient ones.
+   */
+  const objectTargets = (type: SceneObject['material']['type']): string[] => {
+    const doc = defaultDoc()
+    const o = createPrimitive('box', doc.objects)
+    o.material.type = type
+    doc.objects.push(o)
+    const prefix = `objects.${o.id}.`
+    return animatableTargets(doc)
+      .map((t) => t.path)
+      .filter((p) => p.startsWith(prefix))
+      .map((p) => p.slice(prefix.length))
+      .sort()
+  }
+
+  const RELIEF = ['material.relief.contrast', 'material.relief.scale', 'material.relief.tiling']
+  const PBR = ['material.metalness', 'material.roughness']
+  const COAT = ['material.clearcoat', 'material.clearcoatRoughness', 'material.envMapIntensity']
+  const PHYSICAL = [
+    ...COAT, 'material.emissiveIntensity', 'material.iridescence', 'material.iridescenceIOR',
+    'material.ior', 'material.opacity', 'material.sheen', 'material.thickness', 'material.transmission',
+  ]
+
+  it.each([
+    ['standard', [...PBR, ...PHYSICAL, ...RELIEF]],
+    ['glass', [...PBR, ...PHYSICAL, ...RELIEF]],
+    ['phong', ['material.shininess', ...RELIEF]],
+    ['toon', RELIEF],
+    ['matcap', RELIEF],
+    ['fresnel', RELIEF],
+    ['gradient', RELIEF],
+    ['image', [...PBR, ...RELIEF]],
+    ['shaderFill', [...PBR, ...RELIEF]],
+    ['opalescent', [
+      ...PBR, ...COAT, ...RELIEF,
+      'material.opalAngleMix', 'material.opalFlowSpeed', 'material.opalFrequency',
+      'material.opalHueShift', 'material.opalStrength',
+    ]],
+  ] as const)('offers exactly these per-object targets for a %s material', (type, expected) => {
+    expect(objectTargets(type)).toEqual([...expected].sort())
   })
 })
 

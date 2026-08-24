@@ -146,8 +146,11 @@ const reliefApplies = (doc: SceneDoc, obj?: SceneObject): boolean => {
 }
 
 // Per-type branches the inspector draws but the schema had never described. Each is
-// `agent: false` — declaring a control for the INSPECTOR must not silently widen what
-// the model may change.
+// `agent: false` AND `animatable: false`: declaring a control so the INSPECTOR can draw it
+// must not silently widen what the model may change, nor what the motion picker offers.
+// The two flags move together for an inspector-only entry — and four of these are gated
+// by `showIf`, which the motion picker does not evaluate, so they would have listed
+// themselves as targets in states where the row itself is not even on screen.
 const isToonMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'toon'
 
@@ -275,21 +278,21 @@ export const SCENE_CONTROLS: SceneControl[] = [
 
   // Glass extras the Transparency block drew: dispersion + the attenuation pair.
   slider('object.material.dispersion', 'Dispersion', 0, 5, 0.05, 'Material', MATERIAL_DEFAULTS.dispersion,
-    'Splits refracted light into rainbow fringes', { when: isPhysicalMaterial, agent: false }),
+    'Splits refracted light into rainbow fringes', { when: isPhysicalMaterial, agent: false, animatable: false }),
   color('object.material.attenuationColor', 'Attenuation', MATERIAL_DEFAULTS.attenuationColor, 'Material',
     { when: isPhysicalMaterial, agent: false }),
   slider('object.material.attenuationDistance', 'Attenuation dist', 0, 10, 0.1, 'Material', MATERIAL_DEFAULTS.attenuationDistance,
-    'How deep light travels before tinting (0 = off)', { when: isPhysicalMaterial, agent: false }),
+    'How deep light travels before tinting (0 = off)', { when: isPhysicalMaterial, agent: false, animatable: false }),
 
   // Toon — cel bands.
   slider('object.material.toonSteps', 'Steps', 2, 5, 1, 'Material', MATERIAL_DEFAULTS.toonSteps,
-    'Number of flat cel-shading bands', { when: isToonMaterial, agent: false }),
+    'Number of flat cel-shading bands', { when: isToonMaterial, agent: false, animatable: false }),
 
   // Fresnel — rim glow.
   color('object.material.fresnelColor', 'Rim colour', MATERIAL_DEFAULTS.fresnelColor, 'Material',
     { when: isFresnelMaterial, agent: false }),
   slider('object.material.fresnelPower', 'Power', 1, 8, 0.1, 'Material', MATERIAL_DEFAULTS.fresnelPower,
-    'How tightly the rim glow hugs the edges', { when: isFresnelMaterial, agent: false }),
+    'How tightly the rim glow hugs the edges', { when: isFresnelMaterial, agent: false, animatable: false }),
 
   // Gradient — palette source, ramp direction and mapping. The ramp/stop editors and the
   // harmony scheme picker stay bespoke widgets (the inspector's own blocks); these are the
@@ -299,25 +302,25 @@ export const SCENE_CONTROLS: SceneControl[] = [
     { when: isGradientMaterial, agent: false }),
   slider('object.material.paletteHue', 'Hue', 0, 360, 1, 'Material', MATERIAL_DEFAULTS.paletteHue,
     'Seed hue the harmony scheme is built from',
-    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
+    { when: isGradientMaterial, agent: false, animatable: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
   slider('object.material.paletteSat', 'Saturation', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.paletteSat,
     'How vivid the generated colours are',
-    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
+    { when: isGradientMaterial, agent: false, animatable: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
   slider('object.material.paletteLight', 'Lightness', 0.2, 0.9, 0.01, 'Material', MATERIAL_DEFAULTS.paletteLight,
     'How light or dark the generated colours are',
-    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
+    { when: isGradientMaterial, agent: false, animatable: false, showIf: { key: 'object.material.paletteMode', equals: 'harmony' } }),
   select('object.material.gradientType', 'Type', [...GRADIENT_TYPES], MATERIAL_DEFAULTS.gradientType, 'Material', undefined,
     { when: isGradientMaterial, agent: false }),
   slider('object.material.gradientYaw', 'Yaw', 0, 360, 1, 'Material', MATERIAL_DEFAULTS.gradientYaw,
     'Ramp direction around the Y axis',
-    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.gradientType', equals: 'linear' } }),
+    { when: isGradientMaterial, agent: false, animatable: false, showIf: { key: 'object.material.gradientType', equals: 'linear' } }),
   slider('object.material.gradientPitch', 'Pitch', -90, 90, 1, 'Material', MATERIAL_DEFAULTS.gradientPitch,
     'Ramp direction elevation, up or down',
-    { when: isGradientMaterial, agent: false, showIf: { key: 'object.material.gradientType', equals: 'linear' } }),
+    { when: isGradientMaterial, agent: false, animatable: false, showIf: { key: 'object.material.gradientType', equals: 'linear' } }),
   slider('object.material.gradientOffset', 'Offset', -1, 1, 0.01, 'Material', MATERIAL_DEFAULTS.gradientOffset,
-    'Slides the ramp along its direction', { when: isGradientMaterial, agent: false }),
+    'Slides the ramp along its direction', { when: isGradientMaterial, agent: false, animatable: false }),
   slider('object.material.gradientSpread', 'Spread', 0.1, 3, 0.01, 'Material', MATERIAL_DEFAULTS.gradientSpread,
-    'Compresses (<1) or stretches (>1) the ramp', { when: isGradientMaterial, agent: false }),
+    'Compresses (<1) or stretches (>1) the ramp', { when: isGradientMaterial, agent: false, animatable: false }),
   select('object.material.gradientShading', 'Shading', [...GRADIENT_SHADINGS], MATERIAL_DEFAULTS.gradientShading, 'Material', undefined,
     { when: isGradientPrimitive, agent: false }),
 

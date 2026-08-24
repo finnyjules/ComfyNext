@@ -26,7 +26,7 @@ import { SCENE_CONTROLS, type SceneControl } from './controls'
  * deleted template drew, per selection state × material type.
  *
  * ## Everything here is `bindable: false`, deliberately
- * The shipped inspector's Transform/Material/Camera/Lighting/Background controls were
+ * The shipped inspector's Material/Camera/Lighting/Background controls were
  * `StudioSlider`/`StudioColor`/`StudioSegmented`/`StudioSwitch` — none of which emit a
  * `menu`/`promote` event, so NO migrated row ever offered Collection binding. A
  * `StudioRow` would offer it by default (the variable glyph renders whenever
@@ -35,25 +35,27 @@ import { SCENE_CONTROLS, type SceneControl } from './controls'
  * same guard Gradient's `onControlMenu` applies. The post rows are NOT touched: they were
  * already drawn by a `StudioControlPanel` and keep whatever they had.
  *
- * ## Degrees, world size — the units the panel shows are not the units stored
- * `object.rotation.*` is radians on disk and was always EDITED in degrees; `object.scale.*`
- * is a multiplier on disk and was always edited as world Size (`scale × baseSize`). Both
- * conversions lived in the surface's row proxies; they live here now (`readSceneControl` +
- * the `Size`/`Rotation` overrides) so the panel, the parity spec and the write path all
- * read one description of them.
+ * ## Transform is not migrated
+ * The nine Position/Rotation/Size rows stay hand-written `<input type="number">` grids.
+ * A `StudioRow` slider CLAMPS typed and keyed entry to the declared range
+ * (`lib/studio/row.ts`'s `parseTyped`), and those ranges are a general-purpose description
+ * of the parameters, not a limit the editor ever enforced: a gizmo places objects well
+ * outside them, and one arrow press on a clamped row would rewrite the value AND fan the
+ * difference across the whole selection as a delta (`axisDeltaWrites`). Migrating them
+ * needs a soft-range row kind first. So the degrees-for-radians and world-Size-for-scale
+ * conversions stay where they always were, in the surface's own `rotField`/`sizeAxis`
+ * proxies, and nothing here reads or writes a transform key.
  */
 
 // ── section order + chrome ───────────────────────────────────────────────────
 
-/** The Transform card renders on its own, ABOVE the hand-written Geometry section
- *  (which stays hand-written), so it cannot share a panel with the rest. */
-export const SCENE_TRANSFORM_SECTIONS = ['Transform'] as readonly string[]
-
 /** Material (+ its five shipped sub-blocks, as nesting paths) and the doc-level cards,
- *  in the order the shipped inspector drew them. The hand-written Light and Decal cards
- *  sit ABOVE this panel in the template — they are mutually exclusive with Material
- *  (a light/decal is never a primitive or a GLB), so moving them ahead of it cannot
- *  change what the user sees in any state. */
+ *  in the order the shipped inspector drew them. The hand-written Transform, Light and
+ *  Decal cards sit ABOVE this panel in the template. Light and Decal are mutually
+ *  exclusive with Material (a light/decal is never a primitive or a GLB), so moving them
+ *  ahead of it cannot change what the user sees in any state.
+ *
+ *  Transform is NOT here — see this module's "Transform is not migrated" note. */
 export const SCENE_PANEL_ORDER = [
   'Material',
   'Material/Coat & sheen',
@@ -100,13 +102,6 @@ const RELIEF_DEFAULTS: Record<string, ParamValue> = {
   invert: false,
 }
 
-const RAD2DEG = 180 / Math.PI
-
-/** World size ÷ scale for one axis, i.e. the primitive's un-scaled extent. The surface
- *  measures it off the built geometry; every other caller (the parity spec, a headless
- *  read) has no geometry and uses 1, which makes Size read as the raw scale. */
-export type SceneReadCtx = { baseSize?: readonly number[] }
-
 const materialField = (mat: SceneObject['material'], field: string): ParamValue => {
   if (field === 'gradientYaw' || field === 'gradientPitch') {
     return gradientAngles(mat)[field === 'gradientYaw' ? 'yaw' : 'pitch']
@@ -128,10 +123,11 @@ const materialField = (mat: SceneObject['material'], field: string): ParamValue 
  * evaluation inside `scenePanelVisible`, and the parity spec all go through it.
  *
  * `post.*` is NOT handled here: `doc.post` is a plain PostSettings object the surface
- * already reads with `readPost`, and folding it in would duplicate that.
+ * already reads with `readPost`, and folding it in would duplicate that. Neither are
+ * `object.position/rotation/scale` — see "Transform is not migrated" above.
  */
 export function readSceneControl(
-  doc: SceneDoc, obj: SceneObject | null | undefined, key: string, ctx: SceneReadCtx = {},
+  doc: SceneDoc, obj: SceneObject | null | undefined, key: string,
 ): ParamValue {
   if (key === 'showFloor') return doc.showFloor
   if (key === 'camera.fov') return doc.camera.fov
@@ -141,13 +137,6 @@ export function readSceneControl(
   }
   if (!obj) return 0
   if (key.startsWith('object.material.')) return materialField(obj.material, key.slice('object.material.'.length))
-  const axis = Number(key.slice(-1)) as 0 | 1 | 2
-  if (key.startsWith('object.position.')) return obj.position[axis] ?? 0
-  if (key.startsWith('object.rotation.')) return (obj.rotation[axis] ?? 0) * RAD2DEG
-  if (key.startsWith('object.scale.')) {
-    const base = ctx.baseSize?.[axis] || 1
-    return Math.round((obj.scale[axis] ?? 1) * base * 100) / 100
-  }
   return 0
 }
 
@@ -298,11 +287,6 @@ const SUB_CARDS: Record<string, readonly string[]> = {
 }
 
 const DOC_CARDS: Record<string, readonly string[]> = {
-  Transform: [
-    'object.position.0', 'object.position.1', 'object.position.2',
-    'object.rotation.0', 'object.rotation.1', 'object.rotation.2',
-    'object.scale.0', 'object.scale.1', 'object.scale.2',
-  ],
   Camera: ['camera.fov', 'ui.camera.output'],
   Lighting: [
     'lighting.preset', 'lighting.environment',
@@ -366,9 +350,6 @@ const OVERRIDE: Record<string, RowPatch> = {
   'lighting.preset': { label: 'Preset' },
   'lighting.environment': { label: 'Environment', options: [...ENV_OPTIONS], default: 'room' },
   showFloor: { hint: null },
-  'object.rotation.0': { min: -180, max: 180, step: 1, hint: null },
-  'object.rotation.1': { min: -180, max: 180, step: 1, hint: null },
-  'object.rotation.2': { min: -180, max: 180, step: 1, hint: null },
 }
 
 /** Opalescent moves three rows into the main body AND re-captions them — the shipped
@@ -382,14 +363,6 @@ const OPAL_OVERRIDE: Record<string, RowPatch> = {
   'object.material.envMapIntensity': { label: 'Reflection intensity' },
 }
 
-/** Size rows: the schema's scale multiplier bounds, expressed in the world units the
- *  row actually shows. Label follows — the shipped inputs said Size, not Scale. */
-function sizeOverride(axis: 0 | 1 | 2, ctx: SceneReadCtx): RowPatch {
-  const base = ctx.baseSize?.[axis] || 1
-  const label = ['Size X', 'Size Y', 'Size Z'][axis]!
-  return { label, min: 0.05 * base, max: 10 * base, step: 0.05 }
-}
-
 // ── visibility ───────────────────────────────────────────────────────────────
 
 /**
@@ -398,12 +371,9 @@ function sizeOverride(axis: 0 | 1 | 2, ctx: SceneReadCtx): RowPatch {
  * `relief.scale/contrast/tiling/invert` are agent- and motion-reachable today; adding a
  * `showIf` to hide them would be a schema change with reach beyond the inspector, so the
  * shipped template's own condition (a source is picked, and the picked image is not
- * already a normal map) lives here instead. The Size rows repeat the template's
- * `!selectedIsLight && !selectedIsDecal` — a light's and a decal's `scale` is unused by
- * the engine, so offering the rows would write numbers nothing reads.
+ * already a normal map) lives here instead.
  */
 function panelGate(key: string, obj: SceneObject | null | undefined): boolean {
-  if (key.startsWith('object.scale.')) return !!obj && obj.kind !== 'light' && obj.kind !== 'decal'
   if (key.startsWith('object.material.relief.') && key !== 'object.material.relief.source') {
     const src = materialField(obj!.material, 'relief.source')
     if (src === 'none') return false
@@ -426,27 +396,23 @@ export function scenePanelVisible(
   c: SceneControl | ControlSpec,
   doc: SceneDoc,
   obj: SceneObject | null | undefined,
-  ctx: SceneReadCtx = {},
 ): boolean {
   const key = c.key
   if (key.startsWith('object.') && !obj) return false
   const when = (c as SceneControl).when
   if (when && !when(doc, obj ?? undefined)) return false
   if (!panelGate(key, obj)) return false
-  return showIfVisible(c as ControlSpec, (k) => readSceneControl(doc, obj, k, ctx))
+  return showIfVisible(c as ControlSpec, (k) => readSceneControl(doc, obj, k))
 }
 
 // ── the remap ────────────────────────────────────────────────────────────────
 
-function withPresentation(
-  c: SceneControl, card: string, matType: MaterialType | null, ctx: SceneReadCtx,
-): ControlSpec {
+function withPresentation(c: SceneControl, card: string, matType: MaterialType | null): ControlSpec {
   const out: Record<string, unknown> = { ...c, group: card, bindable: false }
   delete out.when
   const patches: RowPatch[] = []
   if (OVERRIDE[c.key]) patches.push(OVERRIDE[c.key]!)
   if (matType === 'opalescent' && OPAL_OVERRIDE[c.key]) patches.push(OPAL_OVERRIDE[c.key]!)
-  if (c.key.startsWith('object.scale.')) patches.push(sizeOverride(Number(c.key.slice(-1)) as 0 | 1 | 2, ctx))
   for (const p of patches) {
     for (const [k, v] of Object.entries(p)) {
       if (k === 'hint' && v === null) delete out.hint
@@ -467,11 +433,7 @@ const anchorRow = (a: ScenePanelAnchor, card: string): ControlSpec =>
  * Post rows pass through untouched, with their own `Effects/<Label>` group — they were
  * already drawn by a `StudioControlPanel` and are not part of this migration.
  */
-export function scenePanelControls(
-  doc: SceneDoc,
-  obj: SceneObject | null | undefined,
-  opts: SceneReadCtx = {},
-): ControlSpec[] {
+export function scenePanelControls(doc: SceneDoc, obj: SceneObject | null | undefined): ControlSpec[] {
   const matType = editable(obj) ? typeOf(obj) : null
   const byCard = new Map<string, ControlSpec[]>()
   const push = (card: string, row: ControlSpec) => {
@@ -484,8 +446,8 @@ export function scenePanelControls(
     if (isScenePostGroup(c.group)) { post.push(c); continue }
     const card = panelCardOf(c.key, matType)
     if (!card) continue
-    if (!scenePanelVisible(c, doc, obj, opts)) continue
-    push(card, withPresentation(c, card, matType, opts))
+    if (!scenePanelVisible(c, doc, obj)) continue
+    push(card, withPresentation(c, card, matType))
   }
   for (const a of SCENE_PANEL_ANCHORS) {
     const card = panelCardOf(a.key, matType)
