@@ -82,7 +82,7 @@ import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 import {
   ENV_BY_LABEL, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS, SCENE_GEOMETRY_SECTIONS,
-  readSceneControl, scenePanelChrome, scenePanelControls, writeMaterialField,
+  readSceneControl, scenePanelChrome, scenePanelControls, writeMaterialField, isNoOpTransformCommit,
 } from '~/lib/scene3d/panelPresentation'
 import { setByPath } from '~/lib/studio/path'
 import type { PostSettings } from '~/lib/spacetype/post'
@@ -959,15 +959,10 @@ function writeAxis(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: 
 function writeTransform(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: number): void {
   if (!selected.value || !Number.isFinite(v)) return
   // A commit carrying exactly what the row is already SHOWING is not an edit, and must not
-  // touch the document. Rounding the read (panelPresentation.ts) makes the row
-  // self-consistent, but it cannot make this write a no-op on its own: `axisDeltaWrites`
-  // takes its delta from the object's RAW value, so a row displaying 2.4 over a stored
-  // 2.38472 still moved the primary and still fanned the 0.01528 across the selection —
-  // the gizmo leaves values at full precision all day. Comparing against the row's own
-  // reading is what closes that: an unchanged number changes nothing, and the stored
-  // precision survives. A real edit differs from the reading by at least one step and
-  // falls straight through.
-  if (v === readSceneControl(doc, selected.value, `object.${prop}.${axis}`, { baseSize: baseSize.value })) return
+  // touch the document — see isNoOpTransformCommit for why rounding the read cannot do
+  // this on its own. A real edit differs from the reading by at least one step and falls
+  // straight through.
+  if (isNoOpTransformCommit(doc, selected.value, prop, axis, v, { baseSize: baseSize.value })) return
   if (prop === 'rotation') { writeAxis('rotation', axis, v * DEG2RAD); return }
   if (prop === 'scale') {
     const base = baseSize.value[axis] || 1
@@ -1382,6 +1377,28 @@ function updateLightLabels() {
     }
   })
 }
+
+/**
+ * Document truth for end-to-end tests, and ONLY for them.
+ *
+ * The panel rows read at the precision they display (one decimal for Position, whole
+ * degrees for Rotation — see panelPresentation.ts), which is right for a control and wrong
+ * for an assertion about geometry: grouping puts a group at its children's centroid, which
+ * lands off the 0.1 grid, so a rounded row reading cannot add back to the exact world
+ * position. `tests/scene3d-grouping.spec.ts` used to measure that invariant through
+ * `aria-valuenow` and only passed because the read was raw. It reads this instead — the
+ * document itself, at full precision — and keeps the row reads for what rows are actually
+ * evidence of: what the user sees and types.
+ *
+ * A getter, not a reactive mirror: it costs nothing until a test calls it, and it cannot
+ * drift from `doc` because it IS `doc`. Serialised through the same `serializeDoc` the
+ * persistence path uses, so a test can never accidentally hold a live reactive proxy.
+ * Removed on unmount, like every other `window.__*` harness hook in this repo.
+ */
+onMounted(() => {
+  ;(window as any).__scene3dDoc = () => JSON.parse(serializeDoc(doc))
+})
+onBeforeUnmount(() => { delete (window as any).__scene3dDoc })
 
 onMounted(() => {
   webglOk.value = detectWebGL()

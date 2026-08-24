@@ -10,17 +10,25 @@ import { dropNode, waitForBackend } from './_helpers'
  * precisely the way a screenshot cannot catch, so this reads numeric state out
  * of the properties panel.
  *
- * Why reading the Position rows is a sufficient proxy for WORLD position:
- * those rows show the selected object's LOCAL transform (readSceneControl() in
- * lib/scene3d/panelPresentation.ts reads `obj.position[axis]` verbatim). Both
- * primitives start at the root, so pre-group local == world. `groupObjects`
- * always creates the group at identity rotation and unit scale (pinned by
- * scene3d-hierarchy.unit.spec.ts), so while they are grouped a child's world
- * position is exactly `group.position + child.local`; and after `ungroupObject`
- * both children are back at the root, where local == world again. So the
- * end-state check "child local == pre-group local + the offset the group was
- * dragged by" IS the world-transform invariant for this case, expressed
- * entirely through the DOM — no extra production hook required.
+ * TWO INSTRUMENTS, and which one is evidence of what:
+ *
+ *   - the world-transform invariant is measured against the DOCUMENT
+ *     (`window.__scene3dDoc()`, full precision). The panel rows read at the
+ *     precision they DISPLAY — Position to one decimal — and that is right for a
+ *     control and wrong for this: `groupObjects` puts the group at its children's
+ *     centroid, which for three children lands off the 0.1 grid, so the children's
+ *     local positions are off-grid too and a rounded reading cannot add back to the
+ *     exact world position. This suite used to measure the invariant through
+ *     `aria-valuenow` and passed only because the read was then raw; that made it a
+ *     test of the panel's precision wearing an invariant's clothes.
+ *   - the ROWS are still read where a row is the thing under test: that a typed
+ *     value lands, and that the panel shows the object the tree selected. Those
+ *     assert at display precision, with a tolerance of half a step.
+ *
+ * `groupObjects` always creates the group at identity rotation and unit scale
+ * (pinned by scene3d-hierarchy.unit.spec.ts), so while they are grouped a child's
+ * world position is exactly `group.position + child.local`; after `ungroupObject`
+ * both children are back at the root, where local == world again.
  */
 
 // ── setup ─────────────────────────────────────────────────────────────────────
@@ -101,11 +109,35 @@ async function typeRow(page: Page, label: string, value: string): Promise<void> 
   await field.press('Enter')
 }
 
-/** Read the selected object's LOCAL position out of the Transform panel. */
+/** Read the selected object's LOCAL position out of the Transform panel — at the
+ *  precision the panel SHOWS it, which is what makes it evidence about the UI and not
+ *  about geometry. Half a step, the most a correct row can differ from the stored value. */
 async function readPosition(page: Page): Promise<Vec3> {
   const out: number[] = []
   for (const label of AXES) out.push(await readRow(page, label))
   return out as Vec3
+}
+const ROW_TOL = 0.05
+
+/**
+ * The document itself, at full precision — the instrument for every world-transform
+ * assertion below. Exposed by Scene3DStudioSurface.vue's `__scene3dDoc` test hook (see
+ * its comment); polled because a click on a tree row and the doc write it triggers are
+ * both Vue-reactive and this can otherwise run between them.
+ */
+type SceneObj = { name: string; position: Vec3; parentId?: string }
+async function docObjects(page: Page): Promise<SceneObj[]> {
+  await expect.poll(async () => page.evaluate(
+    () => typeof (window as any).__scene3dDoc === 'function'), { timeout: 10_000 }).toBe(true)
+  return page.evaluate(() => (window as any).__scene3dDoc().objects as SceneObj[])
+}
+
+/** One object's stored LOCAL position, by name. */
+async function docPosition(page: Page, name: string): Promise<Vec3> {
+  const objects = await docObjects(page)
+  const o = objects.find((x) => x.name === name)
+  expect(o, `${name} must exist in the document (have: ${objects.map((x) => x.name).join(', ')})`).toBeTruthy()
+  return o!.position
 }
 
 /** Type a position into the Transform panel, one row at a time. */
@@ -180,12 +212,15 @@ test.describe('3D Studio — object grouping (E2E)', () => {
     // Record the pre-group positions by READING them back, rather than trusting
     // what we typed — if a write silently didn't land, the invariant below would
     // otherwise be checked against a fiction.
-    await selectOnly(page, 'Box')
-    const boxBefore = await readPosition(page)
+    // Two readings, deliberately: the DOCUMENT is what the invariant is measured against,
+    // and the ROW is checked separately to prove the typing actually landed rather than
+    // the test asserting against a fiction.
+    const boxBefore = await docPosition(page, 'Box')
     expect(boxBefore).toEqual(BOX_POS)
-    await selectOnly(page, 'Sphere')
-    const sphereBefore = await readPosition(page)
+    const sphereBefore = await docPosition(page, 'Sphere')
     expect(sphereBefore).toEqual(SPHERE_POS)
+    await selectOnly(page, 'Box')
+    for (let i = 0; i < 3; i++) expect(await readRow(page, AXES[i]!)).toBeCloseTo(BOX_POS[i]!, 5)
 
     // ── group ────────────────────────────────────────────────────────────────
     await selectOnly(page, 'Box')
@@ -210,21 +245,25 @@ test.describe('3D Studio — object grouping (E2E)', () => {
     // The children are still where the user left them: their world position is
     // group.position + local while grouped (the group is created at identity
     // rotation / unit scale), so this is a real check, not bookkeeping.
-    await selectOnly(page, 'Group')
-    const groupBefore = await readPosition(page)
+    const groupBefore = await docPosition(page, 'Group')
     for (const [name, before] of [['Box', boxBefore], ['Sphere', sphereBefore]] as const) {
-      await selectOnly(page, name)
-      const local = await readPosition(page)
-      for (let i = 0; i < 3; i++) expect(local[i]! + groupBefore[i]!).toBeCloseTo(before[i]!, 5)
+      const local = await docPosition(page, name)
+      for (let i = 0; i < 3; i++) expect(local[i]! + groupBefore[i]!, `${name} axis ${i}`).toBeCloseTo(before[i]!, 5)
     }
 
     // ── move the group ───────────────────────────────────────────────────────
     const DELTA_X = 2.5
+    const groupTarget = groupBefore[0]! + DELTA_X
     await selectOnly(page, 'Group')
-    await typeRow(page, 'Position X', String(groupBefore[0]! + DELTA_X))
+    await typeRow(page, 'Position X', String(groupTarget))
+    // The row is the thing under test here, so it is read as a row: at display precision.
     await expect
       .poll(async () => (await readPosition(page))[0])
-      .toBeCloseTo(groupBefore[0]! + DELTA_X, 5)
+      .toBeCloseTo(groupTarget, 1)
+    // …and the document got the number verbatim, not the row's rounding of it.
+    await expect
+      .poll(async () => (await docPosition(page, 'Group'))[0], { timeout: 5_000 })
+      .toBeCloseTo(groupTarget, 5)
 
     // ── ungroup ──────────────────────────────────────────────────────────────
     await page.getByRole('button', { name: 'Ungroup', exact: true }).click()
@@ -238,12 +277,15 @@ test.describe('3D Studio — object grouping (E2E)', () => {
     // and nothing at all on the untouched axes.
     for (const [name, before] of [['Box', boxBefore], ['Sphere', sphereBefore]] as const) {
       const expected: Vec3 = [before[0]! + DELTA_X, before[1]!, before[2]!]
-      await selectOnly(page, name)
       for (let i = 0; i < 3; i++) {
         await expect
-          .poll(async () => (await readPosition(page))[i]!, { timeout: 5_000 })
+          .poll(async () => (await docPosition(page, name))[i]!, { timeout: 5_000 })
           .toBeCloseTo(expected[i]!, 5)
       }
+      // And the panel agrees, to within what a one-decimal row can express.
+      await selectOnly(page, name)
+      const shown = await readPosition(page)
+      for (let i = 0; i < 3; i++) expect(Math.abs(shown[i]! - expected[i]!), `${name} row ${i}`).toBeLessThanOrEqual(ROW_TOL)
     }
   })
 
@@ -285,19 +327,22 @@ test.describe('3D Studio — object grouping (E2E)', () => {
     const badge = page.locator('[data-testid="multi-select-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toContainText('2 objects selected')
+    // A row read, and rightly so: the claim is that the PANEL shows the primary.
     expect(await readPosition(page)).toEqual(SPHERE)
 
     // Typing 5 on the primary is a delta of +7. DELTA, not the absolute value:
     // if both objects were set to 5 they would land on top of each other, which
     // is the failure mode the spec's "same delta" wording exists to rule out.
+    // Read off the DOCUMENT: this is an assertion about the fan-out's arithmetic,
+    // not about what a row displays. (These values happen to sit on the row's own
+    // 0.1 grid, so it would pass either way — but the instrument should match the
+    // claim, or the next value that doesn't fails for a reason nobody expects.)
     await typeRow(page, 'Position X', '5')
-    await selectOnly(page, 'Sphere')
-    await expect.poll(async () => (await readPosition(page))[0]).toBeCloseTo(5, 5)
-    await selectOnly(page, 'Box')
-    await expect.poll(async () => (await readPosition(page))[0]).toBeCloseTo(BOX[0]! + 7, 5)
+    await expect.poll(async () => (await docPosition(page, 'Sphere'))[0], { timeout: 5_000 }).toBeCloseTo(5, 5)
+    await expect.poll(async () => (await docPosition(page, 'Box'))[0], { timeout: 5_000 }).toBeCloseTo(BOX[0]! + 7, 5)
     // Untouched axes on the non-primary stayed put — a fan-out that copied the
     // whole vector would fail here and pass the X check above.
-    expect((await readPosition(page))[1]).toBeCloseTo(BOX[1]!, 5)
+    expect((await docPosition(page, 'Box'))[1]).toBeCloseTo(BOX[1]!, 5)
 
     // A shift-click that MISSES everything must leave the selection alone: the
     // gesture that builds a multi-selection must never be the one that wipes it.

@@ -137,6 +137,33 @@ const RELIEF_DEFAULTS: Record<string, ParamValue> = {
 
 const RAD2DEG = 180 / Math.PI
 
+/**
+ * Whether a Transform commit carries exactly what its row is already SHOWING — in which
+ * case it is not an edit and must not touch the document.
+ *
+ * `RowSlider` seeds its typed-entry draft from the displayed value and commits on blur
+ * unconditionally, so clicking a readout and clicking away sends that value back through
+ * `@set`. Rounding the read (below) makes the row self-consistent but cannot make this
+ * write a no-op on its own: `axisDeltaWrites` takes its delta from the object's RAW stored
+ * value, so a row reading 2.4 over a stored 2.38472 still moves the primary and still fans
+ * the 0.01528 across the selection. Comparing against the row's OWN reading is what closes
+ * that, and it keeps the stored precision: 2.38472 stays 2.38472.
+ *
+ * Lives here rather than inline in the surface so it is testable without mounting the
+ * component — the same reason `writeMaterialField` was pulled out. `writeTransform` is its
+ * only caller.
+ */
+export function isNoOpTransformCommit(
+  doc: SceneDoc,
+  obj: SceneObject | null | undefined,
+  prop: 'position' | 'rotation' | 'scale',
+  axis: 0 | 1 | 2,
+  value: number,
+  ctx: SceneReadCtx = {},
+): boolean {
+  return value === readSceneControl(doc, obj, `object.${prop}.${axis}`, ctx)
+}
+
 /** Round to `1 / perUnit`, normalising negative zero away. `Math.round(-0.049 * 10) / 10`
  *  is `-0`, which is `=== 0` but not `Object.is` 0 — enough for the row's readout to
  *  render "-0.0" where the document holds a plain small negative, and enough to make a

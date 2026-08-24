@@ -6,6 +6,7 @@ import {
   SCENE_PANEL_ANCHOR_KEYS, SCENE_PANEL_ORDER, SCENE_PANEL_SECTIONS, SCENE_TRANSFORM_SECTIONS,
   SCENE_GEOMETRY_SECTIONS,
   ENV_OPTIONS, readSceneControl, scenePanelChrome, scenePanelControls, scenePanelVisible, writeMaterialField,
+  isNoOpTransformCommit,
 } from '~/lib/scene3d/panelPresentation'
 import { MODIFIER_SPECS, PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 import { formatValue, nudgeValue, parseTyped } from '~/lib/studio/row'
@@ -1122,6 +1123,67 @@ describe('Scene3D panel parity — Decal', () => {
   })
 })
 
+/**
+ * THE NO-OP COMMIT GUARD — `writeTransform`'s first line, as a seam.
+ *
+ * `RowSlider` commits on blur unconditionally, so clicking a readout and clicking away
+ * sends the displayed value back through `@set`. Rounding the read makes the row
+ * self-consistent but cannot make that write a no-op: `axisDeltaWrites` takes its delta
+ * from the object's RAW stored value, so a row reading 2.4 over a stored 2.38472 still
+ * moved the primary and still fanned the 0.01528 across the selection. `writeTransform`
+ * compares against the row's OWN reading instead — an unchanged number changes nothing,
+ * and the stored precision survives.
+ */
+describe('Scene3D panel parity — the no-op transform commit', () => {
+  const gizmoPlaced = () => {
+    const o = prim('standard')
+    o.position = [2.38472, 0, 0]
+    o.rotation = [0.5, 0, 0] // 28.6478…°
+    o.scale = [1.333333, 1, 1]
+    return o
+  }
+
+  it('refuses a commit carrying exactly what the row reads, at gizmo precision', () => {
+    const doc = defaultDoc()
+    const o = gizmoPlaced()
+    const ctx = { baseSize: [1.37, 1, 1] as const }
+    for (const [prop, axis] of ([['position', 0], ['rotation', 0], ['scale', 0]] as const)) {
+      const shown = Number(readSceneControl(doc, o, `object.${prop}.${axis}`, ctx))
+      expect(isNoOpTransformCommit(doc, o, prop, axis, shown, ctx), `${prop} no-op`).toBe(true)
+    }
+  })
+
+  it('lets a real edit through — one step away is an edit', () => {
+    const doc = defaultDoc()
+    const o = gizmoPlaced()
+    const ctx = { baseSize: [1.37, 1, 1] as const }
+    expect(isNoOpTransformCommit(doc, o, 'position', 0, 2.5, ctx)).toBe(false)
+    expect(isNoOpTransformCommit(doc, o, 'rotation', 0, 30, ctx)).toBe(false)
+    // 1.333333 × 1.37 rounds to 1.83, which IS the reading — so the edit is 1.85.
+    expect(isNoOpTransformCommit(doc, o, 'scale', 0, 1.83, ctx), 'the reading itself').toBe(true)
+    expect(isNoOpTransformCommit(doc, o, 'scale', 0, 1.85, ctx)).toBe(false)
+    // …and the raw stored value is NOT what the row shows, so committing it IS an edit.
+    expect(isNoOpTransformCommit(doc, o, 'position', 0, 2.38472, ctx)).toBe(false)
+  })
+
+  it('guards every axis, not just X', () => {
+    const doc = defaultDoc()
+    const o = prim('standard')
+    o.position = [0.04991, -1.26, 9.999]
+    for (const axis of [0, 1, 2] as const) {
+      const shown = Number(readSceneControl(doc, o, `object.position.${axis}`))
+      expect(isNoOpTransformCommit(doc, o, 'position', axis, shown), `axis ${axis}`).toBe(true)
+      expect(isNoOpTransformCommit(doc, o, 'position', axis, shown + 0.1), `axis ${axis} edit`).toBe(false)
+    }
+  })
+
+  it('says nothing without a selection — the surface returns before it is asked', () => {
+    // `writeTransform` bails on `!selected.value` first, so this only pins that the seam
+    // is total rather than throwing if the order ever changes.
+    expect(() => isNoOpTransformCommit(defaultDoc(), null, 'position', 0, 0)).not.toThrow()
+  })
+})
+
 describe('Scene3D panel parity — reading values', () => {
   it('rotation reads in degrees though the document stores radians', () => {
     const doc = defaultDoc()
@@ -1551,15 +1613,8 @@ describe('Scene3D surface wiring', () => {
     expect(keys.filter((k) => /^object\.(position|rotation|scale)\./.test(k))).toEqual([...TRANSFORM_ROWS])
   })
 
-  /**
-   * Rounding the READ makes the row self-consistent, but it cannot make the WRITE a no-op
-   * on its own: `axisDeltaWrites` takes its delta from the object's raw stored value, so a
-   * row reading 2.4 over a stored 2.38472 still moved the primary and still fanned the
-   * 0.01528 across the selection. The guard compares the incoming value against the row's
-   * OWN reading, so an unchanged number changes nothing and the stored precision survives.
-   */
-  it('refuses a commit that carries exactly what the row already shows', () => {
-    expect(src).toContain("if (v === readSceneControl(doc, selected.value, `object.${prop}.${axis}`")
+  it('routes the Transform write through the no-op guard', () => {
+    expect(src).toContain('isNoOpTransformCommit(doc, selected.value, prop, axis, v')
   })
 
   it('writes the transform keys back through setControl, in the units the rows show', () => {

@@ -161,12 +161,22 @@ async function readSize(page: Page): Promise<[number, number, number]> {
   return [await n('Size X'), await n('Size Y'), await n('Size Z')]
 }
 
-/** Read the Transform panel's Position X for whichever object is currently
- *  selected. Used to pin ARRANGEMENT, not just child count — see the comment
- *  on the first test below for why count alone doesn't catch the pile-at-
- *  the-origin bug this file's underlying fix addresses. */
-async function readPositionX(page: Page): Promise<number> {
-  return Number(await dlg(page).getByLabel('Position X').getAttribute('aria-valuenow'))
+/**
+ * Every object's stored position, at full precision, from Scene3DStudioSurface.vue's
+ * `__scene3dDoc` test hook.
+ *
+ * The Position row reads at the precision it DISPLAYS (one decimal), and the arrangement
+ * assertion below has a threshold of 0.01 — half an order of magnitude BELOW what a
+ * rounded row can even express, so two children legitimately 0.04 apart would both read
+ * 0.0 and the check would fail on a correct import. Measure the document, which is what
+ * the claim is actually about. (Same reasoning as tests/scene3d-grouping.spec.ts's
+ * header.)
+ */
+async function docPositions(page: Page): Promise<Record<string, [number, number, number]>> {
+  await expect.poll(async () => page.evaluate(
+    () => typeof (window as any).__scene3dDoc === 'function'), { timeout: 10_000 }).toBe(true)
+  return page.evaluate(() => Object.fromEntries(
+    (window as any).__scene3dDoc().objects.map((o: any) => [o.name, o.position])))
 }
 
 /** One stroke width of a Lucide glyph in scene units after import, to an order
@@ -303,11 +313,9 @@ test.describe('3D Studio — SVG import (E2E)', () => {
     const names = await childRows(page).evaluateAll(
       (els) => els.map((e) => e.getAttribute('data-object-name') ?? ''))
     expect(names).toHaveLength(2)
-    const xs: number[] = []
-    for (const name of names) {
-      await selectOnly(page, name)
-      xs.push(await readPositionX(page))
-    }
+    const positions = await docPositions(page)
+    const xs = names.map((n) => positions[n]?.[0] ?? NaN)
+    expect(xs.every(Number.isFinite), `both children must be in the document (have: ${Object.keys(positions).join(', ')})`).toBe(true)
     expect(Math.abs(xs[0]! - xs[1]!), 'the two children must sit at different Position X, not both at the origin').toBeGreaterThan(0.01)
   })
 
