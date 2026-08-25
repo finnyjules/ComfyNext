@@ -9,11 +9,21 @@
  * route them to GradientStudio. This gate makes the fast-path DEFER: if a studio
  * decisively owns the words, the planner decides.
  *
- * It reuses the SAME recall machinery the routing corpus pins
- * (tests/unit/agent-capability-routing.unit.spec.ts): searchNodes/scoreNode over
- * AGENT_CAPABILITIES with capabilityKeywords() + capabilityBoosts(). No parallel
- * keyword list to drift, no model call, no async — the fast-path exists to skip
- * a ~1s round trip, so its guard has to be pure arithmetic over ~70 entries.
+ * It reuses the same SCORER and the same capability VOCABULARY that the routing
+ * corpus pins (tests/unit/agent-capability-routing.unit.spec.ts):
+ * searchNodes/scoreNode over AGENT_CAPABILITIES with capabilityKeywords() +
+ * capabilityBoosts(). It is NOT the full production routing path — that adds
+ * catalog assembly on top (raw /object_info nodes in the pool, type-hop buckets,
+ * widget defs, pinned flagships, then the model's pick). So this is a
+ * same-vocabulary approximation of "would a studio surface for these words",
+ * not a prediction of what the planner will choose.
+ *
+ * Which is fine, because the bias only has to run one way: a false YES here
+ * costs a ~1s wait for the planner (which then routes properly, and the
+ * "…or sketch it?" chip is the crossover), while a false NO costs a wrong
+ * render. Being roughly right and cheap beats being exact and slow — no model
+ * call, no async, no parallel keyword list to drift; pure arithmetic over ~70
+ * entries, since the fast-path exists precisely to skip a round trip.
  */
 import { AGENT_CAPABILITIES, capabilityBoosts, capabilityKeywords, type CapabilityKind } from '~/lib/agent/capabilities'
 import { scoreNode, searchNodes, tokenize } from '~/lib/nodeMatch'

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { looksLikeImageIdea } from '~/lib/sketch/sketchIntent'
+import { looksLikeImageIdea, referencesExistingContent } from '~/lib/sketch/sketchIntent'
 import { STUDIO_OWNERSHIP_THRESHOLD, studioMatch, studioOwnsPhrase } from '~/lib/agent/studioOwnership'
 
 /**
@@ -94,6 +94,68 @@ describe('looksLikeImageIdea defers to studio ownership', () => {
   })
   it('still fast-paths genuine image ideas on an empty canvas', () => {
     for (const p of IMAGE_IDEAS) expect(looksLikeImageIdea(p, true), p).toBe(true)
+  })
+})
+
+/**
+ * Second deferral: a treatment aimed at CONTENT THE USER ALREADY HAS ("my
+ * logo", "the product shot", "our headline"). On an empty canvas there is
+ * nothing to treat, so sketching it draws a picture of the wrong thing; the
+ * planner has the propose-don't-block rule for exactly this. Structural signal:
+ * a possessive/definite determiner attached to a CONTENT noun (an artifact of
+ * the user's project), not to a scene noun. Bias is deliberately toward
+ * deferring — a false defer costs a ~1s planner wait, a false sketch costs a
+ * wrong render.
+ */
+const REFERENTIAL = [
+  'an underwater caustics effect on my logo',
+  'confetti burst around the product shot',
+  'a chrome sheen across our headline',
+  'grain over the poster',
+  'a soft glow behind my illustration',
+  'this design but warmer in tone',
+]
+// Possessives/definites that point at SCENE nouns, not project artifacts — the
+// determiner alone must never trigger the deferral.
+const NOT_REFERENTIAL = [
+  'a photo of my dog', // decided: SKETCH (see report) — image-noun head, "my dog" is the subject to draw
+  'a cat wearing a hat',
+  'a cabin in the woods',
+  'a boat on the water',
+  'the dog',
+  'an astronaut riding a horse on mars',
+  'a snowy street at night with warm windows',
+  'a bowl of ramen on a wooden table',
+  'portrait of an old fisherman',
+]
+
+describe('referencesExistingContent', () => {
+  it('spots a treatment aimed at content the user already has', () => {
+    for (const p of REFERENTIAL) expect(referencesExistingContent(p), p).toBe(true)
+  })
+  it('does not fire on scene nouns that merely carry a determiner', () => {
+    for (const p of NOT_REFERENTIAL) expect(referencesExistingContent(p), p).toBe(false)
+  })
+  it('is empty-safe', () => {
+    expect(referencesExistingContent('')).toBe(false)
+  })
+  it('needs the determiner — a bare content noun is a subject, not a reference', () => {
+    // "a logo" / "a poster" is something to MAKE; "my logo" is something you HAVE.
+    expect(referencesExistingContent('a logo for a coffee roaster')).toBe(false)
+    expect(referencesExistingContent('a poster of a mountain')).toBe(false)
+  })
+})
+
+describe('looksLikeImageIdea defers on referenced content', () => {
+  it('does NOT fast-path a treatment of existing content, empty canvas or not', () => {
+    for (const p of REFERENTIAL) {
+      expect(looksLikeImageIdea(p, true), `${p} (empty graph)`).toBe(false)
+      expect(looksLikeImageIdea(p, false), `${p} (populated graph)`).toBe(false)
+    }
+  })
+  it('still fast-paths a possessive that names the SUBJECT of the picture', () => {
+    expect(looksLikeImageIdea('a photo of my dog', true)).toBe(true)
+    expect(looksLikeImageIdea('a cabin in the woods', true)).toBe(true)
   })
 })
 

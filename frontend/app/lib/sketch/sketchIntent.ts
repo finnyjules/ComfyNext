@@ -21,6 +21,40 @@ const QUESTION_WORDS = new Set([
   'what', 'why', 'how', 'where', 'which', 'who', 'can', 'does', 'is', 'are', 'do', 'should',
 ])
 
+/**
+ * Does this phrase aim at CONTENT THE USER ALREADY HAS — "my logo", "the
+ * product shot", "our headline"? On an empty canvas there is nothing to treat,
+ * so drafting it renders a picture of the wrong thing; the planner has the
+ * propose-don't-block rule for exactly these ("add the logo first, then…").
+ *
+ * The signal is structural: a POSSESSIVE or DEFINITE determiner attached to a
+ * CONTENT noun — an artifact of the user's project — with up to two modifier
+ * words between ("the product shot"). The determiner alone is never enough:
+ * "a cabin in the woods" and "a photo of my dog" point at scene nouns, so they
+ * stay on the fast path. Neither is a bare content noun enough — "a logo for a
+ * coffee roaster" is something to MAKE, "my logo" is something you HAVE.
+ *
+ * Bias is deliberately toward deferring: a false defer costs a ~1s planner
+ * wait, a false sketch costs a wrong render (and ~$0.01).
+ */
+const DETERMINERS = 'my|our|your|their|his|her|its|the|this|that|these|those'
+// Nouns that name a thing the user MADE or OWNS, rather than a thing in a scene.
+const CONTENT_NOUNS = [
+  'logo', 'logos', 'logotype', 'wordmark', 'brandmark', 'brand', 'icon', 'icons',
+  'headline', 'headlines', 'subhead', 'title', 'subtitle', 'caption', 'copy', 'text', 'type',
+  'poster', 'flyer', 'banner', 'ad', 'cover', 'thumbnail', 'slide', 'deck', 'board', 'screen',
+  'design', 'designs', 'layout', 'composition', 'comp', 'mockup', 'mock', 'artwork', 'graphic', 'graphics',
+  'illustration', 'illustrations', 'drawing', 'painting', 'sketch',
+  'photo', 'photos', 'photograph', 'picture', 'pictures', 'image', 'images', 'screenshot',
+  'shot', 'shots', 'render', 'renders', 'frame', 'footage', 'video', 'videos', 'clip',
+  'product', 'background', 'foreground', 'subject',
+].join('|')
+const REFERENCE_RE = new RegExp(`\\b(?:${DETERMINERS})\\s+(?:[a-z][a-z'-]*\\s+){0,2}(?:${CONTENT_NOUNS})\\b`, 'i')
+
+export function referencesExistingContent(text: string): boolean {
+  return REFERENCE_RE.test(text.trim())
+}
+
 export function looksLikeImageIdea(text: string, graphIsEmpty: boolean): boolean {
   const t = text.trim().toLowerCase()
   if (!t) return false
@@ -31,6 +65,9 @@ export function looksLikeImageIdea(text: string, graphIsEmpty: boolean): boolean
   if (QUESTION_WORDS.has(first)) return false
   // A studio owns these words — never race the planner for them.
   if (studioOwnsPhrase(t)) return false
+  // A treatment of content the user already has — the planner proposes the
+  // missing step; a sketch would just draw the wrong thing.
+  if (referencesExistingContent(t)) return false
   if (graphIsEmpty) return true
   // Non-empty graph: only fire on a short, descriptive phrase.
   return words.length <= 12
