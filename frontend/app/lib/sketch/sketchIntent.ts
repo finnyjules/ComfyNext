@@ -3,7 +3,15 @@
  * render immediately (before the LLM classifier resolves), vs. a graph edit or
  * a question we must let the classifier decide? Conservative on purpose — a
  * miss just costs a ~1s wait; a false positive spends ~$0.01. (spec §6 lever 2)
+ *
+ * It also DEFERS to studio ownership: on an empty canvas this gate otherwise
+ * says yes to virtually anything, so a studio request ("a warm dreamy gradient
+ * background for a hero banner") got drafted as a photo before the planner could
+ * route it to GradientStudio. studioOwnsPhrase is the same local capability
+ * scoring the routing corpus pins — no model call, no async.
  */
+import { studioOwnsPhrase } from '~/lib/agent/studioOwnership'
+
 const EDIT_VERBS = new Set([
   'add', 'remove', 'delete', 'change', 'make', 'set', 'connect', 'blur', 'move',
   'turn', 'undo', 'fix', 'wire', 'rename', 'swap', 'replace', 'increase', 'decrease',
@@ -21,6 +29,8 @@ export function looksLikeImageIdea(text: string, graphIsEmpty: boolean): boolean
   const first = words[0]!
   if (EDIT_VERBS.has(first)) return false
   if (QUESTION_WORDS.has(first)) return false
+  // A studio owns these words — never race the planner for them.
+  if (studioOwnsPhrase(t)) return false
   if (graphIsEmpty) return true
   // Non-empty graph: only fire on a short, descriptive phrase.
   return words.length <= 12
