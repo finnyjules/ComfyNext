@@ -381,6 +381,26 @@ export const NOT_PLACEABLE_KINDS: PrimitiveKind[] = ['svgPath', 'mesh']
 export const PLACEABLE_PRIMITIVE_KINDS: PrimitiveKind[] =
   PRIMITIVE_KINDS.filter(k => !NOT_PLACEABLE_KINDS.includes(k))
 
+/** Placeable, but withheld from the AGENT's `primitive` macro. Two different
+ *  questions: can the STUDIO place a blank one (placeable), and can the AGENT
+ *  produce a FINISHED one from a patch (macro)?
+ *
+ *  `text` answers yes to the first and no to the second. `object.content.text`
+ *  is deliberately not a control, so a text solid added from a patch would read
+ *  the placeholder "Text" forever with no way for the agent to fix it — a
+ *  half-built object presented as a finished one. It stays in the studio's own
+ *  add menu, where the user can type into it. */
+export const MACRO_EXCLUDED_KINDS: PrimitiveKind[] = ['text']
+
+/** The `primitive` macro's option list. */
+export const MACRO_PRIMITIVE_KINDS: PrimitiveKind[] =
+  PLACEABLE_PRIMITIVE_KINDS.filter(k => !MACRO_EXCLUDED_KINDS.includes(k))
+
+/** Display-only value meaning "the scene has no primitive yet". Never a
+ *  submittable option — `validatePatch` keeps a select value only when the
+ *  control's `options` contains it, and this is deliberately absent from them. */
+export const MACRO_NONE = '(none)'
+
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
 export const ENVIRONMENT_KINDS: EnvironmentKind[] = ['room', 'darkStrips', 'softbox', 'colorGels']
 
@@ -618,14 +638,21 @@ export function createPrimitive(kind: PrimitiveKind, existing: SceneObject[] = [
  * destruction. So an existing primitive of that kind is TARGETED instead, and
  * the patch's overrides land on the object the user has already tuned.
  *
- * Returns null for a kind with no blank form (NOT_PLACEABLE_KINDS) — those only
- * ever exist carrying imported data the agent has no way to supply.
+ * WHICH existing one, when several share the kind: the FIRST in `doc.objects`.
+ * Two gems is an ordinary scene, so the rule is stated rather than left to array
+ * luck — doc order is the stack order the user sees, so "the first one" is the
+ * one they would point at. Pinned by a test.
+ *
+ * Returns null for a kind the macro does not offer (NOT_PLACEABLE_KINDS, which
+ * only ever exist carrying imported data, and MACRO_EXCLUDED_KINDS, which the
+ * agent cannot finish) — the same set the control's `options` exposes, so this
+ * guard and the vocabulary can never disagree.
  */
 export function addOrTargetPrimitive(
   doc: SceneDoc,
   kind: PrimitiveKind,
 ): { doc: SceneDoc; targetId: string; created: boolean } | null {
-  if (!PLACEABLE_PRIMITIVE_KINDS.includes(kind)) return null
+  if (!MACRO_PRIMITIVE_KINDS.includes(kind)) return null
   const existing = doc.objects.find(
     (o): o is PrimitiveObject => o.kind === 'primitive' && o.primitive === kind,
   )

@@ -645,4 +645,18 @@ describe('gem lane: 3D + material words → 3D Studio, flat + logo words → Sha
     expect(shapeCap.intents.filter(i => /\b3d\b/i.test(i)), 'ShapeStudio 3d intents').toEqual([])
     expect(/\b3d\b|orbit/i.test(shapeCap.summary), 'ShapeStudio summary claims 3D').toBe(false)
   })
+
+  // The identity rewrite has to reach the CHROME too, or the toolbar keeps
+  // advertising the retired tool. Shape Studio wore the Gem icon — the last
+  // visible remnant of the shapefx faceted-gem era, sitting in the Studios door
+  // right next to the 3D Studio that now actually owns gems.
+  it('Shape Studio no longer wears the Gem icon in the Studios door', async () => {
+    const [{ STUDIO_OPTIONS }, lucide] = await Promise.all([
+      import('~/data/studio-options'),
+      import('lucide-vue-next'),
+    ])
+    const shape = STUDIO_OPTIONS.find(o => o.nodeType === 'ShapeStudio')!
+    expect(shape, 'Shape Studio must still be in the Studios door').toBeTruthy()
+    expect(shape.icon).not.toBe((lucide as any).Gem)
+  })
 })

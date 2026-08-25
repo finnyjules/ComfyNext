@@ -3,7 +3,7 @@
 // the start modal's "Craft it by hand" row — they must never drift.
 // pastel = the studio bills AI credits when run.
 import type { Component } from 'vue'
-import { Blend, Aperture, Grid3x3, Gem, Box, CaseSensitive, Clapperboard, AudioWaveform, Type, Images } from 'lucide-vue-next'
+import { Blend, Aperture, Grid3x3, Shapes, Box, CaseSensitive, Clapperboard, AudioWaveform, Type, Images } from 'lucide-vue-next'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
 
 export interface StudioOption {
@@ -19,7 +19,10 @@ export const STUDIO_OPTIONS: StudioOption[] = [
   { label: 'Gradient', icon: Blend, nodeType: 'GradientStudio' },
   { label: 'Shader', icon: Aperture, nodeType: 'ShaderStudio' },
   { label: 'Pattern', icon: Grid3x3, nodeType: 'TextureStudio' },
-  { label: 'Shape', icon: Gem, nodeType: 'ShapeStudio' },
+  // NOT Gem — that was the retired shapefx faceted-gem tool. Shape Studio is
+  // the flat vector clone-and-arrange logo generator, and the 3D gem now lives
+  // in 3D Studio (see capabilities.ts's lane split).
+  { label: 'Shape', icon: Shapes, nodeType: 'ShapeStudio' },
   { label: 'Vector Type', icon: Type, nodeType: 'VectorType' },
   { label: 'Moodboard', icon: Images, nodeType: 'Moodboard' },
   { label: '3D', icon: Box, nodeType: 'Scene3DStudio' },

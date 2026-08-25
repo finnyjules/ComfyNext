@@ -2,7 +2,7 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
 import { derivedShaderFillControls, shaderFillControls } from '~/lib/shaderfill/controls'
 import { SCENE_CONTROLS, visibleSceneControls, type SceneControl } from './controls'
-import { PLACEABLE_PRIMITIVE_KINDS, type SceneDoc, type SceneObject, type PrimitiveObject } from './config'
+import { MACRO_PRIMITIVE_KINDS, MACRO_NONE, type SceneDoc, type SceneObject, type PrimitiveObject } from './config'
 
 /** Strip the schema-only fields (`when`/`agent`/`animatable`/`summary`/`bindable`/
  *  `entry`/`optionLabels`) a `SceneControl` may carry, and drop anything explicitly
@@ -179,10 +179,16 @@ export function scenePrimitiveMacro(doc: SceneDoc): ControlSpec {
     key: SCENE_PRIMITIVE_MACRO_KEY,
     label: 'Primitive',
     kind: 'select',
-    options: [...PLACEABLE_PRIMITIVE_KINDS],
-    default: current?.primitive ?? PLACEABLE_PRIMITIVE_KINDS[0]!,
+    options: [...MACRO_PRIMITIVE_KINDS],
+    // An EMPTY scene must read as empty. Falling back to the first option told
+    // the model a box was already there — and paired with the "already in the
+    // scene is TARGETED" hint below, that is an invitation to skip the macro,
+    // which lands straight back on the reported bug. MACRO_NONE is display-only:
+    // it is absent from `options`, and validatePatch keeps a select value only
+    // when options contains it, so it can never be submitted back.
+    default: current?.primitive ?? MACRO_NONE,
     group: 'Object',
-    hint: 'Put a shape in the scene. Set this FIRST when the scene has no object yet, or when the ask names a shape that is not there; then address it with the object.* keys in the same patch. A kind that is already in the scene is TARGETED, not duplicated.',
+    hint: `Put a shape in the scene. Set this FIRST when the scene has no object yet (the current value reads "${MACRO_NONE}"), or when the ask names a shape that is not there; then address it with the object.* keys in the same patch. A kind already in the scene is TARGETED, not duplicated. This only ADDS — it never converts an existing object to another kind.`,
   }
 }
 
@@ -230,7 +236,8 @@ Doc-level groups — Lighting, Camera, Post — apply to the whole scene and nee
 
 MATERIAL: \`object.material.type\` picks the shading model (standard/phong/toon/matcap/glass/fresnel/gradient/opalescent/image/shaderFill); most of the other material sliders only apply to SOME types and are withheld from the control list otherwise (roughness/metalness need a PBR type, clearcoat/sheen/transmission need standard or glass, shininess/specular are phong-only, opalHueShift/opalFrequency/opalAngleMix/opalFlowSpeed/opalStrength are opalescent-only) — never set a control that isn't offered for the object's current type. \`object.material.color\` is the base colour on standard/glass/phong/toon/fresnel and the lit substrate tint under an opalescent material; the other types derive colour a different way (matcap id, gradient ramp, image, shader) and ignore it. OPALESCENT is the thin-film / holographic look — a rainbow that flows across the surface with viewing angle: its spectrum comes from the same gradient-stop ramp, then opalHueShift rotates it, opalFrequency sets how many bands wrap the form, opalAngleMix blends shape-driven ↔ view-driven flow, opalFlowSpeed animates it over time (0 = still), and opalStrength fades the rainbow over the base colour. Opalescent also takes the glossy-coat knobs — clearcoat / clearcoatRoughness / envMapIntensity (shared with standard/glass) — plus metalness: clearcoat 0 is a matte soap-bubble, and raising clearcoat + reflection + metalness with low roughness turns it into a wet chrome-holo.
 
-ADDING A SHAPE — the \`primitive\` MACRO: \`primitive\` is a VERB, not a stored value. Set it to put a shape in the scene (gem, box, sphere, torus, text…), then address that shape with the RELATIVE \`object.*\` keys in the SAME patch — you cannot know its \`objects.<id>.\` name, because it does not exist until the macro runs. Set it FIRST whenever the scene is empty, or when the ask names a shape that is not in it. A kind already present is TARGETED, never duplicated, so re-sending it is safe and preserves that object's tuning. It only ADDS — it never converts an existing object into another kind (no control changes an object's kind), so "turn the box into a gem" adds a gem and leaves the box; say so rather than implying the box changed.
+ADDING A SHAPE — the \`primitive\` MACRO: \`primitive\` is a VERB, not a stored value. Set it to put a shape in the scene (gem, box, sphere, torus…), then address that shape with the RELATIVE \`object.*\` keys in the SAME patch — you cannot know its \`objects.<id>.\` name, because it does not exist until the macro runs. Set it FIRST whenever the scene is empty, or when the ask names a shape that is not in it. A kind already present is TARGETED, never duplicated, so re-sending it is safe and preserves that object's tuning. It only ADDS — it never converts an existing object into another kind (no control changes an object's kind), so "turn the box into a gem" adds a gem and leaves the box; say so rather than implying the box changed. When several objects share a kind, the FIRST in the scene is the one addressed.
+NO 3D TEXT FROM HERE: \`text\` is not offered, because the words themselves are not a control — a text solid added this way would read "Text" forever. For 3D lettering, say the 3D Studio needs to be opened to type the word; do not substitute a shape for it.
 
 GEM / IRIDESCENT RECIPE: "iridescent", "opalescent", "opal", "holographic", "rainbow sheen" and "oil-slick" all mean ONE thing — \`object.material.type\` = 'opalescent'. Never answer those words with a gradient material or a plain colour change. A gem/diamond ask is \`primitive\` = 'gem' plus that material, low \`roughness\`, high \`clearcoat\`, and \`lighting.environment\` = 'darkStrips', whose bright bars are what make facets read. The gem's CUT is geometry, not material: \`object.params.points\` (more points = more, smaller facets), \`spread\` (wider stone) and \`depth\` (flat cut-gem slab ↔ chunky stone) — a "sharper cut" / "more brilliant" ask is those.
 WORKED EXAMPLE — "a 3d iridescent diamond" on an empty scene: {"primitive":"gem", "object.material.type":"opalescent", "object.material.opalStrength":0.9, "object.material.clearcoat":1, "object.material.roughness":0.05, "object.params.points":24, "lighting.environment":"darkStrips"}.

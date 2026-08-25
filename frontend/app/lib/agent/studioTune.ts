@@ -54,7 +54,7 @@ import { fetchShaderFxCatalog, getEffect, getEffectSync } from '~/lib/shaderfx/c
 import {
   parseDoc as parseSceneDoc, serializeDoc as serializeSceneDoc,
   addOrTargetPrimitive, setSceneMacroTarget, sceneMacroTargetIndex,
-  MATERIAL_TYPES,
+  MATERIAL_TYPES, MACRO_NONE,
   type SceneDoc, type PrimitiveObject, type PrimitiveKind, type MaterialType,
 } from '~/lib/scene3d/config'
 import {
@@ -359,8 +359,12 @@ interface PatchAdapter {
    *  the scalar overrides, and the key is never written through to the config —
    *  it is a verb, not a leaf. */
   applyPreset?: (name: string, config: any) => any
-  /** Display value of the macro BEFORE it was applied (the tune row's "before"). */
-  macroBefore?: (config: any) => string
+  /** Display value of the macro BEFORE it was applied (the tune row's "before").
+   *  Receives the macro VALUE too, because "before" is not always a single
+   *  current selection: Scene3D's `primitive` ADDS rather than switches, so the
+   *  honest before is "is the kind being asked for already present?" — anything
+   *  else makes an ADD read as a CONVERSION. */
+  macroBefore?: (config: any, macroValue: string) => string
   /** Re-derive the control list after the macro swapped the config. Declaring
    *  this changes the ordering contract for THIS adapter — see runParamPatch.
    *
@@ -417,7 +421,7 @@ async function runParamPatch(node: any, request: string, apiKey: string, a: Patc
     // Read the "before" FIRST: an adapter is free to swap IN PLACE (Shader's does,
     // through the studio's own switch seam), so asking afterwards would report the
     // new value as the old one and pushTuneRow would filter the row as a no-op.
-    const before = a.macroBefore ? a.macroBefore(config) : String(config?.canvas?.layout ?? '')
+    const before = a.macroBefore ? a.macroBefore(config, macroValue) : String(config?.canvas?.layout ?? '')
     const swapped = a.applyPreset(macroValue, config)
     if (swapped) {
       pushTuneRow(rows, { label: byPath.get(macroKey)?.label ?? 'Style preset', before, after: macroValue, rationale })
@@ -702,8 +706,14 @@ const scene3dAdapter: PatchAdapter = {
   label: '3D Studio',
   guidance: SCENE_GUIDANCE,
   macroKey: SCENE_PRIMITIVE_MACRO_KEY,
-  macroBefore: (config: SceneDoc) =>
-    config.objects.find((o): o is PrimitiveObject => o.kind === 'primitive')?.primitive ?? '(empty scene)',
+  // Presence of THE ASKED-FOR kind, not "the first primitive". Sourcing it from
+  // the first primitive of any kind made an ADD to a scene holding a box read
+  // "Primitive: box -> gem" — a conversion, the one thing this macro never does —
+  // and made a REDUNDANT macro read "gem -> gem" with ok:true while nothing
+  // changed. Now an add reads "(none) -> gem", and a redundant one is before ===
+  // after, which pushTuneRow filters as the no-op it is.
+  macroBefore: (config: SceneDoc, kind: string) =>
+    config.objects.some(o => o.kind === 'primitive' && o.primitive === kind) ? kind : MACRO_NONE,
   // Runs through the studio's own add seam, so the object is field-for-field
   // what the add menu would have placed. Records the target so the relative
   // `object.*` keys in the SAME patch resolve to it.
@@ -742,9 +752,17 @@ const scene3dAdapter: PatchAdapter = {
         restore = () => { target.material.type = prev }
       }
     }
-    const out = [...sceneAgentControls(config, target), ...sceneBindableControls(config)]
-    restore?.()
-    return out
+    try {
+      // `sceneAgentControls` already spreads `sceneStackControls` and the
+      // doc-level keys, so it is the WHOLE vocabulary plus the relative
+      // `object.*` namespace — adding sceneBindableControls here only duplicated
+      // every absolute key.
+      return sceneAgentControls(config, target)
+    } finally {
+      // Restore even if describing throws, or the temporary material type would
+      // be written to the node as if the user had asked for it.
+      restore?.()
+    }
   },
 }
 
