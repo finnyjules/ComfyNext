@@ -67,9 +67,19 @@ describe('shaderAgentControls', () => {
     expect(ctrls.some(c => c.key === 'effects.0.params.u_intensity')).toBe(true)
     expect(ctrls.some(c => c.key === 'effects.0.params.u_shape')).toBe(false)
   })
-  it('offers a stage’s controls only when that stage is enabled', () => {
+  // CHANGED 2026-08-25 (deliberate grant, was "only when that stage is enabled"):
+  // a stage's params are now offered whether or not the stage is on, alongside its
+  // `<stage>.enabled` switch, so one patch can enable AND tune. New keys granted:
+  // duotone.enabled, gradientMap.enabled, adjust.enabled, post.blur.enabled,
+  // post.blur.focusX/focusY, post.chromatic.enabled, post.bloom.enabled,
+  // effects.N.mask.enabled, effects.N.mask.shape, plus the `effect` macro (opt-in
+  // via opts.catalog). See ~/lib/shaderstudio/agentControls.ts's header.
+  it('offers a stage’s params whether or not the stage is enabled, plus its switch', () => {
     const cfg = shaderDefault()
-    expect(shaderAgentControls(cfg, null).some(c => c.key === 'adjust.saturation')).toBe(false)
+    expect(cfg.adjust.enabled).toBe(false)
+    const off = shaderAgentControls(cfg, null)
+    expect(off.some(c => c.key === 'adjust.saturation')).toBe(true)
+    expect(off.find(c => c.key === 'adjust.enabled')?.kind).toBe('switch')
     cfg.adjust.enabled = true
     expect(shaderAgentControls(cfg, null).some(c => c.key === 'adjust.saturation')).toBe(true)
   })

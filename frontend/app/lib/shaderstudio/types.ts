@@ -3,7 +3,8 @@
 // stacks shader passes over an input image. Persisted at
 // node.data.properties.sailor_shaderStudio.
 
-import type { ParamValue } from '~/lib/shaderfx/types'
+import type { EffectDef, ParamValue } from '~/lib/shaderfx/types'
+import { resolveValues } from '~/lib/shaderfx/params'
 import type { BlendKind } from '~/lib/studio/blend'
 
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
@@ -32,6 +33,45 @@ export interface EffectMask {
 /** A centered circle at half size — the resting state when a mask is first enabled. */
 export function defaultMask(): EffectMask {
   return { enabled: false, shape: 'radius', cx: 0.5, cy: 0.5, size: 0.4, aspect: 1, angle: 0, feather: 0.3, invert: false }
+}
+
+/**
+ * Give every effect layer a mask object at its resting state (`enabled:false`),
+ * leaving any existing one untouched. The lib-side twin of the surface's own
+ * lazy `ensureMask()` — it exists for the AGENT paths, which write config leaves
+ * through a dotted-path proxy that CREATES missing intermediates: without a real
+ * `mask` to land on, a patch of `effects.0.mask.enabled` would grow a half-built
+ * `{enabled:true}` with no shape/cx/cy/size, i.e. a mask the renderer reads as
+ * garbage. Callers that intend to OFFER the mask vocabulary must call this first
+ * (see `shaderAgentControls`, which offers mask keys only where a mask exists).
+ * Resting masks are inert at render — passes.ts gates purely on `mask?.enabled`.
+ */
+export function ensureEffectMasks(cfg: ShaderStudioConfig): ShaderStudioConfig {
+  for (const e of cfg.effects ?? []) if (!e.mask) e.mask = defaultMask()
+  return cfg
+}
+
+/**
+ * Swap the effect in slot `index`, seeding the new effect's DEFAULT params.
+ *
+ * The shared form of ShaderStudioSurface's `pickEffect`: same preservation
+ * contract (layerId / blend / opacity / enabled / mask survive, because motion
+ * tracks address a layer by array index and the stack row is the same row), and
+ * the same reset of `id` / `params` / `customChars`.
+ *
+ * The one difference is deliberate: `pickEffect` leaves `params` EMPTY and lets
+ * `resolveValues(def, {})` fill the defaults at render/inspect time, which is
+ * invisible to anything reading the config. The agent needs them written down —
+ * a tune patch that switches effect and then overrides two uniforms has to land
+ * those overrides on a complete bag, and the proposal rows have to show a real
+ * "before". So the seeding runs through that SAME `resolveValues(def, {})`,
+ * making the stored bag byte-identical to what the surface would have rendered.
+ */
+export function switchStudioEffect(cfg: ShaderStudioConfig, index: number, def: EffectDef): ShaderStudioConfig {
+  const prev = cfg.effects[index]
+  if (!prev) return cfg
+  cfg.effects[index] = { ...prev, id: def.id, params: resolveValues(def, {}), customChars: '' }
+  return cfg
 }
 
 /** Max number of effect layers stackable in effects[]. */

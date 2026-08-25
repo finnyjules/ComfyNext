@@ -250,12 +250,30 @@ describe('isNoOpTuneChange (pure no-op equality)', () => {
 
 describe('tuneShaderNode (param-patch)', () => {
   it('handles an empty patch without touching state', async () => {
-    // Fresh config has effect.id === '' so no catalog lookup is needed.
     fetchMock.mockResolvedValueOnce({ changes: [], rationale: '' })
     const n = node('ShaderStudio')
     const res = await tuneShaderNode(n, 'noop', KEY)
     expect(res.ok).toBe(false)
     expect(n.data.properties.sailor_shaderStudio).toBeUndefined()
+  })
+
+  // This file NEVER stubs the ambient global `$fetch` that shaderfx/catalog.ts
+  // uses, so it runs the tuner exactly as a node/unit environment gets it: the
+  // catalog fetch throws SYNCHRONOUSLY (there is no `$fetch` global), and the
+  // shader vocabulary has to degrade in the open rather than emit an empty effect
+  // list. The catalog-present behaviour is in shader-tune-macro.unit.spec.ts.
+  it('degrades EXPLICITLY when the effect catalog cannot be reached', async () => {
+    fetchMock.mockResolvedValueOnce({ changes: [], rationale: '' })
+    await tuneShaderNode(node('ShaderStudio'), 'make it glitchy', KEY)
+    const body = fetchMock.mock.calls[0]![1].body
+    const paths = (body.controls as { path: string }[]).map(c => c.path)
+    // No `effect` control the model has no names for…
+    expect(paths).not.toContain('effect')
+    // …but the stage vocabulary is still fully there, and the model is TOLD why.
+    expect(paths).toContain('post.bloom.enabled')
+    expect(paths).toContain('adjust.temperature')
+    expect(String(body.guidance)).toContain('EFFECT LIST UNAVAILABLE')
+    expect(String(body.guidance)).not.toContain('EFFECTS YOU MAY PICK')
   })
 })
 

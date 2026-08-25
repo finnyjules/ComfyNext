@@ -88,10 +88,20 @@ describe('mask capability wiring', () => {
     expect(c.effects[0]!.mask!.cx).toBe(0.2)
   })
 
-  it('agent controls surface mask sliders only when the mask is enabled', () => {
+  // CHANGED 2026-08-25 (deliberate grant, was "only when the mask is enabled"):
+  // the mask is a stage like any other, so its params are offered while it is OFF
+  // — otherwise "mask the warp to a band across the middle" needs two turns. The
+  // gate that remains is on the mask OBJECT existing, because the agent's dotted-
+  // path writer creates missing intermediates and would otherwise fabricate a
+  // half-built mask (see ensureEffectMasks, which the agent read paths call).
+  it('agent controls surface mask keys once the layer HAS a mask, enabled or not', () => {
     const c = defaultConfig()
-    c.effects[0] = { ...c.effects[0]!, id: 'noise_distortion', enabled: true, mask: { ...defaultMask(), enabled: false } }
+    c.effects[0] = { ...c.effects[0]!, id: 'noise_distortion', enabled: true, mask: undefined }
     expect(shaderAgentControls(c, fakeDef, 0).some(k => k.key.includes('.mask.'))).toBe(false)
+    c.effects[0]!.mask = { ...defaultMask(), enabled: false }
+    const off = shaderAgentControls(c, fakeDef, 0).map(k => k.key)
+    expect(off).toContain('effects.0.mask.enabled')
+    expect(off).toContain('effects.0.mask.cx')
     c.effects[0]!.mask!.enabled = true
     const keys = shaderAgentControls(c, fakeDef, 0).map(k => k.key)
     expect(keys).toContain('effects.0.mask.cx')

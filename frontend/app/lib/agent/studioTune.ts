@@ -36,8 +36,9 @@ import { defaultConfig as defaultGradientConfig } from '~/lib/gradientfx/randomi
 import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agentControls'
 import { buildGradientPreset } from '~/lib/gradientfx/presets'
 import { cloneConfig as cloneGradientConfig, ensureConfigDefaults as ensureGradientConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
-import { cloneConfig as cloneShaderConfig, defaultConfig as defaultShaderConfig, hydrateConfig as hydrateShaderConfig, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
-import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
+import { cloneConfig as cloneShaderConfig, defaultConfig as defaultShaderConfig, ensureEffectMasks, hydrateConfig as hydrateShaderConfig, switchStudioEffect, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
+import { buildShaderGuidance, shaderAgentControls, SHADER_EFFECT_MACRO_KEY } from '~/lib/shaderstudio/agentControls'
+import type { EffectDef as ShaderEffectDef } from '~/lib/shaderfx/types'
 import { studioDocFromPersisted } from '~/lib/geoshape/studio'
 import { geoAgentControls as shapeAgentControls, GEO_GUIDANCE as SHAPE_GUIDANCE } from '~/lib/geoshape/agentControls'
 // Vector Type's config + control schema are fontkit-free (controls.ts imports
@@ -46,7 +47,7 @@ import { geoAgentControls as shapeAgentControls, GEO_GUIDANCE as SHAPE_GUIDANCE 
 import { mergeConfig as mergeVtConfig } from '~/lib/vectortype/config'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import type { VtAxis as VtAxisLike } from '~/lib/vectortype/font'
-import { getEffect } from '~/lib/shaderfx/catalog'
+import { fetchShaderFxCatalog, getEffect, getEffectSync } from '~/lib/shaderfx/catalog'
 // Scene3D (3D Studio): config.ts/agentControls.ts are three-free by construction (same
 // constraint controls.ts documents), so — like Gradient/Shape — these import statically
 // rather than dynamically; only VectorType's font.ts needs the dynamic-import treatment.
@@ -249,7 +250,7 @@ async function runCommandSurface<S>(node: any, request: string, apiKey: string, 
  *  requested look isn't in the vocabulary, approximate — don't refuse — but say
  *  so plainly. Generic on purpose so another command-surface studio's adapter
  *  can reuse it verbatim via its own `guidance`. */
-const APPROXIMATION_HONESTY_GUIDANCE = 'If the requested look is not achievable with the modes and controls available here, do not force an exact match: configure the closest approximation you can with the commands above, and say so in "message" — name the requested look and state plainly that this only approximates it. Never present an approximation as an exact match.'
+export const APPROXIMATION_HONESTY_GUIDANCE = 'If the requested look is not achievable with the modes and controls available here, do not force an exact match: configure the closest approximation you can with the commands above, and say so in "message" — name the requested look and state plainly that this only approximates it. Never present an approximation as an exact match.'
 
 /**
  * Texture's own guidance: the honesty clause plus look recipes for the CHIPS
@@ -329,8 +330,10 @@ export async function tuneSmartLayoutNode(node: any, request: string, apiKey: st
 // ─────────────────────────────────────────────────────────────────────────────
 interface PatchAdapter {
   /** Read (cloned) config off the node + the controls applicable to it. May be
-   *  async (Shader resolves its effect def from the catalog). */
-  read(node: any): { config: any; controls: ControlSpec[] } | Promise<{ config: any; controls: ControlSpec[] }>
+   *  async (Shader resolves its effect def + the whole catalog). `guidance` may
+   *  be returned here when it is DERIVED from what `read` just loaded (Shader's
+   *  effect index) rather than a module constant; it wins over `a.guidance`. */
+  read(node: any): { config: any; controls: ControlSpec[]; guidance?: string } | Promise<{ config: any; controls: ControlSpec[]; guidance?: string }>
   /** Flat dotted-path view of the config (writes mutate the config in place). */
   params(config: any): Params
   write(node: any, config: any): void
@@ -339,9 +342,19 @@ interface PatchAdapter {
   label: string
   /** Optional per-domain guidance block for the vibe prompt (recipes). */
   guidance?: string
-  /** Optional "preset" macro: given a preset name, return a whole new base config
-   *  (or null for an unknown name). Applied BEFORE the scalar overrides. */
-  applyPreset?: (name: string) => any
+  /** Which control key is the MACRO (see `applyPreset`). Gradient's is `preset`,
+   *  Shader's is `effect`. */
+  macroKey?: string
+  /** Optional macro: given the macro value + the current config, return the new
+   *  base config (or null for a value that resolves to nothing). Applied BEFORE
+   *  the scalar overrides, and the key is never written through to the config —
+   *  it is a verb, not a leaf. */
+  applyPreset?: (name: string, config: any) => any
+  /** Display value of the macro BEFORE it was applied (the tune row's "before"). */
+  macroBefore?: (config: any) => string
+  /** Re-derive the control list after the macro swapped the config. Declaring
+   *  this changes the ordering contract for THIS adapter — see runParamPatch. */
+  recontrol?: (config: any) => ControlSpec[] | Promise<ControlSpec[]>
 }
 
 async function runParamPatch(node: any, request: string, apiKey: string, a: PatchAdapter): Promise<TuneResult> {
@@ -356,7 +369,7 @@ async function runParamPatch(node: any, request: string, apiKey: string, a: Patc
   try {
     res = await $fetch('/api/vibe', {
       method: 'POST',
-      body: { apiKey, controls: described, phrase: request, effectLabel: a.label, guidance: a.guidance },
+      body: { apiKey, controls: described, phrase: request, effectLabel: a.label, guidance: read0.guidance ?? a.guidance },
       timeout: 60_000,
     })
   } catch (e) {
@@ -364,22 +377,45 @@ async function runParamPatch(node: any, request: string, apiKey: string, a: Patc
   }
   const raw: Record<string, ParamValue> = {}
   for (const c of res.changes ?? []) raw[c.key] = c.value
-  const patch = validatePatch(raw, described)
-  const byPath = new Map(described.map(d => [d.path, d]))
+  let patch = validatePatch(raw, described)
+  let byPath = new Map(described.map(d => [d.path, d]))
   const rationale = res.rationale ?? ''
   const rows: TuneRow[] = []
 
-  // Preset macro (canvas gradient tuner): swap the whole base config FIRST, then
-  // apply the remaining scalar overrides on top of it. The style preset bakes in
-  // the layout + its liquid knobs, so the overrides are just colours/blur/grain.
-  if (a.applyPreset && typeof patch.preset === 'string') {
-    const swapped = a.applyPreset(patch.preset)
+  // ── MACRO ORDERING CONTRACT ────────────────────────────────────────────────
+  // A macro (Gradient's `preset`, Shader's `effect`) swaps the whole base config
+  // FIRST; the scalar overrides in the same patch then land on top of the NEW
+  // config. Gradient can stop there, because a preset swap only changes which of
+  // a FIXED key set is applicable.
+  //
+  // Shader cannot: switching effect changes which `effects.N.params.*` keys even
+  // EXIST. The patch was validated against the OLD effect's vocabulary, so the
+  // new effect's uniforms would all be dropped as unknown keys and the old
+  // effect's uniforms would be written onto a bag where they mean nothing. So an
+  // adapter that declares `recontrol` gets the second half of the contract:
+  // re-describe against the swapped config and re-validate the ORIGINAL raw
+  // patch. Overrides for the NEW effect survive; overrides naming the OLD
+  // effect's uniforms are dropped, which is the honest outcome — the model was
+  // told (guidance) to send only the picked effect's uniforms.
+  const macroKey = a.macroKey ?? 'preset'
+  if (a.applyPreset && typeof patch[macroKey] === 'string') {
+    const macroValue = patch[macroKey] as string
+    // Read the "before" FIRST: an adapter is free to swap IN PLACE (Shader's does,
+    // through the studio's own switch seam), so asking afterwards would report the
+    // new value as the old one and pushTuneRow would filter the row as a no-op.
+    const before = a.macroBefore ? a.macroBefore(config) : String(config?.canvas?.layout ?? '')
+    const swapped = a.applyPreset(macroValue, config)
     if (swapped) {
-      pushTuneRow(rows, { label: byPath.get('preset')?.label ?? 'Style preset', before: String(config?.canvas?.layout ?? ''), after: patch.preset, rationale })
+      pushTuneRow(rows, { label: byPath.get(macroKey)?.label ?? 'Style preset', before, after: macroValue, rationale })
       config = swapped
       params = a.params(config) // re-bind the flat view to the new config
+      if (a.recontrol) {
+        const described2 = describeControls(await a.recontrol(config), params)
+        patch = validatePatch(raw, described2)
+        byPath = new Map(described2.map(d => [d.path, d]))
+      }
     }
-    delete patch.preset
+    delete patch[macroKey]
   }
 
   for (const [key, value] of Object.entries(patch)) {
@@ -416,21 +452,77 @@ export async function tuneGradientNode(node: any, request: string, apiKey: strin
   })
 }
 
-/** Shader Studio: config under sailor_shaderStudio; controls also surface the
- *  active effect's float uniforms, so we resolve the effect def from the catalog. */
+/**
+ * The whole effect catalog, or null when it cannot be reached.
+ *
+ * `fetchShaderFxCatalog` calls Nuxt's ambient `$fetch`, which does not exist in a
+ * node/unit environment — so this THROWS SYNCHRONOUSLY there rather than
+ * rejecting, and a bare `.catch()` on the returned promise would not catch it.
+ * Hence the try/await. Returning null (never `[]`) is the signal the rest of the
+ * shader vocabulary keys off: no macro control, and guidance that says the effect
+ * cannot be changed this turn instead of an empty effect index.
+ */
+async function shaderCatalogEffects(): Promise<ShaderEffectDef[] | null> {
+  try { return (await fetchShaderFxCatalog()).effects } catch { return null }
+}
+
+/**
+ * Shader Studio: config under sailor_shaderStudio. Beyond the active effect's own
+ * uniforms, the canvas tuner is handed the WHOLE catalog — so it can offer the
+ * `effect` macro (switch to any of the catalog's effects, seeding that effect's
+ * defaults through the studio's own `switchStudioEffect` seam) and a guidance
+ * index derived from that same list.
+ */
+const shaderAdapter: PatchAdapter = {
+  read: async (n: any) => {
+    const saved = n?.data?.properties?.sailor_shaderStudio
+    const config: ShaderStudioConfig = saved && typeof saved === 'object' ? hydrateShaderConfig(saved) : defaultShaderConfig()
+    // Materialize resting masks BEFORE describing, so every mask key the
+    // vocabulary offers lands on a real object rather than fabricating a
+    // half-built one through the dotted-path writer (see ensureEffectMasks).
+    ensureEffectMasks(config)
+    const catalog = await shaderCatalogEffects()
+    const activeId = config.effects[0]?.id ?? ''
+    // Prefer the list we already have; fall back to the by-id fetch (which is the
+    // same cached promise) so a null catalog still resolves the CURRENT effect.
+    const effectDef = activeId ? (catalog?.find(e => e.id === activeId) ?? await getEffect(activeId).catch(() => null)) : null
+    return {
+      config,
+      controls: shaderAgentControls(config, effectDef, 0, { catalog }),
+      guidance: buildShaderGuidance(catalog),
+    }
+  },
+  params: (config: any) => makeConfigParams(() => config),
+  write: (n: any, config: any) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.sailor_shaderStudio = cloneShaderConfig(config) },
+  clone: cloneShaderConfig,
+  label: 'Shader studio',
+  macroKey: SHADER_EFFECT_MACRO_KEY,
+  macroBefore: (config: ShaderStudioConfig) => config.effects[0]?.id ?? '',
+  // The macro runs through the studio's own switch seam, so the swap is
+  // field-for-field what picking the effect in the picker would have done.
+  applyPreset: (id: string, config: ShaderStudioConfig) => {
+    const def = getEffectSync(id)
+    if (!def) return null
+    return switchStudioEffect(config, 0, def)
+  },
+  // Switching effect changes which effects.0.params.* keys exist — re-describe so
+  // the same patch's uniform overrides validate against the NEW effect. Sync:
+  // getEffectSync reads the catalog `read` already resolved. No `catalog` is
+  // passed: this list only validates the scalar overrides, and the macro has
+  // already fired (runParamPatch deletes its key straight after), so re-offering
+  // `effect` here would be vocabulary nothing can act on.
+  recontrol: (config: ShaderStudioConfig) => shaderAgentControls(
+    config,
+    config.effects[0]?.id ? getEffectSync(config.effects[0].id) : null,
+    0,
+  ),
+}
+
+/** Exposed for tests only — the adapter is otherwise reached via the registry. */
+export const __shaderAdapterForTest = shaderAdapter
+
 export async function tuneShaderNode(node: any, request: string, apiKey: string): Promise<TuneResult> {
-  return runParamPatch(node, request, apiKey, {
-    read: async (n) => {
-      const saved = n?.data?.properties?.sailor_shaderStudio
-      const config: ShaderStudioConfig = saved && typeof saved === 'object' ? hydrateShaderConfig(saved) : defaultShaderConfig()
-      const effectDef = config.effects[0]?.id ? await getEffect(config.effects[0].id) : null
-      return { config, controls: shaderAgentControls(config, effectDef) }
-    },
-    params: (config) => makeConfigParams(() => config),
-    write: (n, config) => { if (!n.data.properties) n.data.properties = {}; n.data.properties.sailor_shaderStudio = cloneShaderConfig(config) },
-    clone: cloneShaderConfig,
-    label: 'Shader studio',
-  })
+  return runParamPatch(node, request, apiKey, shaderAdapter)
 }
 
 /**

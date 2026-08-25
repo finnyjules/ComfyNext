@@ -1,29 +1,89 @@
-import type { ControlSpec } from '~/lib/spacetype/effect'
+import type { ControlSpec, ParamValue } from '~/lib/spacetype/effect'
 import type { EffectDef } from '~/lib/shaderfx/types'
 import type { ShaderStudioConfig } from './types'
 
 /**
  * The Shader studio's tune vocabulary for the in-product agent. Like Gradient,
  * the studio keeps everything on one nested `config` ref, so keys are DOTTED
- * paths resolved by makeConfigParams. Two rules keep the offer honest:
- *  - a stage's controls are only exposed when that stage is enabled (tune adjusts
- *    what's visible; the user toggles stages on/off);
- *  - the active effect's own float uniforms are surfaced dynamically under
- *    `effects.<activeEffect>.params.<uniform>` (enum uniforms are structural,
- *    so skipped).
+ * paths resolved by makeConfigParams.
+ *
+ * ## Two deliberate grants (2026-08-25)
+ *
+ * 1. **Stages are no longer gated on being ON.** Every stage's `enabled` is a
+ *    `switch` control and every stage's params are offered ALWAYS, so ONE patch
+ *    can enable a stage and tune it ("add a bloom" used to be unsayable: the
+ *    bloom knobs only appeared once bloom was already on). This is agent
+ *    vocabulary only — the in-studio panel's own v-if gating is untouched.
+ * 2. **The active effect is selectable** via the `effect` MACRO (see
+ *    `shaderEffectMacro`), the mirror of Gradient's `preset`. Without it the
+ *    agent could wiggle the current effect's sliders but never answer "make it
+ *    glitchy VHS", which needs a DIFFERENT effect.
+ *
+ * What is still not offered, and why: enum uniforms (structural — they change
+ * which other uniforms mean anything), `gradient`-typed params and the gradient-
+ * map ramp (stop LISTS, picker-only), and mask `angle`/`aspect`/`invert` (fine
+ * tuning; `angle` is stored in radians and the model reasons in degrees).
+ *
+ * Mask keys are offered only where the layer actually HAS a mask object — see
+ * `ensureEffectMasks` in ./types.ts for why, and call it before describing.
  */
 function slider(key: string, label: string, min: number, max: number, step: number, group: string, hint?: string): ControlSpec {
   return { key, label, kind: 'slider', min, max, step, default: 0, group, ...(hint ? { hint } : {}) }
 }
+function toggle(key: string, label: string, group: string, hint?: string): ControlSpec {
+  return { key, label, kind: 'switch', default: false, group, ...(hint ? { hint } : {}) }
+}
+
+/**
+ * The macro key. NOT a config path — `runParamPatch` intercepts it, swaps the
+ * effect through the studio's own switch seam and deletes it before any
+ * write-through, exactly as it does Gradient's `preset`. Anything that maps this
+ * vocabulary onto real config leaves (the Collections bind menu) must NOT offer
+ * it: bound to a column it would write a dead `config.effect` property.
+ */
+export const SHADER_EFFECT_MACRO_KEY = 'effect'
+
+/** Picker order (mirrors ShaderStudioSurface's SHADER_SECTIONS) — image-
+ *  transforming families first, generators last on their own shelf. Categories
+ *  absent from this list are appended, so a new one can never silently vanish
+ *  from the derived index. */
+const SHADER_CATEGORY_ORDER = ['distortion', 'stylize', 'color', 'lens', 'blur', 'glow', 'generative']
+
+/** Build the `effect` macro control over the WHOLE catalog — the same list the
+ *  studio's own picker enumerates, so the two can never drift. Returns null when
+ *  the catalog is unavailable (see `buildShaderGuidance` for what that means). */
+export function shaderEffectMacro(catalog: EffectDef[] | null | undefined, currentId = ''): ControlSpec | null {
+  if (!catalog?.length) return null
+  return {
+    key: SHADER_EFFECT_MACRO_KEY,
+    label: 'Effect',
+    kind: 'select',
+    options: catalog.map(e => e.id),
+    default: currentId || catalog[0]!.id,
+    group: 'Effect',
+    hint: 'The stylize effect itself. Set this FIRST when the ask needs a different look; the effect’s own params reset to that effect’s defaults, and any effects.N.params.* keys in the same patch then apply on top.',
+  }
+}
 
 /** `activeEffect` defaults to 0 for callers that only ever look at the base layer
- *  (e.g. the Collections bind-menu snapshot in `studioControls.ts`). */
-export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDef | null, activeEffect = 0): ControlSpec[] {
+ *  (e.g. the Collections bind-menu snapshot in `studioControls.ts`).
+ *  `opts.catalog` opts a caller into the `effect` macro — the canvas tuner passes
+ *  it; the in-studio copilot and the bind menu do not (same split as Gradient's
+ *  `includePreset`). */
+export function shaderAgentControls(
+  cfg: ShaderStudioConfig,
+  effectDef: EffectDef | null,
+  activeEffect = 0,
+  opts: { catalog?: EffectDef[] | null } = {},
+): ControlSpec[] {
   const out: ControlSpec[] = []
-
-  // Active effect's float knobs (the heart of the stylize stage) — scoped to
-  // whichever layer is selected in the aside StudioLayerStack.
   const active = cfg.effects[activeEffect]
+
+  const macro = shaderEffectMacro(opts.catalog, active?.id ?? '')
+  if (macro) out.push(macro)
+
+  // Active effect's own knobs (the heart of the stylize stage) — scoped to
+  // whichever layer is selected in the aside StudioLayerStack.
   if (active?.enabled && effectDef) {
     for (const p of effectDef.params) {
       // A `color` param is a scalar hex string — the same representation
@@ -37,10 +97,14 @@ export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDe
       if (p.type !== 'float') continue // enum uniforms are structural, not a tune
       out.push(slider(`effects.${activeEffect}.params.${p.uniform}`, p.label, p.min ?? 0, p.max ?? 1, p.step ?? 0.01, 'Effect'))
     }
-    // Mask region — tunable once enabled, so the agent can place/size where the
-    // effect applies ("mask the warp to a band across the middle"). Shape/invert
-    // are structural toggles (like enum uniforms), so not surfaced as sliders.
-    if (active.mask?.enabled) {
+    // Mask region — offered whether or not the mask is ON (so one patch can
+    // enable AND place it), but only where a mask OBJECT exists, because the
+    // dotted-path writer would otherwise fabricate a half-built one. Shape is a
+    // real choice ("a band across the middle" is unsayable without it) and
+    // validates against a closed option list; angle/aspect/invert stay out.
+    if (active.mask) {
+      out.push(toggle(`effects.${activeEffect}.mask.enabled`, 'Mask on', 'Mask', 'Confine this effect to a region. Enable it and set the shape/centre/size in the same patch.'))
+      out.push({ key: `effects.${activeEffect}.mask.shape`, label: 'Mask shape', kind: 'select', options: ['radius', 'band', 'linear'], default: 'radius', group: 'Mask' })
       out.push(slider(`effects.${activeEffect}.mask.cx`, 'Mask center X', 0, 1, 0.01, 'Mask'))
       out.push(slider(`effects.${activeEffect}.mask.cy`, 'Mask center Y', 0, 1, 0.01, 'Mask'))
       out.push(slider(`effects.${activeEffect}.mask.size`, 'Mask size', 0.02, 1, 0.01, 'Mask'))
@@ -48,46 +112,169 @@ export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDe
     }
   }
 
-  // Duotone
-  if (cfg.duotone.enabled) {
-    out.push({ key: 'duotone.ink', label: 'Ink', kind: 'color', default: '#1a1a2e', group: 'Duotone' })
-    out.push({ key: 'duotone.paper', label: 'Paper', kind: 'color', default: '#f5f5f5', group: 'Duotone' })
-  }
+  // Duotone (the ramp colours below are the gradient MAP's; these two are scalars)
+  out.push(toggle('duotone.enabled', 'Duotone on', 'Duotone'))
+  out.push({ key: 'duotone.ink', label: 'Ink', kind: 'color', default: '#1a1a2e', group: 'Duotone' })
+  out.push({ key: 'duotone.paper', label: 'Paper', kind: 'color', default: '#f5f5f5', group: 'Duotone' })
 
   // Gradient map (the ramp colours are set via the palette picker, not tuned)
-  if (cfg.gradientMap?.enabled) {
-    out.push(slider('gradientMap.mix', 'Gradient map mix', 0, 1, 0.01, 'Gradient map'))
-  }
+  out.push(toggle('gradientMap.enabled', 'Gradient map on', 'Gradient map'))
+  out.push(slider('gradientMap.mix', 'Gradient map mix', 0, 1, 0.01, 'Gradient map'))
 
   // Adjustments
-  if (cfg.adjust.enabled) {
-    out.push(slider('adjust.exposure', 'Exposure', -2, 2, 0.01, 'Adjust'))
-    out.push(slider('adjust.brightness', 'Brightness', -1, 1, 0.01, 'Adjust'))
-    out.push(slider('adjust.contrast', 'Contrast', -1, 1, 0.01, 'Adjust'))
-    out.push(slider('adjust.saturation', 'Saturation', -1, 1, 0.01, 'Adjust'))
-    out.push(slider('adjust.hue', 'Hue', -180, 180, 0.01, 'Adjust'))
-    out.push(slider('adjust.temperature', 'Temperature', -1, 1, 0.01, 'Adjust', 'Negative = cooler/blue, positive = warmer/orange'))
-    out.push(slider('adjust.tint', 'Tint', -1, 1, 0.01, 'Adjust'))
-  }
+  out.push(toggle('adjust.enabled', 'Adjustments on', 'Adjust'))
+  out.push(slider('adjust.exposure', 'Exposure', -2, 2, 0.01, 'Adjust'))
+  out.push(slider('adjust.brightness', 'Brightness', -1, 1, 0.01, 'Adjust'))
+  out.push(slider('adjust.contrast', 'Contrast', -1, 1, 0.01, 'Adjust'))
+  out.push(slider('adjust.saturation', 'Saturation', -1, 1, 0.01, 'Adjust'))
+  out.push(slider('adjust.hue', 'Hue', -180, 180, 0.01, 'Adjust'))
+  out.push(slider('adjust.temperature', 'Temperature', -1, 1, 0.01, 'Adjust', 'Negative = cooler/blue, positive = warmer/orange'))
+  out.push(slider('adjust.tint', 'Tint', -1, 1, 0.01, 'Adjust'))
 
   // Post — lens blur
-  if (cfg.post.blur.enabled) {
-    out.push(slider('post.blur.range', 'Focus range', 0, 1, 0.01, 'Lens blur'))
-    out.push(slider('post.blur.aperture', 'Aperture', 0, 1, 0.01, 'Lens blur'))
-    out.push(slider('post.blur.maxBlur', 'Max blur', 0, 40, 1, 'Lens blur'))
-  }
+  out.push(toggle('post.blur.enabled', 'Lens blur on', 'Lens blur'))
+  out.push(slider('post.blur.range', 'Focus range', 0, 1, 0.01, 'Lens blur'))
+  out.push(slider('post.blur.aperture', 'Aperture', 0, 1, 0.01, 'Lens blur'))
+  out.push(slider('post.blur.maxBlur', 'Max blur', 0, 40, 1, 'Lens blur'))
+  out.push(slider('post.blur.focusX', 'Focus X', 0, 1, 0.01, 'Lens blur'))
+  out.push(slider('post.blur.focusY', 'Focus Y', 0, 1, 0.01, 'Lens blur'))
 
   // Post — chromatic aberration
-  if (cfg.post.chromatic.enabled) {
-    out.push(slider('post.chromatic.amount', 'Chromatic amount', 0, 1, 0.01, 'Chromatic'))
-  }
+  out.push(toggle('post.chromatic.enabled', 'Chromatic aberration on', 'Chromatic'))
+  out.push(slider('post.chromatic.amount', 'Chromatic amount', 0, 1, 0.01, 'Chromatic'))
 
   // Post — bloom
-  if (cfg.post.bloom.enabled) {
-    out.push(slider('post.bloom.threshold', 'Bloom threshold', 0, 1, 0.01, 'Bloom'))
-    out.push(slider('post.bloom.intensity', 'Bloom intensity', 0, 3, 0.01, 'Bloom'))
-    out.push(slider('post.bloom.radius', 'Bloom radius', 4, 200, 2, 'Bloom'))
-  }
+  out.push(toggle('post.bloom.enabled', 'Bloom on', 'Bloom'))
+  out.push(slider('post.bloom.threshold', 'Bloom threshold', 0, 1, 0.01, 'Bloom'))
+  out.push(slider('post.bloom.intensity', 'Bloom intensity', 0, 3, 0.01, 'Bloom'))
+  out.push(slider('post.bloom.radius', 'Bloom radius', 4, 200, 2, 'Bloom'))
 
   return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GUIDANCE — the domain cheat sheet injected into the /api/vibe prompt.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The same clause Texture uses, word for word (studioTune.ts's
+ *  APPROXIMATION_HONESTY_GUIDANCE) — duplicated rather than imported because
+ *  agentControls modules must not depend on the tuner that consumes them. A test
+ *  pins the two copies equal. */
+export const SHADER_HONESTY_CLAUSE = 'If the requested look is not achievable with the modes and controls available here, do not force an exact match: configure the closest approximation you can with the commands above, and say so in "message" — name the requested look and state plainly that this only approximates it. Never present an approximation as an exact match.'
+
+/**
+ * Hand-written look-word → effect-id clusters. DATA, not prose, so the detector
+ * test can resolve every id against the live catalog and a renamed/removed
+ * effect fails the build rather than teaching the model a name that no longer
+ * exists. Kept to real ids only — no aspirational ones.
+ */
+export const SHADER_LOOK_CLUSTERS: { words: string; ids: string[] }[] = [
+  { words: 'glitchy / vhs / broken signal / datamosh / corrupted', ids: ['block_glitch', 'rgb_glitch', 'crt_scanlines', 'post_grain'] },
+  { words: 'halftone / newsprint / comic / risograph / screenprint', ids: ['halftone', 'dot_screen', 'risograph', 'bayer_dither', 'crosshatch'] },
+  { words: 'pixel / 8-bit / lo-fi / blocky / ascii / terminal', ids: ['pixelate', 'blocks', 'ascii_dither', 'glyph_dither'] },
+  { words: 'painterly / hand-made / illustrated / sketched', ids: ['oil_paint', 'crosshatch', 'outline'] },
+  { words: 'liquid / melty / underwater / rippling / wavy', ids: ['liquify', 'water_ripple', 'wave', 'fbm_warp', 'swirl'] },
+  { words: 'psychedelic / kaleidoscopic / trippy / infinite / recursive', ids: ['kaleidoscope', 'droste', 'mirror', 'recursive_grid', 'warp_tunnel'] },
+  { words: 'dreamy / soft focus / blurry / hazy / bokeh / miniature', ids: ['gaussian_blur', 'defocus_bokeh', 'tilt_shift', 'zoom_blur'] },
+  { words: 'glowy / bloom / neon / radiant / dreamlight', ids: ['bloom', 'glow', 'edge_glow', 'light_beams'] },
+  { words: 'iridescent / holographic / chrome / prismatic / oil-slick', ids: ['holographic', 'spectrum_map', 'crystal_prism'] },
+  { words: 'cinematic lens / anamorphic / lo-fi camera / wide angle', ids: ['chromatic_aberration', 'lens_distortion', 'fisheye', 'vignette'] },
+  { words: 'graphic / poster / high contrast / stencil / flat', ids: ['posterize', 'threshold', 'duotone', 'outline', 'mondrian'] },
+  { words: 'recolour / warmer / cooler / graded / mapped palette', ids: ['post_adjust', 'color_temperature', 'hue_shift', 'gradient_map'] },
+  { words: 'glass / frosted / fluted / refracted', ids: ['blinds', 'crystal_prism', 'distort'] },
+  { words: 'bulge / pinch / squeeze / warped face', ids: ['pinch_bulge', 'fisheye'] },
+  { words: 'noisy displacement / turbulent / smoky', ids: ['noise_distortion', 'fbm_warp', 'wisps'] },
+  { words: 'flag / cloth / banner / ripple in fabric', ids: ['flag', 'wave'] },
+  { words: 'film / grain / analog / dusty', ids: ['post_grain', 'risograph'] },
+  { words: 'BACKGROUND FROM NOTHING (generative — these ignore the input image and draw their own field)', ids: ['aurora', 'nebula', 'plasma', 'mesh_gradient', 'wisps', 'light_beams', 'fbm', 'caustics', 'voronoi_cells', 'starfield', 'warp_tunnel'] },
+]
+
+/**
+ * Worked examples. DATA for the same reason the clusters are: a test resolves
+ * every `effect` id against the catalog AND every `effects.0.params.*` uniform
+ * against that effect's own param list, so an example can never teach a key the
+ * patch validator would silently drop.
+ */
+export const SHADER_TUNE_EXAMPLES: { ask: string; patch: Record<string, ParamValue> }[] = [
+  {
+    ask: 'make it a glitchy VHS still',
+    patch: { effect: 'block_glitch', 'effects.0.params.u_amount': 0.3, 'effects.0.params.u_grid': 28, 'post.chromatic.enabled': true, 'post.chromatic.amount': 0.45, 'adjust.enabled': true, 'adjust.saturation': -0.2 },
+  },
+  {
+    ask: 'soft dreamy warm haze',
+    patch: { effect: 'gaussian_blur', 'effects.0.params.u_radius': 0.03, 'post.bloom.enabled': true, 'post.bloom.intensity': 1.8, 'post.bloom.threshold': 0.45, 'adjust.enabled': true, 'adjust.temperature': 0.35 },
+  },
+  {
+    ask: 'halftone poster, navy ink on cream, only through the middle band',
+    patch: { effect: 'halftone', 'effects.0.params.u_size': 0.03, 'duotone.enabled': true, 'duotone.ink': '#12203f', 'duotone.paper': '#f3ead8', 'effects.0.mask.enabled': true, 'effects.0.mask.shape': 'band', 'effects.0.mask.size': 0.3, 'effects.0.mask.feather': 0.4 },
+  },
+]
+
+/** Render the catalog as a compact index: one line per effect, grouped under a
+ *  category header. Derived at describe-time from the SAME list the picker shows,
+ *  so a newly baked effect joins the vocabulary with no edit here. */
+export function shaderEffectIndex(catalog: EffectDef[]): string {
+  const seen = new Set<string>()
+  const cats = [...SHADER_CATEGORY_ORDER, ...catalog.map(e => e.category)].filter(c => !seen.has(c) && seen.add(c))
+  const blocks: string[] = []
+  for (const cat of cats) {
+    const rows = catalog.filter(e => e.category === cat)
+    if (!rows.length) continue
+    blocks.push(`${cat.toUpperCase()}\n${rows.map(e => `- ${e.id} · ${e.name}`).join('\n')}`)
+  }
+  return blocks.join('\n')
+}
+
+function renderClusters(): string {
+  return SHADER_LOOK_CLUSTERS.map(c => `- ${c.words} → ${c.ids.join(', ')}`).join('\n')
+}
+function renderExamples(): string {
+  return SHADER_TUNE_EXAMPLES.map(e => `- "${e.ask}" → ${JSON.stringify(e.patch)}`).join('\n')
+}
+
+/** Stated ceiling for the whole guidance block (characters). Pinned by a test —
+ *  the derived index grows with the catalog, and this is the budget that says
+ *  how much prompt the shader domain may take before it needs compressing. */
+export const SHADER_GUIDANCE_CEILING = 8000
+
+/**
+ * Build the shader guidance. `catalog` is the live effect list.
+ *
+ * **Headless / offline degradation is explicit.** The catalog is served by the
+ * ComfyUI backend (`/sailor/shader_effects`), which does not exist in a node or
+ * unit-test environment — `fetchShaderFxCatalog()` throws there. Callers pass
+ * `null` in that case, and this returns the guidance WITHOUT the effect index
+ * and WITHOUT the look-word clusters (whose whole content is effect ids), plus a
+ * line telling the model the effect cannot be changed this turn. It never emits
+ * an empty "EFFECTS" header — an index with nothing under it reads as "there are
+ * no effects", which is worse than saying the list is unavailable. The `effect`
+ * macro control is likewise withheld (see `shaderEffectMacro`), so the model is
+ * never offered a switch it has no names for.
+ */
+export function buildShaderGuidance(catalog: EffectDef[] | null | undefined): string {
+  const head = `This is a SHADER COMPOSITOR over an input image: ONE stylize effect (picked from a catalog) followed by fixed colour + post stages. Compose the WHOLE look — usually an effect plus 2-4 params, not one knob.`
+  const stages = `STAGES (each has an "…on" switch — turn it ON in the SAME patch as its params; a param set on an OFF stage does nothing):
+- duotone.* — two-colour ink/paper map. "duotone", "two-tone", "screenprint colours".
+- gradientMap.* — remap brightness through a colour ramp (ramp colours are picker-only; you can only set the mix).
+- adjust.* — exposure / brightness / contrast / saturation / hue / temperature / tint. "warmer", "cooler", "punchier", "desaturated", "moodier".
+- post.blur.* — lens blur with a focus point. "shallow depth of field", "soft background".
+- post.chromatic.* — RGB fringing. "lens fringing", "cheap lens", part of most glitch looks.
+- post.bloom.* — glow bleed off the brights. "glowy", "hazy light", "dreamy".
+- effects.N.mask.* — confine the EFFECT (not the post stages) to a region: shape radius | band | linear, plus centre/size/feather. "only in the middle", "just the top half", "a band across it".`
+  const rules = `HOW TO ANSWER:
+- PICK THE EFFECT FIRST when the ask names a look the current effect cannot give ("effect": "<id>"). Switching resets that layer's params to the new effect's defaults; any effects.N.params.* keys you send in the SAME patch are then applied on top, so send both together.
+- Only send effects.N.params.* uniforms that belong to the effect you are picking. Uniforms of the OLD effect are dropped.
+- When merely ADJUSTING the current look ("more contrast", "less blur", "warmer"), do NOT set "effect" — tune the specific knobs.
+- Prefer 2-4 meaningful changes over one, and over twenty.`
+  const parts = [head]
+  if (catalog?.length) {
+    parts.push(`EFFECTS YOU MAY PICK (id · name, grouped by family — set "effect" to an id):\n${shaderEffectIndex(catalog)}`)
+    parts.push(`LOOK WORDS → EFFECT IDS (recognise synonyms, not just these exact words):\n${renderClusters()}`)
+  } else {
+    parts.push(`EFFECT LIST UNAVAILABLE this turn (the effect catalog could not be loaded), so the "effect" control is not offered: you CANNOT change which effect is applied. Tune the stages below on whatever effect is already selected, and say so if the ask needed a different effect.`)
+  }
+  parts.push(stages, rules)
+  if (catalog?.length) parts.push(`EXAMPLES — the exact changes to return:\n${renderExamples()}`)
+  parts.push(SHADER_HONESTY_CLAUSE)
+  return parts.join('\n\n')
 }

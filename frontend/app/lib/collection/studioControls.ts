@@ -65,14 +65,18 @@ async function gradientControls(node: any): Promise<StudioControlDesc[]> {
 /** Shader Studio: same config the canvas tuner reads, plus the active effect's
  *  float uniforms (resolved async from the shader catalog). */
 async function shaderControls(node: any): Promise<StudioControlDesc[]> {
-  const [{ hydrateConfig, defaultConfig }, { shaderAgentControls }, { getEffect }] = await Promise.all([
+  const [{ hydrateConfig, defaultConfig, ensureEffectMasks }, { shaderAgentControls }, { getEffect }] = await Promise.all([
     import('~/lib/shaderstudio/types'),
     import('~/lib/shaderstudio/agentControls'),
     import('~/lib/shaderfx/catalog'),
   ])
   const saved = node?.data?.properties?.sailor_shaderStudio
   const config = saved && typeof saved === 'object' ? hydrateConfig(saved) : defaultConfig()
+  ensureEffectMasks(config)
   const effectDef = config.effects[0]?.id ? await getEffect(config.effects[0].id) : null
+  // No `catalog` — deliberately WITHOUT the `effect` macro. Unlike every other key
+  // here it is not a config leaf but a tuner verb (runParamPatch intercepts it), so
+  // a Collection column bound to it would write a dead `config.effect` property.
   return mapAll(shaderAgentControls(config, effectDef))
 }
 
