@@ -71,7 +71,7 @@ equal by a source-scan test + twin comments). OPEN: the picker's OWN re-pick res
 (pre-existing UI bug, task chip filed); the live paid /api/vibe run (key-gated).
 Spec: `docs/superpowers/specs/2026-08-25-shader-tuner-vocabulary-design.md`.
 
-### Texture Studio chips mode — terrazzo lands, Act 2 family 1 opens — LANDED 2026-08-25
+### Texture Studio chips mode — terrazzo lands, Act 2 family 1 opens — LANDED 2026-08-25 (+ Density 2026-08-25)
 
 Driven by a live agent failure ("make me a seamless terrazzo pattern" rendered polka-dot
 wallpaper — every Texture mode was a regular lattice tiling). New `chips` content mode:
@@ -80,14 +80,28 @@ per-cell radius scale for size variety), seamless by construction, zero new deps
 CPU math in pattern.ts is the tested truth, the fragment shader mirrors it with
 PRE-HASHED salt uniforms (raw seed must NEVER enter the shader: float32 hash
 amplification turns ~1e-4 seed error into a 47%-different tile at seed 12345 —
-documented at three sites). Three factory controls (chipCells/chipGrout/chipSizeVar)
-+ jitter → panel/agent/sweeps derived, zero hand-written UI (one wrinkle: a new control
+documented at three sites). Four factory controls (chipCells/chipDensity/chipGrout/
+chipSizeVar) + jitter → panel/agent/sweeps derived, zero hand-written UI (one wrinkle: a new control
 GROUP also needs the sections.ts allow-list — second declaration site, test-guarded).
-Two ink roles + ground (fill-uniform arrays cap at 3; widening list recorded). Tuner
-got terrazzo/mosaic/pebbles recipes + an APPROXIMATION HONESTY clause (out-of-vocab
+Two ink roles + ground (fill-uniform arrays cap at 3; widening list recorded). DENSITY
+(2026-08-25) is the fraction of cells that draw a chip at all, reaching sparse speckle /
+scattered confetti: a cell keeps its chip iff its own salt lane (appended as index 5,
+u_chipSalt[5]→[6]) hashes below density, tested on the F1 OWNER before grout, so a
+dropped cell is GROUND across its whole area and survivors keep their density-1 shapes
+(the "chips grow into the gaps" variant is written up but unbuilt). Default 1 is
+byte-identical to the packed field — pinned by a characterization literal captured
+before the edit. The slider FLOOR does not prevent a blank tile (it bounds the drop
+rate: 16 cells all dropping was a real 7% of seeds at chipCells 4); the tile's
+minimum-hash cell is FORCE-KEPT instead, computed once per render by chipKeepCell()
+and handed to the shader as the u_chipKeep uniform — the FS cannot scan C² cells per
+pixel, so a CPU-computed constant is what keeps the twins identical (the gallery's
+'density floor' tile is that path's live proof: chipCells 4 / seed 9 / density 0.15
+rendered 100% ground before, and now reads 94.4% ground + one 5.6% chip at Δ 0.0). Tuner
+got terrazzo/mosaic/pebbles/sparse-speckle recipes + an APPROXIMATION HONESTY clause (out-of-vocab
 looks must be admitted), and no-op tune proposals (the live "square → square" row) are
 filtered at the shared pushTuneRow seam for all 8 studios. Gallery /dev/pattern-gallery
-has a 6-look chips row, live-verified: GPU/CPU Δ ≤ 0.3/255, 0 errors. Review rounds
+has an 8-look chips row ('sparse' + 'density floor' joined it with Density), live-verified:
+GPU/CPU Δ ≤ 0.5/255, 0 errors. Review rounds
 caught: symmetric hash13 (would have mirrored chips diagonally — the OLD renderer
 cellHash still has this latent bug for truchet, tracked), a wrong window-bound proof,
 clipping jitter on light palettes, un-narrowed defaults. OWED: one live prompt→terrazzo

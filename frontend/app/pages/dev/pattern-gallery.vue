@@ -58,6 +58,11 @@ const CHIP_LOOKS: { name: string; params: Partial<Params> }[] = [
   { name: 'mosaic', params: { chipCells: 18, chipGrout: 0.09, chipSizeVar: 0.2, jitter: 0.2 } },
   { name: 'pebbles', params: { chipCells: 7, chipGrout: 0.13, chipSizeVar: 0.9, jitter: 0.5 } },
   { name: 'sparse', params: { chipCells: 18, chipDensity: 0.35, chipGrout: 0, chipSizeVar: 0.6, jitter: 0.5 } },
+  // The force-keep case: 16 cells at the density floor, on the seed where ALL of
+  // them hash out. Before chipKeepCell() this rendered a completely blank tile.
+  // Here the only chip on screen IS the force-kept one, so this tile is the GPU's
+  // proof that it reads u_chipKeep — if the shader ignored it, Δ would be huge.
+  { name: 'density floor', params: { chipCells: 4, seed: 9, chipDensity: 0.15, chipSizeVar: 0.6 } },
   { name: 'no grout', params: { chipGrout: 0, jitter: 0 } },
   { name: 'big seed', params: { seed: 999983 } },   // float32 seed-precision check
 ]

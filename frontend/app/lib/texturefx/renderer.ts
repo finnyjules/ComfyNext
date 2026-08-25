@@ -8,7 +8,7 @@
 import type { Params } from '~/lib/spacetype/effect'
 import { LATTICES, MOTIFS, MODES, TILE_FAMILIES, SHAPE_FAMILIES, postSettingsFromParams } from '~/lib/texturefx/types'
 import {
-  truchetStates, multiscaleLevels,
+  truchetStates, multiscaleLevels, chipKeepCell,
   CHIP_NEIGHBORHOOD, CHIP_R_MIN, CHIP_R_MAX, CHIP_INK_ROLES, CHIP_TONE_RANGE,
   CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE, CHIP_SALT_DENSITY,
 } from '~/lib/texturefx/pattern'
@@ -70,6 +70,11 @@ uniform float u_chipCells, u_chipGrout, u_chipSizeVar, u_chipDensity;
 // 5 = DENSITY (chipSaltLanes() below fills it; see chipHash() for why it arrives
 // pre-hashed). Lanes are APPENDED, never reordered — the indices are the contract.
 uniform float u_chipSalt[6];
+// The one cell Density never drops (lowest density-lane hash in the tile), so no
+// setting renders a blank tile. A function of (cells, seed) only, so chipKeepCell()
+// computes it ONCE per render on the CPU and it arrives here as a constant — the
+// shader could not scan C² cells per pixel to find it. Same trick as u_chipSalt.
+uniform vec2 u_chipKeep;
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
 uniform sampler2D u_rasterTex;
@@ -554,7 +559,10 @@ void main(){
     // (No backticks in this file's GLSL: the shader is a JS template literal.)
     // Read before grout, so a dropped cell is ground across its whole area --
     // chips SCATTERED on ground, not chips grown into the gaps. See chipSample().
-    bool dropped = chipHash(cx1, cy1, u_chipSalt[5]) >= clamp(u_chipDensity, 0.0, 1.0);
+    // u_chipKeep is force-kept at any density (see chipKeepCell) -- cx1/cy1 are
+    // exact small integers out of posmod, so == is safe, as it is for id1 above.
+    bool dropped = (cx1 != u_chipKeep.x || cy1 != u_chipKeep.y)
+      && chipHash(cx1, cy1, u_chipSalt[5]) >= clamp(u_chipDensity, 0.0, 1.0);
     if (dropped || f2 - f1 < max(u_chipGrout, 0.0)) {
       col = evalFill(${CHIP_INK_ROLES}, fc, v_uv);          // grout = the ground role
     } else {
@@ -948,12 +956,18 @@ class TextureFxRenderer {
     // Chips knobs. chipCells is rounded HERE (the same max(2, round()) chipSample()
     // applies) so the GLSL grid and the CPU grid agree cell-for-cell; the defaults
     // mirror pattern.ts's, not the control list's, for the same reason.
-    gl.uniform1f(u('u_chipCells'), Math.max(2, Math.round(Number(p.chipCells) || 12)))
+    const chipCells = Math.max(2, Math.round(Number(p.chipCells) || 12))
+    const chipSeed = Math.round(Number(p.seed) || 1)
+    gl.uniform1f(u('u_chipCells'), chipCells)
     gl.uniform1f(u('u_chipGrout'), Number.isFinite(Number(p.chipGrout)) ? Number(p.chipGrout) : 0.05)
     gl.uniform1f(u('u_chipSizeVar'), Number.isFinite(Number(p.chipSizeVar)) ? Number(p.chipSizeVar) : 0.7)
     // Unset on scenes saved before Density → 1, the fully-packed look (same fallback as patternColor).
     gl.uniform1f(u('u_chipDensity'), Number.isFinite(Number(p.chipDensity)) ? Number(p.chipDensity) : 1)
-    gl.uniform1fv(u('u_chipSalt[0]'), chipSaltLanes(Math.round(Number(p.seed) || 1)))
+    // The never-dropped cell, from pattern.ts's own function on the SAME rounded
+    // cells/seed the CPU uses — a per-render constant, never a per-pixel search.
+    const keep = chipKeepCell(chipCells, chipSeed)
+    gl.uniform2f(u('u_chipKeep'), keep.cx, keep.cy)
+    gl.uniform1fv(u('u_chipSalt[0]'), chipSaltLanes(chipSeed))
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))

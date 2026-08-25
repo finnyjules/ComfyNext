@@ -131,6 +131,51 @@ export function chipHash(cx: number, cy: number, salt: number): number {
   return fract((px + py) * pz)
 }
 
+/**
+ * The one cell that is NEVER dropped, whatever the density: the cell whose
+ * density-lane hash is lowest across the whole tile.
+ *
+ * Why it exists: the Density floor bounds the drop RATE, not the OUTCOME. Every
+ * cell is an independent coin flip, so a small grid can come up empty — at
+ * chipCells 4 and density 0.15 that is 0.85^16 ≈ 7.4% of seeds, and 35 of the
+ * first 400 seeds really did render a completely blank tile. A control that can
+ * produce a blank tile reads as broken, and Roll walks straight into it.
+ *
+ * Keeping the ARGMIN rather than a fixed cell is what makes this invisible: that
+ * cell is the last one any density would have dropped, so raising density never
+ * un-keeps it and the field only ever grows monotonically. A no-op at density 1
+ * (nothing is dropped there anyway), so the byte-identity pin is untouched.
+ *
+ * A function of (cells, seed) ALONE — not of the pixel — which is the whole
+ * reason the shader can mirror it. The GPU cannot scan C² cells per pixel, so
+ * renderer.ts calls this once per render and uploads the result as the
+ * `u_chipKeep` vec2, the same trick chipSaltLanes() uses. One implementation,
+ * no retyped twin.
+ *
+ * Ties go to the first in row-major order (strict `<`), so it is deterministic.
+ */
+export function chipKeepCell(cells: number, seed: number): { cx: number; cy: number } {
+  const C = Math.max(2, Math.round(cells) || 12)
+  let best = Infinity, bx = 0, by = 0
+  for (let cy = 0; cy < C; cy++) {
+    for (let cx = 0; cx < C; cx++) {
+      const h = chipHash(cx, cy, seed + CHIP_SALT_DENSITY)
+      if (h < best) { best = h; bx = cx; by = cy }
+    }
+  }
+  return { cx: bx, cy: by }
+}
+
+// Single-slot memo, the same shape as cachedStates(): chipSample() is called
+// per-pixel with a fixed (cells, seed) per render, so the C² scan runs once.
+// Keyed by both, so it is a pure function of its inputs, not hidden state.
+let _keepCache: { key: string, cell: { cx: number, cy: number } } | null = null
+function cachedKeep(cells: number, seed: number): { cx: number, cy: number } {
+  const key = `${cells}|${seed}`
+  if (!_keepCache || _keepCache.key !== key) _keepCache = { key, cell: chipKeepCell(cells, seed) }
+  return _keepCache.cell
+}
+
 export type ChipFeature = { x: number; y: number; r: number }
 
 /** The feature point of wrapped cell (cx,cy): its offset INSIDE the cell (0..1)
@@ -167,6 +212,11 @@ export type ChipSample = {
  *   reproduces the fully-packed field byte for byte. That back-compat is pinned
  *   by a characterization test holding the pre-Density role field as a literal.
  *   Defaults to 1 so a caller written before Density is unchanged.
+ *
+ *   ONE cell is exempt: the tile's minimum-hash cell is force-kept at any density,
+ *   so no setting can render a blank tile (see chipKeepCell for why the floor
+ *   alone did not guarantee that). Exempt at density 1 too, where it changes
+ *   nothing because no cell is dropped.
  *
  *   A DROPPED CELL FALLS TO GROUND, across its whole area: the test is applied to
  *   the F1 owner AFTER the nearest-point search and BEFORE grout, so the survivors
@@ -212,8 +262,12 @@ export function chipSample(
   // Density dropout — see the @param note above. Non-finite (an unset param on an
   // older scene) reads as 1, the packed field. `>= dens` is the exact negation of
   // "kept iff hash < dens"; the shader twin carries that same comparison.
+  // The tile's minimum-hash cell is force-kept so no density can render a blank
+  // tile — see chipKeepCell(). A no-op at density 1, where nothing drops anyway.
   const dens = clamp01(Number.isFinite(density) ? density : 1)
-  const dropped = chipHash(cx1, cy1, seed + CHIP_SALT_DENSITY) >= dens
+  const keep = cachedKeep(C, seed)
+  const dropped = (cx1 !== keep.cx || cy1 !== keep.cy)
+    && chipHash(cx1, cy1, seed + CHIP_SALT_DENSITY) >= dens
   const isGround = dropped || f2 - f1 < gap
   const role = isGround
     ? CHIP_INK_ROLES
