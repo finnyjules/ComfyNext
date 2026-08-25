@@ -89,12 +89,17 @@ describe('scene3d config', () => {
       Object.assign(o.material, patch)
       doc.objects.push(o)
     }
+    // One box per material type, in MATERIAL_TYPES order. Adding a material type
+    // means adding a boxFor line here (with its type-specific params) — the
+    // coverage assertion below fails with a readable diff until you do.
+    boxFor({ type: 'standard' })
+    boxFor({ type: 'phong', shininess: 80, specular: '#ffddaa' })
     boxFor({ type: 'toon', toonSteps: 4 })
     boxFor({ type: 'matcap', matcap: 'gold' })
-    boxFor({ type: 'phong', shininess: 80, specular: '#ffddaa' })
     boxFor({ type: 'glass', ior: 1.8, transmission: 0.9, thickness: 1.2, roughness: 0.1 })
     boxFor({ type: 'fresnel', fresnelColor: '#ff00aa', fresnelPower: 5 })
     boxFor({ type: 'gradient', gradientB: '#123456', gradientAxis: 'z', gradientShading: 'faceted' })
+    boxFor({ type: 'opalescent', opalHueShift: 120, opalFrequency: 2, opalAngleMix: 0.5, opalFlowSpeed: 1, opalStrength: 0.8 })
     boxFor({ type: 'image', image: 'scene3d_tex_1.png' })
     boxFor({
       type: 'shaderFill', unlit: true,
@@ -103,7 +108,12 @@ describe('scene3d config', () => {
         input: { type: 'gradient', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 10, density: 4 },
       },
     })
-    expect(MATERIAL_TYPES).toHaveLength(9)
+    // Exact list, not a count: a new material type shows up as an intentional
+    // one-line diff here instead of an opaque "expected length 9" failure.
+    expect(MATERIAL_TYPES).toEqual([
+      'standard', 'phong', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'opalescent', 'image', 'shaderFill',
+    ])
+    expect(doc.objects.map((o) => o.material.type)).toEqual([...MATERIAL_TYPES])
     const back = parseDoc(serializeDoc(doc))
     expect(back).toEqual(doc)
   })
