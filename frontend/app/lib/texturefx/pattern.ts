@@ -39,26 +39,63 @@ const fract = (x: number) => x - Math.floor(x)
 // closures over mutable state, no per-render caches. The shader twin runs the
 // same fixed 5×5 loop with the same salts.
 
-/** Half-width of the neighbourhood scanned for feature points (5×5 window).
- *  Ring 2 is reachable: a pixel in the far corner of its own small chip can sit
- *  at weighted distance ~1.4/CHIP_R_MIN, which a ring-2 point of the widest
- *  radius (weighted ≥ 2/CHIP_R_MAX) can beat. Ring 3 (weighted ≥ 3/CHIP_R_MAX)
- *  cannot, which is what bounds the loop at 2. */
+/**
+ * Half-width of the neighbourhood scanned for feature points (5×5 window).
+ *
+ * The RIGOROUS bound is 4, not 2. A cell at Chebyshev ring k can hold a point as
+ * close as k−1 (pixel at the near edge of its own cell, point at the near edge of
+ * the ring cell), so its weighted distance is at worst (k−1)/CHIP_R_MAX. The
+ * pixel's own cell always offers F1 ≤ √2/CHIP_R_MIN. Ring N+1 is therefore
+ * provably unreachable only when N/CHIP_R_MAX > √2/CHIP_R_MIN, i.e.
+ * N > √2 · CHIP_R_MAX/CHIP_R_MIN = 3.54 → N = 4.
+ *
+ * 2 is licensed EMPIRICALLY, not by that inequality: the worst case needs the
+ * pixel's own chip to be simultaneously the smallest and the furthest, which the
+ * hash does not actually produce. Measured over 240k samples (every cell count,
+ * sizeVar 1), the nearest candidate outside the 5×5 window never came closer
+ * than 1.275× the winning distance. Two tests hold that honest — the global
+ * toroidal brute force (which fails outright at N=1) and the margin measurement
+ * in texturefx-chips.unit.spec.ts.
+ *
+ * The invariant that licenses it is CHIP_R_MAX/CHIP_R_MIN ≤ 2.5. Widening the
+ * radius range breaks the empirical margin, so a unit test asserts the ratio: if
+ * you need wilder chips, raise this to 4 (a 9×9 GLSL loop) rather than gambling.
+ */
 export const CHIP_NEIGHBORHOOD = 2
-/** Hashed radius-scale range at chipSizeVar = 1 (1.0 = every chip the same). */
+/** Hashed radius-scale range at chipSizeVar = 1 (1.0 = every chip the same).
+ *  CHIP_R_MAX/CHIP_R_MIN must stay ≤ 2.5 — see CHIP_NEIGHBORHOOD. */
 export const CHIP_R_MIN = 0.6
 export const CHIP_R_MAX = 1.5
-/** Ink roles chips cycle through; the ground/grout role is index CHIP_INK_ROLES.
- *  Kept in step with ROLES_BY_FAMILY.chips in roles.ts (pinned by a unit test).
- *  Capped at 2 because the fill machinery (renderer's u_fill* uniform arrays,
- *  the Fills panel) resolves exactly 3 roles. */
+/**
+ * Ink roles chips cycle through; the ground/grout role is index CHIP_INK_ROLES.
+ * Kept in step with ROLES_BY_FAMILY.chips in roles.ts (pinned by a unit test).
+ *
+ * DECIDED: this stays 2. Two chip colours + ground, with colour jitter supplying
+ * the tonal variety — the terrazzo recipe promises a TWO-TONE terrazzo, not the
+ * "3-4 muted chips" the design sketch imagined. A third chip colour is not a
+ * one-line change: the fill machinery resolves exactly three roles end-to-end
+ * (renderer.ts's u_fillType[3] / u_fillFrame[3] / u_fillC0[3] / u_fillStops[12] /
+ * u_strokeRole[3] uniform arrays and the render() loop `for (r = 0; r < 3; r++)`),
+ * so a 4th role needs all of those widened first. Follow-up, not a footnote.
+ */
 export const CHIP_INK_ROLES = 2
-/** How far colour jitter may push a chip's lightness (±30% at jitter = 1). */
+/** How far colour jitter may carry a chip toward white or black: at jitter 1 a
+ *  chip travels at most 0.5 × this = 30% of the way. See chipTone(). */
 export const CHIP_TONE_RANGE = 0.6
 
-// Salts keep the five per-cell hashes independent. They are fractional so that
-// `seed + SALT` can never collide with another integer seed's salted value.
-const SALT_X = 0.317, SALT_Y = 1.523, SALT_R = 2.719, SALT_ROLE = 3.911, SALT_TONE = 4.507
+/**
+ * Salts keeping the five per-cell hashes independent. Fractional, so `seed +
+ * SALT` can never collide with another integer seed's salted value.
+ *
+ * EXPORTED because the fragment shader in renderer.ts is a template literal:
+ * Task 3 interpolates these values into the GLSL source (`${CHIP_SALT_X}`) so
+ * the two twins cannot drift. Never retype the numbers in the shader.
+ */
+export const CHIP_SALT_X = 0.317
+export const CHIP_SALT_Y = 1.523
+export const CHIP_SALT_R = 2.719
+export const CHIP_SALT_ROLE = 3.911
+export const CHIP_SALT_TONE = 4.507
 
 /**
  * Per-cell hash to 0..1 — Dave Hoskins' hash13, the same construction the GLSL
@@ -92,10 +129,10 @@ export type ChipFeature = { x: number; y: number; r: number }
  *  hashed [CHIP_R_MIN, CHIP_R_MAX] range — a bigger radius divides the weighted
  *  distance by more, so that chip claims more ground. */
 export function chipFeature(cx: number, cy: number, seed: number, sizeVar: number): ChipFeature {
-  const spread = CHIP_R_MIN + chipHash(cx, cy, seed + SALT_R) * (CHIP_R_MAX - CHIP_R_MIN)
+  const spread = CHIP_R_MIN + chipHash(cx, cy, seed + CHIP_SALT_R) * (CHIP_R_MAX - CHIP_R_MIN)
   return {
-    x: chipHash(cx, cy, seed + SALT_X),
-    y: chipHash(cx, cy, seed + SALT_Y),
+    x: chipHash(cx, cy, seed + CHIP_SALT_X),
+    y: chipHash(cx, cy, seed + CHIP_SALT_Y),
     r: 1 + clamp01(sizeVar) * (spread - 1),
   }
 }
@@ -143,8 +180,8 @@ export function chipSample(
   const isGround = f2 - f1 < gap
   const role = isGround
     ? CHIP_INK_ROLES
-    : Math.min(CHIP_INK_ROLES - 1, Math.floor(chipHash(cx1, cy1, seed + SALT_ROLE) * CHIP_INK_ROLES))
-  return { role, cellX: cx1, cellY: cy1, f1, f2, tone: chipHash(cx1, cy1, seed + SALT_TONE) }
+    : Math.min(CHIP_INK_ROLES - 1, Math.floor(chipHash(cx1, cy1, seed + CHIP_SALT_ROLE) * CHIP_INK_ROLES))
+  return { role, cellX: cx1, cellY: cy1, f1, f2, tone: chipHash(cx1, cy1, seed + CHIP_SALT_TONE) }
 }
 
 /**
@@ -152,12 +189,26 @@ export function chipSample(
  * flip that swaps the two ink roles (see `swap` in patternColor below); a chip
  * already picks its ink role by hash, so a swap there would be invisible — the
  * same knob shifts the chip's LIGHTNESS instead, which is what varied terrazzo
- * chips actually need. At jitter 0 the factor is exactly 1, so the chip is the
- * role colour to the bit.
+ * chips actually need.
+ *
+ * The chip is MIXED toward white (tone > 0.5) or black (tone < 0.5) by
+ * |tone − 0.5| · jitter · CHIP_TONE_RANGE — at most 30% of the way. Not a
+ * multiply: scaling an already-light palette clips, and clipping is not a
+ * subtle loss. The studio's own default chipA (#e8eef5) drove 27.5% of its
+ * pixels to pure white under a ×gain, collapsing 69 distinct chip tones into 49
+ * colours — the lightest quarter of the terrazzo went flat. A mix toward an
+ * endpoint can never leave the 0..1 cube, so every distinct tone stays a
+ * distinct colour whatever the palette.
+ *
+ * At jitter 0 the mix amount is exactly 0, so the chip is the role colour to the
+ * bit. Trivially mirrorable — one GLSL mix(), no clamp, no branch:
+ *
+ *   col = mix(col, vec3(step(0.5, tone)), abs(tone - 0.5) * u_jitter * ${CHIP_TONE_RANGE});
  */
 export function chipTone(c: [number, number, number], tone: number, jitter: number): [number, number, number] {
-  const k = 1 + (tone - 0.5) * clamp01(jitter) * CHIP_TONE_RANGE
-  return [clamp01(c[0] * k), clamp01(c[1] * k), clamp01(c[2] * k)]
+  const amt = Math.abs(tone - 0.5) * clamp01(jitter) * CHIP_TONE_RANGE
+  const target = tone > 0.5 ? 1 : 0
+  return [c[0] + (target - c[0]) * amt, c[1] + (target - c[1]) * amt, c[2] + (target - c[2]) * amt]
 }
 
 /**

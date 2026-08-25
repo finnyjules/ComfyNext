@@ -43,6 +43,43 @@
 
 **Steps:** implement → unit runs + vue-tsc → commit `feat(texture): chips on the GPU + terrazzo vocabulary for the tuner`.
 
+**GPU handoff (from Task 2 — the CPU twin is on main at `d12586b8c`):**
+
+- **FIRST, the hazard:** `renderer.ts`'s FS dispatches `if (u_mode > 2.5) { …shapes… }`, and
+  chips is MODES index 4. Picking Chips today renders the SHAPES branch — a plausible-looking
+  wrong tile, not a blank one. Re-gate that test (`u_mode > 3.5` → chips, `> 2.5 && < 3.5` →
+  shapes) before anything else, or you will "verify" a pattern that never ran your code.
+- **Import, never retype.** `pattern.ts` exports `CHIP_NEIGHBORHOOD`, `CHIP_R_MIN`,
+  `CHIP_R_MAX`, `CHIP_INK_ROLES`, `CHIP_TONE_RANGE` and the five salts `CHIP_SALT_X/_Y/_R/
+  _ROLE/_TONE` precisely so the FS template literal can interpolate them (`${CHIP_SALT_X}`).
+  Retyped constants are how the twins drift.
+- **The hash needs the per-lane vector**, not the file's existing scalar `cellHash`. Stock
+  hash13 adds 33.33 to all three lanes, which makes it symmetric — `cellHash(1,2) ===
+  cellHash(2,1)` — and mirrors every chip across the tile diagonal:
+  ```glsl
+  float chipHash(float cx, float cy, float salt){
+    vec3 p = fract(vec3(cx, cy, salt) * 0.1031);
+    p += dot(p, p.yzx + vec3(33.33, 41.17, 27.83));
+    return fract((p.x + p.y) * p.z);
+  }
+  ```
+- **Fixed 5×5 window** (`for (int dy = -2; dy <= 2; dy++)`), hashing the WRAPPED cell id
+  (`mod`) but measuring to the UN-wrapped position `jx + f.x`. That split is what makes the
+  tile seamless. 3×3 is not enough — the CPU spec fails at N=1.
+- **F2 must come from a DIFFERENT cell id.** Track `(f1, id1)` and the best distance whose id
+  differs; otherwise at low `chipCells` a chip grouts against its own wrapped image.
+- **Colour:** role 0/1 = the two ink fills, role 2 = ground, resolved through the existing
+  `evalFill(r, …)` path. Jitter is one mix, no clamp, no branch:
+  `col = mix(col, vec3(step(0.5, tone)), abs(tone - 0.5) * u_jitter * ${CHIP_TONE_RANGE});`
+- **Expect low-bit disagreement, not identity.** CPU `Math.hypot` (float64) vs GLSL `length()`
+  (float32) differ in the last bits, so a handful of pixels on chip boundaries will flip. Diff
+  GPU-vs-CPU tiles with a tolerance, the way `pattern-gallery.vue` already does; do not chase
+  an exact match. That page enumerates families explicitly — add a chips group to it to get
+  the parity thumbnails.
+- **Recipe caveat:** chips have exactly TWO ink colours + ground (`CHIP_INK_ROLES = 2`,
+  decided). Write the terrazzo recipe as two-tone-plus-jitter; a third chip colour needs
+  `u_fillType[3]`/`u_fillStops[12]`/`u_strokeRole[3]` and the `r < 3` loop widened first.
+
 ### Task 4: live verification + docs
 
 - Dev server via Browser pane on :3002 (never :3000). In the real canvas: type "make me a seamless terrazzo pattern" → confirm TextureStudio lands configured in chips mode, render READS as terrazzo (screenshot); check a no-op row never appears; check the studio panel shows the Chips section derived (no hand-written rows); tile the export 2x2 mentally/visually for seams. Then: STATE.md (Texture row + landed entry), ROADMAP Act 2 (family 1: started — first engine live), dashboard artifact, memory. Commit docs.

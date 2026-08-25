@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  CHIP_INK_ROLES, CHIP_NEIGHBORHOOD, chipFeature, chipHash, chipSample, patternColor, type RGBA,
+  CHIP_INK_ROLES, CHIP_NEIGHBORHOOD, CHIP_R_MAX, CHIP_R_MIN,
+  chipFeature, chipHash, chipSample, chipTone, patternColor, type RGBA,
 } from '~/lib/texturefx/pattern'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { rolesFor } from '~/lib/texturefx/roles'
@@ -222,6 +223,43 @@ describe('chips roles and colour', () => {
     }
   })
 
+  it('jitter never clips a light palette flat (the studio DEFAULT colours)', () => {
+    // Regression: a multiplicative gain drove 27.5% of default chipA (#e8eef5)
+    // pixels to pure white at jitter 1, collapsing 69 chip tones into 49 colours
+    // — the lightest quarter of the terrazzo went flat. chipTone mixes toward an
+    // endpoint instead, so no pixel can leave the 0..1 cube and every distinct
+    // tone survives as a distinct colour.
+    const p = chipParams({ jitter: 1 })   // default palette: #e8eef5 / #7aa2f7 / #0e1116
+    const tones = new Set<number>(), colours = new Set<string>()
+    let clipped = 0
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const u = (x + 0.5) / 64, v = (y + 0.5) / 64
+        const s = chipSample(u, v, Number(p.chipCells), Number(p.seed), Number(p.chipGrout), Number(p.chipSizeVar))
+        if (s.role !== 0) continue        // the light ink role is where clipping bit
+        tones.add(s.tone)
+        const c = patternColor(p, u, v)
+        if (c[0] >= 1 && c[1] >= 1 && c[2] >= 1) clipped++
+        if (c[0] <= 0 && c[1] <= 0 && c[2] <= 0) clipped++
+        colours.add(c.map(n => n.toFixed(6)).join(','))
+      }
+    }
+    expect(tones.size).toBeGreaterThan(40)          // a real sample of chips, not two
+    expect(clipped, 'pixels crushed to pure white/black').toBe(0)
+    expect(colours.size).toBe(tones.size)           // every tone = its own colour
+  })
+
+  it('chipTone is clip-free for the extreme palettes (white and black chips)', () => {
+    for (const c of [[1, 1, 1], [0, 0, 0]] as [number, number, number][]) {
+      for (const tone of [0, 0.25, 0.5, 0.75, 1]) {
+        const t = chipTone(c, tone, 1)
+        expect(t.every(v => v >= 0 && v <= 1), `${c} tone ${tone} → ${t}`).toBe(true)
+      }
+    }
+    // …and jitter 0 is the identity, to the bit.
+    expect(chipTone([0.31, 0.62, 0.93], 0.9, 0)).toEqual([0.31, 0.62, 0.93])
+  })
+
   it('jitter > 0 → chips shift in tone but the ground stays exact', () => {
     const base = { chipGrout: 0.08, colorA: '#c94f3d', colorB: '#3d6bc9', background: '#f2ede4' }
     const p = chipParams({ ...base, jitter: 1 })
@@ -330,6 +368,44 @@ describe('chips: pinned hash + independent brute force', () => {
 
   it('the search window is wide enough to be mirrored in GLSL as a fixed loop', () => {
     expect(CHIP_NEIGHBORHOOD).toBe(2)   // 5×5 — the shader twin loops the same bounds
+  })
+
+  it('the radius range stays inside the invariant that licenses a 5×5 window', () => {
+    // N = 2 is an EMPIRICAL bound, not a proved one (the proved bound is 4 — see
+    // the CHIP_NEIGHBORHOOD docblock). It holds because the radius spread is
+    // narrow. Widen this ratio and the window silently starts missing winners,
+    // so fail HERE rather than in a render nobody is diffing.
+    expect(CHIP_R_MAX / CHIP_R_MIN).toBeLessThanOrEqual(2.5)
+  })
+
+  it('no feature point OUTSIDE the window ever beats the winner (margin measured)', () => {
+    // Searches rings 3..6 — every candidate the 5×5 window throws away — at the
+    // worst setting (sizeVar 1). If the closest discarded point ever got within
+    // the winning distance, the window would be too small and the tile would
+    // show it as a wrongly-coloured chip.
+    let worst = Infinity
+    for (const C of [4, 6, 9, 12, 17, 24]) {
+      for (const seed of [1, 7, 42]) {
+        for (let y = 0; y < 13; y++) {
+          for (let x = 0; x < 13; x++) {
+            const u = (x + 0.5) / 13, v = (y + 0.5) / 13
+            const f1 = chipSample(u, v, C, seed, 0, 1).f1
+            const gx = u * C, gy = v * C, ix = Math.floor(gx), iy = Math.floor(gy)
+            let best = Infinity
+            for (let dy = -6; dy <= 6; dy++) {
+              for (let dx = -6; dx <= 6; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dy)) <= CHIP_NEIGHBORHOOD) continue
+                const jx = ix + dx, jy = iy + dy
+                const f = chipFeature(((jx % C) + C) % C, ((jy % C) + C) % C, seed, 1)
+                best = Math.min(best, Math.hypot(gx - (jx + f.x), gy - (jy + f.y)) / f.r)
+              }
+            }
+            worst = Math.min(worst, best / f1)
+          }
+        }
+      }
+    }
+    expect(worst, `closest discarded point was ${worst.toFixed(3)}× the winner`).toBeGreaterThan(1.15)
   })
 
   it('chipHash is NOT symmetric in x/y (or the tile mirrors down the diagonal)', () => {
