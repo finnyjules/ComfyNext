@@ -73,11 +73,14 @@ function isVariantsUnsupported(e: unknown): boolean {
   } | null
   const status = err?.statusCode ?? err?.status ?? err?.response?.status
   if (status !== 400) return false
-  // h3 surfaces the tag as statusMessage; ofetch also parses the body into
-  // `.data`, so accept either spelling rather than depending on one layer.
-  return err?.statusMessage === VARIANTS_UNSUPPORTED
+  // `data.code` is the load-bearing one: it is the response BODY the route
+  // wrote, so it survives every transport. The two `statusMessage` spellings
+  // are ofetch's alias for the HTTP reason phrase, which is a courtesy — HTTP/2
+  // has no reason phrase at all, and proxies rewrite it — so they are accepted
+  // as a bonus, never relied on.
+  return err?.data?.data?.code === VARIANTS_UNSUPPORTED
     || err?.data?.statusMessage === VARIANTS_UNSUPPORTED
-    || err?.data?.data?.code === VARIANTS_UNSUPPORTED
+    || err?.statusMessage === VARIANTS_UNSUPPORTED
 }
 
 /** opts.render returns a PNG data URL of the current studio canvas (enables the
