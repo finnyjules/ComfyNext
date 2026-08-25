@@ -91,8 +91,11 @@ export const CHIP_TONE_RANGE = 0.6
  * chip constants (which renderer.ts interpolates straight into its GLSL template
  * literal), the salts reach the GPU as a UNIFORM: chipSaltLanes() there folds
  * each `seed + salt` through the hash's first step in float64 and uploads the
- * 0..1 result, because a float32 ulp at a six-digit Roll seed is wide enough to
- * swallow the salt whole. Either way — never retype the numbers in the shader.
+ * 0..1 result. The reason is that chipHash AMPLIFIES — a ~1e-4 error in that
+ * lane leaves as a full-range change, so float32's rounding of `seed + salt`
+ * (harmless-looking: the ulp never even reaches the smallest salt) rewrites the
+ * field wholesale, ~47% of the tile already at seed 12345. Either way — never
+ * retype the numbers in the shader.
  */
 export const CHIP_SALT_X = 0.317
 export const CHIP_SALT_Y = 1.523

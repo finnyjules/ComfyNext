@@ -220,10 +220,16 @@ float cellHash(float cx, float cy, float salt){
 //  2. The third lane arrives PRE-HASHED as fract((seed + salt) * 0.1031),
 //     computed in float64 by chipSaltLanes() below, rather than being derived
 //     here from a raw seed + salt. Algebraically the identical expression, one
-//     step earlier — but Roll hands out seeds up to 1e6, where a float32 ulp is
-//     0.0625, big enough to quantise the salt away and reshuffle the whole tile.
-//     A 0..1 lane value survives float32 to ~1e-7, which is the low-bit
-//     disagreement the CPU/GPU parity check already tolerates.
+//     step earlier — but this hash AMPLIFIES: the dot() lifts every lane to
+//     ~1e2 and the final fract() multiplies two of them, so a ~1e-4 error in
+//     the input lane comes out as a full-range change in the result, not a
+//     small one. Rounding seed + salt to float32 is exactly that error at a
+//     four-digit seed (at seed 12345 the ulp is ~0.001 → ~1e-4 after the
+//     ×0.1031), and it was measured to destroy 47% of the tile. It is NOT that
+//     the ulp swallows the salt (0.0625 < 0.317 even at seed 1e6) — the salt
+//     survives, just not to enough digits. So the raw seed must never enter the
+//     shader. A 0..1 lane value survives float32 to ~1e-7, which lands inside
+//     the low-bit disagreement the CPU/GPU parity check already tolerates.
 float chipHash(float cx, float cy, float pz){
   vec3 p = vec3(fract(cx * 0.1031), fract(cy * 0.1031), pz);
   p += dot(p, p.yzx + vec3(33.33, 41.17, 27.83));
@@ -740,10 +746,13 @@ void main(){
  *
  * Each entry is `fract((seed + salt) * 0.1031)` — the third lane of pattern.ts's
  * chipHash(), lifted out of the shader and evaluated in float64 here. The shader
- * cannot do it: Roll hands out seeds up to 1e6, and a float32 ulp up there is
- * 0.0625, which swallows the salts (0.317 … 4.507) whole and reshuffles every
- * chip. A 0..1 fraction survives the upload to ~1e-7, so the two twins stay
- * inside the low-bit tolerance the parity check allows.
+ * cannot do it, because the hash amplifies its input by ~1e4: rounding
+ * `seed + salt` to float32 perturbs this lane by ~1e-4 at a four-digit seed,
+ * and that comes back out as a full-range flip — measured at 47% of the tile
+ * already at seed 12345, and Roll goes to 1e6. (The failure is amplification,
+ * not the salt vanishing: a float32 ulp is 0.0625 even at 1e6, well under the
+ * smallest salt.) A 0..1 fraction survives the upload to ~1e-7, so the two twins
+ * stay inside the low-bit tolerance the parity check allows.
  *
  * Exported for the unit test, which reconstructs chipHash() from a lane and
  * checks it equals pattern.ts's chipHash() — that identity is the whole licence

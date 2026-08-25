@@ -450,6 +450,9 @@ describe('chips shader branch', () => {
     const end = TEXTURE_FS.indexOf('if (u_mode > 2.5)')
     return TEXTURE_FS.slice(start, end)
   })()
+  /** The shader with its // comments stripped — for assertions about what the
+   *  GLSL *computes*, which a docblock quoting a number must not be able to fool. */
+  const fsCode = TEXTURE_FS.replace(/\/\/.*$/gm, '')
 
   it('gates on the chips MODE INDEX, and gates before the shapes branch', () => {
     // The hazard this test exists for: the shapes gate is a bare `u_mode > 2.5`,
@@ -474,11 +477,12 @@ describe('chips shader branch', () => {
     expect(chipsBranch).toContain(`float(${CHIP_R_MAX})`)
     expect(chipsBranch).toContain(`float(${CHIP_TONE_RANGE})`)
     expect(chipsBranch).toContain(`evalFill(${CHIP_INK_ROLES}, fc, v_uv)`)   // ground = grout
-    // The salts never appear in GLSL at all — they are folded into the
-    // u_chipSalt lanes on the JS side (chipSaltLanes), so a literal here would
-    // mean someone hand-typed one.
+    // The salts never appear in GLSL CODE at all — they are folded into the
+    // u_chipSalt lanes on the JS side (chipSaltLanes), so a literal in the code
+    // would mean someone hand-typed one. (Comments may quote them: chipHash's
+    // docblock cites 0.317 to show the ulp never reaches the smallest salt.)
     for (const s of [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE]) {
-      expect(TEXTURE_FS, `salt ${s} hand-typed into the shader`).not.toContain(String(s))
+      expect(fsCode, `salt ${s} hand-typed into the shader`).not.toContain(String(s))
     }
   })
 
@@ -500,7 +504,20 @@ describe('chips shader branch', () => {
   })
 
   it('jitter is one mix toward white/black — no clamp on the colour, no branch', () => {
-    expect(chipsBranch).toContain('col = mix(col, vec3(step(0.5, tone)), abs(tone - 0.5) * clamp(u_jitter, 0.0, 1.0) * float(0.6));')
+    expect(chipsBranch).toContain(`col = mix(col, vec3(step(0.5, tone)), abs(tone - 0.5) * clamp(u_jitter, 0.0, 1.0) * float(${CHIP_TONE_RANGE}));`)
+  })
+
+  it('reads each salt lane at the index chipSaltLanes() wrote it to', () => {
+    // The lane order (X, Y, R, ROLE, TONE) lives in two places — the array
+    // chipSaltLanes() returns and the indices used here — and NOTHING else
+    // checks it: swap [3] and [4] and every other test still passes while the
+    // tile renders a plausible wrong field (chips take their neighbour's ink
+    // and jitter rides the role hash). So pin all five call sites, not just the
+    // two positions that happen to appear in the seam assertion above.
+    expect(chipsBranch, 'X/Y lanes feed the feature point').toContain('vec2 fp = vec2(jx + chipHash(cx, cy, u_chipSalt[0]), jy + chipHash(cx, cy, u_chipSalt[1]));')
+    expect(chipsBranch, 'lane 2 is the RADIUS spread').toContain(`float spread = float(${CHIP_R_MIN}) + chipHash(cx, cy, u_chipSalt[2])`)
+    expect(chipsBranch, 'lane 3 is the ROLE pick').toContain(`floor(chipHash(cx1, cy1, u_chipSalt[3]) * float(${CHIP_INK_ROLES}))`)
+    expect(chipsBranch, 'lane 4 is the TONE').toContain('float tone = chipHash(cx1, cy1, u_chipSalt[4]);')
   })
 
   it('every chip uniform the shader declares is actually uploaded by render()', () => {
@@ -517,9 +534,19 @@ describe('chips shader branch', () => {
 })
 
 describe('chipSaltLanes (the float32 seed hazard)', () => {
-  /** chipHash exactly as the GLSL computes it: the third lane arrives already
-   *  hashed. If this stops equalling pattern.ts's chipHash, the shader is
-   *  computing a different field from the CPU and every chips tile drifts. */
+  /**
+   * chipHash with the third lane arriving already hashed — the shape the GLSL
+   * twin uses. If this stops equalling pattern.ts's chipHash, hashing the salt
+   * early is no longer the same function and every chips tile drifts.
+   *
+   * READ THIS BEFORE TRUSTING IT: this body is HAND-WRITTEN from the shader, not
+   * derived from TEXTURE_FS — nothing here executes GLSL (that needs a GL
+   * context). So it proves the ALGEBRA of the pre-hash, and nothing about what
+   * the shader actually contains. The shader body is pinned separately, by the
+   * source assertions above: the per-lane `vec3(33.33, 41.17, 27.83)` constant,
+   * the salt-lane indices, and the F2/window/jitter lines. Edit the GLSL hash
+   * and this test keeps passing — the vec3 assertion is what fails.
+   */
   const glslChipHash = (cx: number, cy: number, pz: number) => {
     const fr = (x: number) => x - Math.floor(x)
     let px = fr(cx * 0.1031), py = fr(cy * 0.1031), pzz = pz
