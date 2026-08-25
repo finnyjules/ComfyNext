@@ -92,36 +92,97 @@ export interface VibeTake { label: string, changes: VibeChange[], rationale: str
  */
 export const VARIANTS_UNSUPPORTED = 'variants_unsupported'
 
-/** Server-side count/shape guard for a takes response. TAKES_SCHEMA cannot
- *  declare the 2–4 count itself (structured outputs rejects `maxItems`; see
- *  the comment on TAKES_SCHEMA above) — this is the ONLY place the count is
- *  actually enforced, not belt-and-suspenders on top of a schema-level bound.
- *  It also guards label-is-just-a-string, since a model can still return
- *  prose that merely parses as JSON. Returns null (never throws) on anything
- *  malformed; the route turns
- *  that into its existing 502. Does NOT clamp or validate control keys/values
- *  — that stays validatePatch's job on the client, exactly as it is today for
- *  the single-patch path. */
-export function parseTakesResponse(raw: unknown): VibeTake[] | null {
-  if (!raw || typeof raw !== 'object') return null
-  const takes = (raw as any).takes
-  if (!Array.isArray(takes) || takes.length < 2 || takes.length > 4) return null
-  const out: VibeTake[] = []
-  for (const t of takes) {
-    if (!t || typeof t !== 'object') return null
-    const { label, changes, rationale } = t as any
-    if (typeof label !== 'string' || !label.length || label.length > 24) return null
-    if (typeof rationale !== 'string') return null
-    if (!Array.isArray(changes)) return null
+/** Marks the 502 /api/vibe raises when a takes response could not be
+ *  salvaged into anything usable at all (see `parseTakesResponse`) — distinct
+ *  from the generic single-tune "Malformed response from Claude" 502, so the
+ *  network tab (and a future client branch) can tell "the model drifted but a
+ *  real take, or a single-patch degrade, still came out of it" from "there
+ *  was truly nothing here". */
+export const TAKES_UNSALVAGEABLE = 'takes_unsalvageable'
+
+const MAX_LABEL_CHARS = 24
+
+/** Truncates an over-length label to exactly MAX_LABEL_CHARS, ending "…". */
+function truncateLabel(label: string): string {
+  return label.length > MAX_LABEL_CHARS ? `${label.slice(0, MAX_LABEL_CHARS - 1)}…` : label
+}
+
+/** An unusable label (empty, whitespace, or never a string) is rebuilt from
+ *  the take's OWN rationale — its first few words, so the label still reads
+ *  as an angle rather than a placeholder — never from anything invented.
+ *  Falls back to "take N" (1-based position among the takes considered) only
+ *  when the rationale has nothing usable either. */
+function synthesizeLabel(rationale: string, index: number): string {
+  const words = rationale.trim().split(/\s+/).filter(Boolean).slice(0, 3).join(' ')
+  return truncateLabel(words || `take ${index + 1}`)
+}
+
+export interface TakesSalvage {
+  /** 0, 1, or 2–4 salvaged takes. The route decides the response shape from
+   *  this count: 0 → a legitimate 502 (`reason` explains why); 1 → today's
+   *  single-patch shape, which the client's existing degrade path already
+   *  renders; 2–4 → the takes response shape. */
+  takes: VibeTake[]
+  /** Set only when `takes` is empty — why nothing survived, for the 502 body
+   *  and the server console. */
+  reason?: string
+}
+
+/**
+ * Server-side salvage of a takes response — tolerant on purpose. TAKES_SCHEMA
+ * cannot enforce the 2–4 count or the 24-char label bound on the wire
+ * (structured outputs rejects `maxItems`/`maxLength`; see the comment on
+ * TAKES_SCHEMA above), so a reply that drifts from the ask — five takes, an
+ * empty label, one bad change entry mixed into an otherwise-good take — is
+ * ROUTINE, not corruption. Refusing the whole response over one bad field
+ * turned a cosmetic slip into a hard 502 for every live call; this salvages
+ * what it can and only gives up (empty `takes`) when nothing in the reply was
+ * usable:
+ *
+ * - More than 4 takes: the first 4 are considered, the rest dropped.
+ * - A label over 24 chars: truncated to 24 with a trailing "…".
+ * - A label that is empty, whitespace, or not a string: synthesized from the
+ *   take's own rationale (see `synthesizeLabel` — never invents new words).
+ * - A malformed `changes` ENTRY (missing key/value, wrong type): that entry
+ *   is dropped, not the whole take. Every surviving entry's key/value pass
+ *   through UNTOUCHED — salvage never invents or edits a change.
+ * - A take whose `changes` FIELD itself isn't an array at all (not just one
+ *   bad entry in it) can't be salvaged and is dropped outright.
+ * - A take left with zero changes after entry-dropping is noise UNLESS at
+ *   least one other take (among those considered) has real changes — then it
+ *   rides along as a harmless "no change" option; if every take considered
+ *   ends up empty, none of them are worth keeping.
+ *
+ * Never clamps or range-checks a value — that stays validatePatch's job on
+ * the client, exactly as it is for the single-patch path today.
+ */
+export function parseTakesResponse(raw: unknown): TakesSalvage {
+  if (!raw || typeof raw !== 'object') return { takes: [], reason: 'response body is not an object' }
+  const rawTakes = (raw as any).takes
+  if (!Array.isArray(rawTakes) || !rawTakes.length) return { takes: [], reason: '"takes" is missing, not an array, or empty' }
+
+  const considered = rawTakes.slice(0, 4)
+  const candidates: VibeTake[] = []
+  considered.forEach((t: unknown, i: number) => {
+    if (!t || typeof t !== 'object') return
+    const { label: rawLabel, changes: rawChanges, rationale: rawRationale } = t as any
+    if (!Array.isArray(rawChanges)) return // the field itself is broken — nothing to salvage
+    const rationale = typeof rawRationale === 'string' ? rawRationale : ''
     const cleanChanges: VibeChange[] = []
-    for (const c of changes) {
-      if (!c || typeof c !== 'object' || typeof c.key !== 'string') return null
-      if (typeof c.value !== 'string' && typeof c.value !== 'number') return null
-      cleanChanges.push({ key: c.key, value: c.value })
+    for (const c of rawChanges) {
+      if (!c || typeof c !== 'object' || typeof c.key !== 'string') continue
+      if (typeof c.value !== 'string' && typeof c.value !== 'number') continue
+      cleanChanges.push({ key: c.key, value: c.value }) // pass-through — no synthesis
     }
-    out.push({ label, changes: cleanChanges, rationale })
-  }
-  return out
+    const trimmedLabel = typeof rawLabel === 'string' ? rawLabel.trim() : ''
+    const label = trimmedLabel ? truncateLabel(trimmedLabel) : synthesizeLabel(rationale, i)
+    candidates.push({ label, changes: cleanChanges, rationale })
+  })
+
+  if (!candidates.length) return { takes: [], reason: 'no take in the response had a usable shape' }
+  if (!candidates.some(c => c.changes.length > 0)) return { takes: [], reason: 'every take had zero valid changes' }
+
+  return { takes: candidates }
 }
 
 /** Multi-take instruction block, appended to the base prompt only when

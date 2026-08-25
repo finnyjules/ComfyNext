@@ -3,7 +3,7 @@
 // no SDK. Haiku + structured outputs keep it fast and ~half a cent per ask.
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
-import { VIBE_SCHEMA, TAKES_SCHEMA, VARIANTS_UNSUPPORTED, buildVibePrompt, parseTakesResponse } from '~/lib/vibePrompt'
+import { VIBE_SCHEMA, TAKES_SCHEMA, VARIANTS_UNSUPPORTED, TAKES_UNSALVAGEABLE, buildVibePrompt, parseTakesResponse, type VibeChange, type VibeTake } from '~/lib/vibePrompt'
 import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, optionalVariants, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { meterAssist } from '../utils/anthropicMeter'
 
@@ -39,6 +39,34 @@ export function parseVariants(raw: unknown): number | undefined {
       message: e?.message || 'variants must be an integer between 2 and 4',
       data: { code: VARIANTS_UNSUPPORTED },
     })
+  }
+}
+
+/** What this route answers with once `parseTakesResponse` has salvaged what it
+ *  can from a takes reply — pure, so a unit test can inspect the shape
+ *  directly without going through h3/fetch. `takes.length`:
+ *   - 0 → an `error` object (never thrown here) the route turns into a 502
+ *     tagged TAKES_UNSALVAGEABLE, distinct from the generic malformed-JSON
+ *     502 below — this one carries WHY (the salvage `reason`).
+ *   - 1 → today's single-patch shape ({changes, rationale}). The client's
+ *     `requestTakes` already renders whatever shape it gets that ISN'T
+ *     `{takes: [...]}` as a single proposal (see useVibeControl.ts) — one
+ *     surviving take needs no new client branch, just this server-side map.
+ *   - 2–4 → the takes shape, unchanged from Task 1. */
+export function shapeTakesResponse(parsed: unknown):
+  | { changes: VibeChange[], rationale: string }
+  | { takes: VibeTake[] }
+  | { error: { statusCode: number, statusMessage: string, message: string, data: { code: string, reason?: string } } } {
+  const { takes, reason } = parseTakesResponse(parsed)
+  if (takes.length >= 2) return { takes }
+  if (takes.length === 1) return { changes: takes[0]!.changes, rationale: takes[0]!.rationale }
+  return {
+    error: {
+      statusCode: 502,
+      statusMessage: TAKES_UNSALVAGEABLE,
+      message: `Could not read any takes from Claude's reply (${reason ?? 'unknown reason'})`,
+      data: { code: TAKES_UNSALVAGEABLE, reason },
+    },
   }
 }
 
@@ -85,9 +113,14 @@ export default defineEventHandler(async (event) => {
     try {
       const parsed = JSON.parse(text)
       if (variants) {
-        const takes = parseTakesResponse(parsed)
-        if (!takes) throw createError({ statusCode: 502, message: 'Malformed response from Claude' })
-        return { takes }
+        const shaped = shapeTakesResponse(parsed)
+        if ('error' in shaped) {
+          // Salvage genuinely found nothing — this is the one case worth a
+          // human's eyes on the model's actual reply, not just the reason.
+          console.error('[vibe] takes response unsalvageable:', shaped.error.data.reason, '—', text.slice(0, 500))
+          throw createError(shaped.error)
+        }
+        return shaped
       }
       return { changes: parsed.changes ?? [], rationale: parsed.rationale ?? '' }
     }

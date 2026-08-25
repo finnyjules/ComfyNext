@@ -26,6 +26,11 @@ import { makeConfigParams } from '~/lib/agent/configParams'
 import { readTakeLog, TAKE_LOG_KEY, type StudioTake } from '~/lib/agent/takes'
 import { VARIANTS_UNSUPPORTED } from '~/lib/vibePrompt'
 import type { ControlSpec } from '~/lib/spacetype/effect'
+// The actual server-side salvage function (live owner report #2), not a
+// hand-typed stand-in for it — proves the wire-through end to end: a raw
+// model reply too ragged for the old hard-502 path, run through the SAME
+// function /api/vibe calls, produces exactly what the client is fed below.
+import { shapeTakesResponse } from '../../server/api/vibe.post'
 
 const CONTROLS: ControlSpec[] = [
   { key: 'hue', label: 'Hue', kind: 'slider', min: 0, max: 360, step: 1, default: 0 },
@@ -496,6 +501,35 @@ describe('useStudioAgent — degrading to today’s single tune', () => {
     expect(agent.hasProposal.value).toBe(true)
     expect(config.hue).toBe(40)
     expect(fetchMock.mock.calls).toHaveLength(1)
+  })
+
+  it('wire-through: a ragged model reply salvaged server-side to ONE take renders as a proposal, not a broken strip', async () => {
+    // A raw takes reply the old hard-502 path would have refused outright:
+    // five takes (over the 4 cap) where four are fully unsalvageable (their
+    // `changes` field isn't even an array) and only one has a usable shape.
+    // Run it through the REAL server function, then hand the client exactly
+    // what /api/vibe would have sent over the wire.
+    const shaped = shapeTakesResponse({
+      takes: [
+        { label: 'only', changes: [{ key: 'hue', value: 40 }], rationale: 'warmer' },
+        { label: 'junk1', changes: 'nope', rationale: 'r' },
+        { label: 'junk2', changes: null, rationale: 'r' },
+        { label: 'junk3', changes: 42, rationale: 'r' },
+        { label: 'junk4', changes: {}, rationale: 'r' },
+      ],
+    })
+    expect(shaped).toEqual({ changes: [{ key: 'hue', value: 40 }], rationale: 'warmer' })
+
+    fetchMock.mockResolvedValue(shaped)
+    const { agent, config } = makeAgent()
+
+    await agent.ask('warmer')
+
+    expect(agent.hasTakes.value).toBe(false)
+    expect(agent.hasProposal.value).toBe(true)
+    expect(agent.changes.value[0]!.after).toBe('40')
+    expect(config.hue).toBe(40)
+    expect(fetchMock.mock.calls).toHaveLength(1) // usable on arrival — no retry paid for
   })
 
   it('a studio that opted out of takes never sends variants', async () => {

@@ -13,10 +13,11 @@ import {
   VIBE_SCHEMA,
   TAKES_SCHEMA,
   VARIANTS_UNSUPPORTED,
+  TAKES_UNSALVAGEABLE,
   buildVibePrompt,
   parseTakesResponse,
 } from '~/lib/vibePrompt'
-import { buildVibeRequestBody, parseVariants } from '../../server/api/vibe.post'
+import { buildVibeRequestBody, parseVariants, shapeTakesResponse } from '../../server/api/vibe.post'
 
 const CONTROLS: ControlSpec[] = [
   { key: 'depth', label: 'Depth', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.5, hint: 'higher = deeper' },
@@ -147,6 +148,12 @@ describe('parseVariants: the rejection is NAMED, not just a 400', () => {
   })
 })
 
+// Live owner report #2: a82fba323 dropped minItems/maxItems from the wire
+// schema (Anthropic 400s on both), which made parseTakesResponse the ONLY
+// enforcement of shape — and it used to treat any deviation as a hard 502.
+// A model returning 5 takes, 1 take, or a 25-char label killed the whole
+// request. These specs pin the SALVAGE posture instead: keep what's usable,
+// only give up when nothing survives.
 describe('parseTakesResponse: server-side count/shape validation', () => {
   const good = (n: number) => ({
     takes: Array.from({ length: n }, (_, i) => ({
@@ -157,37 +164,176 @@ describe('parseTakesResponse: server-side count/shape validation', () => {
   })
 
   it('accepts 2–4 well-shaped takes', () => {
-    expect(parseTakesResponse(good(2))).not.toBeNull()
-    expect(parseTakesResponse(good(4))).not.toBeNull()
-    expect(parseTakesResponse(good(2))).toHaveLength(2)
+    expect(parseTakesResponse(good(2)).takes).toHaveLength(2)
+    expect(parseTakesResponse(good(4)).takes).toHaveLength(4)
   })
 
-  it('rejects fewer than 2 or more than 4', () => {
-    expect(parseTakesResponse(good(1))).toBeNull()
-    expect(parseTakesResponse(good(5))).toBeNull()
-  })
-
-  it('rejects a label over 24 chars', () => {
-    const bad = good(2)
-    bad.takes[0].label = 'a'.repeat(25)
-    expect(parseTakesResponse(bad)).toBeNull()
-  })
-
-  it('rejects a malformed changes entry', () => {
-    const bad: any = good(2)
-    bad.takes[0].changes = [{ key: 'depth' }] // missing value
-    expect(parseTakesResponse(bad)).toBeNull()
-  })
-
-  it('rejects non-object / missing takes', () => {
-    expect(parseTakesResponse(null)).toBeNull()
-    expect(parseTakesResponse({})).toBeNull()
-    expect(parseTakesResponse({ takes: 'nope' })).toBeNull()
+  it('rejects non-object / missing takes — nothing to salvage at all', () => {
+    expect(parseTakesResponse(null)).toEqual({ takes: [], reason: expect.any(String) })
+    expect(parseTakesResponse({})).toEqual({ takes: [], reason: expect.any(String) })
+    expect(parseTakesResponse({ takes: 'nope' })).toEqual({ takes: [], reason: expect.any(String) })
+    expect(parseTakesResponse({ takes: [] })).toEqual({ takes: [], reason: expect.any(String) })
   })
 
   it('does NOT clamp values — that stays validatePatch\'s job client-side', () => {
     const takes = good(2)
     takes.takes[0].changes[0].value = 99 // out of the 0..1 slider range
-    expect(parseTakesResponse(takes)![0].changes[0].value).toBe(99)
+    expect(parseTakesResponse(takes).takes[0]!.changes[0]!.value).toBe(99)
+  })
+})
+
+describe('parseTakesResponse: salvage tolerance (live owner report #2)', () => {
+  it('more than 4 takes: keeps the first 4, drops the rest', () => {
+    const raw = {
+      takes: Array.from({ length: 5 }, (_, i) => ({
+        label: `take ${i}`,
+        changes: [{ key: 'depth', value: i / 10 }],
+        rationale: 'r',
+      })),
+    }
+    const { takes } = parseTakesResponse(raw)
+    expect(takes).toHaveLength(4)
+    expect(takes.map(t => t.label)).toEqual(['take 0', 'take 1', 'take 2', 'take 3'])
+  })
+
+  it('a label over 24 chars is truncated to 24 with a trailing "…", not rejected', () => {
+    const label = 'a'.repeat(30)
+    const { takes } = parseTakesResponse({
+      takes: [
+        { label, changes: [{ key: 'depth', value: 0.5 }], rationale: 'r' },
+        { label: 'fine', changes: [{ key: 'depth', value: 0.6 }], rationale: 'r' },
+      ],
+    })
+    expect(takes[0]!.label).toHaveLength(24)
+    expect(takes[0]!.label.endsWith('…')).toBe(true)
+    expect(takes[0]!.label.startsWith('a'.repeat(23))).toBe(true)
+  })
+
+  it('an empty/whitespace label is synthesized from the take\'s own rationale, not rejected', () => {
+    const { takes } = parseTakesResponse({
+      takes: [
+        { label: '   ', changes: [{ key: 'depth', value: 0.5 }], rationale: 'pushes it warmer and brighter' },
+        { label: 42, changes: [{ key: 'depth', value: 0.6 }], rationale: '' }, // wrong type entirely
+        { label: 'fine', changes: [{ key: 'depth', value: 0.7 }], rationale: 'r' },
+      ],
+    })
+    expect(takes[0]!.label).toBe('pushes it warmer')
+    expect(takes[1]!.label).toBe('take 2') // no usable rationale either — positional fallback
+  })
+
+  it('a malformed changes ENTRY is dropped, the take survives with its other entries', () => {
+    const { takes } = parseTakesResponse({
+      takes: [
+        {
+          label: 'mixed',
+          changes: [
+            { key: 'depth', value: 0.5 }, // good
+            { key: 'depth' }, // missing value — dropped
+            { value: 0.5 }, // missing key — dropped
+            { key: 'palette', value: { nested: true } }, // wrong value type — dropped
+            { key: 'palette', value: 'warm' }, // good
+          ],
+          rationale: 'r',
+        },
+        { label: 'other', changes: [{ key: 'depth', value: 0.6 }], rationale: 'r' },
+      ],
+    })
+    expect(takes[0]!.changes).toEqual([{ key: 'depth', value: 0.5 }, { key: 'palette', value: 'warm' }])
+  })
+
+  it('a take whose changes FIELD (not just an entry) is broken is dropped outright', () => {
+    const { takes } = parseTakesResponse({
+      takes: [
+        { label: 'broken', changes: 'not an array', rationale: 'r' },
+        { label: 'other', changes: [{ key: 'depth', value: 0.6 }], rationale: 'r' },
+      ],
+    })
+    expect(takes).toHaveLength(1)
+    expect(takes[0]!.label).toBe('other')
+  })
+
+  it('a zero-change take rides along when others have real changes', () => {
+    const { takes } = parseTakesResponse({
+      takes: [
+        { label: 'empty', changes: [{ key: 'nope-not-really-empty-but-all-bad', value: {} }], rationale: 'r' },
+        { label: 'real', changes: [{ key: 'depth', value: 0.6 }], rationale: 'r' },
+      ],
+    })
+    expect(takes).toHaveLength(2)
+    expect(takes.find(t => t.label === 'empty')!.changes).toEqual([])
+  })
+
+  it('zero valid takes → empty result with a reason, when EVERY take is empty noise', () => {
+    const { takes, reason } = parseTakesResponse({
+      takes: [
+        { label: 'a', changes: [{ key: 'x', value: {} }], rationale: 'r' },
+        { label: 'b', changes: [], rationale: 'r' },
+      ],
+    })
+    expect(takes).toEqual([])
+    expect(reason).toEqual(expect.any(String))
+  })
+
+  it('exactly 1 valid take survives when the other take is fully unsalvageable', () => {
+    const { takes } = parseTakesResponse({
+      takes: [
+        { label: 'only', changes: [{ key: 'depth', value: 0.5 }], rationale: 'r' },
+        { label: 'junk', changes: 'nope', rationale: 'r' },
+      ],
+    })
+    expect(takes).toHaveLength(1)
+    expect(takes[0]!.label).toBe('only')
+  })
+
+  it('never invents a change: every surviving key/value is byte-identical to the input, never a new one', () => {
+    const raw = {
+      takes: [
+        { label: 'x', changes: [{ key: 'depth', value: 0.42 }, { key: 'palette', value: 'mono' }], rationale: 'r' },
+        { label: 'y', changes: [{ key: 'depth', value: 0.9 }], rationale: 'r' },
+      ],
+    }
+    const { takes } = parseTakesResponse(raw)
+    // Same length as the well-formed input's changes — nothing added, nothing coerced.
+    expect(takes[0]!.changes).toEqual(raw.takes[0]!.changes)
+    expect(takes[1]!.changes).toEqual(raw.takes[1]!.changes)
+  })
+})
+
+describe('shapeTakesResponse: what the route actually answers with', () => {
+  it('2–4 salvaged takes → the takes shape', () => {
+    const shaped = shapeTakesResponse({
+      takes: [
+        { label: 'a', changes: [{ key: 'depth', value: 0.5 }], rationale: 'r' },
+        { label: 'b', changes: [{ key: 'depth', value: 0.6 }], rationale: 'r' },
+      ],
+    })
+    expect(shaped).toEqual({
+      takes: [
+        { label: 'a', changes: [{ key: 'depth', value: 0.5 }], rationale: 'r' },
+        { label: 'b', changes: [{ key: 'depth', value: 0.6 }], rationale: 'r' },
+      ],
+    })
+  })
+
+  it('exactly 1 salvaged take → today\'s single-tune shape, not a takes array of one', () => {
+    const shaped: any = shapeTakesResponse({
+      takes: [
+        { label: 'only', changes: [{ key: 'depth', value: 0.5 }], rationale: 'warmer' },
+        { label: 'junk', changes: 'nope', rationale: 'r' },
+      ],
+    })
+    expect(shaped).toEqual({ changes: [{ key: 'depth', value: 0.5 }], rationale: 'warmer' })
+    expect(shaped.takes).toBeUndefined()
+  })
+
+  it('0 salvaged takes → an error object tagged TAKES_UNSALVAGEABLE, distinct from the generic malformed-JSON 502', () => {
+    const shaped: any = shapeTakesResponse({ takes: [] })
+    expect(shaped.error).toMatchObject({
+      statusCode: 502,
+      statusMessage: TAKES_UNSALVAGEABLE,
+      data: { code: TAKES_UNSALVAGEABLE },
+    })
+    expect(shaped.error.data.reason).toEqual(expect.any(String))
+    expect(shaped.error.message).not.toBe('Malformed response from Claude')
   })
 })
