@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The five fast studios' describe bars return four labeled takes in a filmstrip (yours-first), hover-preview live, keep/undo/dismiss, two-stage diverge→converge, picks logged. Spec: `docs/superpowers/specs/2026-08-25-four-takes-design.md` (binding).
+**Goal:** The fast studios' describe bars return four labeled takes in a filmstrip (yours-first), hover-preview live, keep/undo/dismiss, two-stage diverge→converge, picks logged. Spec: `docs/superpowers/specs/2026-08-25-four-takes-design.md` (binding).
 
 **Architecture:** Extend `/api/vibe` with `variants` (strict TAKES_SCHEMA; absent → byte-identical today-behavior). One shared TakeStrip component; per-studio thumbnail adapters over EXISTING bake/preview machinery; parametric neighbor-spread is pure seeded math; pick log is a bounded localStorage ring.
 
@@ -37,7 +37,7 @@
 - [ ] Find each studio's smallest real render seam (they exist: bakes/capsules/gallery); do NOT reimplement any renderer. Note per adapter which fn it wraps in a comment.
 - [ ] Commit `feat(studio): take thumbnails ride each studio's own renderer`.
 
-### Task 4: Wire the five studios
+### Task 4: Wire the studios (four of the five — Pattern deferred, see the spec amendment)
 
 **Files:** the in-studio agent seam (`frontend/app/composables/useStudioAgent.ts` / `useVibeControl.ts` — read first, choose the single choke-point so all five studios get the strip from ONE wiring change if possible; per-surface template additions only where the bar mounts), five surface files (mount point only — CAUTION ShaderStudioSurface.vue carries foreign WIP; keep its hunk minimal + own-hunks staging), plus `frontend/tests/unit/studio-agent-takes.unit.spec.ts`.
 **Interfaces:** describe-bar submit → vibe with variants:4 → thumbs rendered async → strip shown; hover applies take config non-destructively (ORIGINAL config captured once; restore on unhover/dismiss/esc — byte-equality test); keep routes through the studio's existing apply/accept path (undo integration follows from that path); single-tune canvas path untouched (characterization: studioTune specs stay green, zero diffs).
@@ -46,5 +46,5 @@
 
 ### Task 5: Live verification + docs
 
-- [ ] Dev server :3002 via Browser pane. In Gradient + Pattern at minimum: type a look → strip appears with 4 labeled takes + yours-first; hover swaps preview live and restores; keep commits; yours-click restores; ≈ variations spreads around pick; ↻ re-rolls; esc dismisses clean; console clean; screenshot each stage. Verify single-node canvas tune (prompt bar) still behaves exactly as before (no strip there).
+- [ ] Dev server :3002 via Browser pane. In Gradient + one more of the wired four (Shader / Shape / Vector Type) at minimum — **Pattern is NOT wired; it follows with its own task, see the spec amendment**: type a look → strip appears with 4 labeled takes + yours-first; hover swaps preview live and restores; keep commits; yours-click restores; ≈ variations spreads around pick; ↻ re-rolls; esc dismisses clean; console clean; screenshot each stage. Verify single-node canvas tune (prompt bar) still behaves exactly as before (no strip there).
 - [ ] Docs: STATE.md entry + strategy doc note; dashboard — MERGE with the other session's live version (it republished twice: WebFetch the live artifact FIRST, apply masthead/Act-1 edits on top of THEIR content, republish); memory (four-takes-landed + pick-log pointer); ledger. Append verification record to this plan.

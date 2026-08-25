@@ -33,10 +33,19 @@ const agentActive = computed(() => {
 // simply reports false and the shell is unchanged for it.
 const hasTakes = computed(() => !!props.agent?.hasTakes?.value)
 
+/** Closing with a take strip open must put the original back FIRST — a studio
+ *  saves on close, so leaving a previewed take applied would persist it as if
+ *  the user had pressed Keep. Runs before the close emit, and therefore before
+ *  the surface's own save. */
+function requestClose() {
+  props.agent?.abandonTakes?.()
+  emit('close')
+}
+
 const rootEl = ref<HTMLElement | null>(null)
 function onKeydown(e: KeyboardEvent) {
   if (e.defaultPrevented) return
-  if (e.key === 'Escape') { e.stopPropagation(); emit('close') }
+  if (e.key === 'Escape') { e.stopPropagation(); requestClose() }
 }
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
@@ -57,7 +66,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </template>
         <span class="flex-1"></span>
         <span class="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-white/30">esc</span>
-        <button type="button" aria-label="Close" @click="emit('close')"
+        <button type="button" aria-label="Close" @click="requestClose()"
                 class="text-white/45 transition-colors hover:text-white/80">✕</button>
       </div>
       <div class="flex min-h-0 flex-1 gap-4 p-4">

@@ -12,10 +12,11 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import {
   VIBE_SCHEMA,
   TAKES_SCHEMA,
+  VARIANTS_UNSUPPORTED,
   buildVibePrompt,
   parseTakesResponse,
 } from '~/lib/vibePrompt'
-import { buildVibeRequestBody } from '../../server/api/vibe.post'
+import { buildVibeRequestBody, parseVariants } from '../../server/api/vibe.post'
 
 const CONTROLS: ControlSpec[] = [
   { key: 'depth', label: 'Depth', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.5, hint: 'higher = deeper' },
@@ -103,6 +104,40 @@ describe('buildVibeRequestBody with variants', () => {
     expect(body.model).toBe('claude-haiku-4-5')
     expect(body.output_config.format.schema).toBe(TAKES_SCHEMA)
     expect(body.max_tokens).toBeGreaterThan(1024)
+  })
+})
+
+describe('parseVariants: the rejection is NAMED, not just a 400', () => {
+  // /api/vibe forwards Anthropic's status verbatim, so a bare 400 from a takes
+  // ask is ambiguous. Only THIS route's own field rejection may be quietly
+  // re-asked the single-patch way (see useStudioAgent's isVariantsUnsupported);
+  // an unnamed 400 must reach the user.
+  it('passes 2\u20134 through, absent stays absent (Task 1\u2019s contract)', () => {
+    expect(parseVariants(undefined)).toBeUndefined()
+    expect(parseVariants(null)).toBeUndefined()
+    expect(parseVariants(4)).toBe(4)
+    expect(parseVariants(2)).toBe(2)
+  })
+
+  it('still rejects out-of-range LOUDLY, with a 400', () => {
+    for (const bad of [1, 5, 0, 2.5, '4', true]) {
+      expect(() => parseVariants(bad)).toThrow()
+      try { parseVariants(bad) }
+      catch (e: any) { expect(e.statusCode).toBe(400) }
+    }
+  })
+
+  it('tags the rejection so a client can tell it from a forwarded model 400', () => {
+    try {
+      parseVariants(9)
+      throw new Error('should have thrown')
+    }
+    catch (e: any) {
+      expect(e.statusMessage).toBe(VARIANTS_UNSUPPORTED)
+      expect(e.data?.code).toBe(VARIANTS_UNSUPPORTED)
+      // The human-readable message is still the one it always was.
+      expect(e.message).toContain('2 and 4')
+    }
   })
 })
 

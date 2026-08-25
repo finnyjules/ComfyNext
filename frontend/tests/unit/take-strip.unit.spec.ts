@@ -125,6 +125,15 @@ describe('TakeStrip — emits', () => {
     expect(e.defaultPrevented).toBe(true)
   })
 
+  it('going away with a take previewing emits dismiss (so the host restores)', () => {
+    // The \u2715-close path: the studio unmounts the strip without anyone having
+    // pressed Dismiss, and the preview must not be left applied (and then saved).
+    const w = mountStrip({ selected: TAKES[0] })
+    expect(w.emitted('dismiss')).toBeUndefined()
+    w.unmount()
+    expect(w.emitted('dismiss')).toHaveLength(1)
+  })
+
   it('stops listening for Escape once unmounted (no leaked document listener)', () => {
     // Asserted on the listener itself, not on a post-unmount emit: an unmounted
     // wrapper stops recording emits, so a leaked handler would look "clean".
@@ -204,19 +213,25 @@ describe('TakeStrip — pending vs failed thumbnails', () => {
 })
 
 describe('TakeStrip — accessibility', () => {
-  it('every tile reports its own pressed/selected state', () => {
+  it('every tile reports its own pressed state', () => {
     const w = mountStrip({ selected: TAKES[2] })
     expect(tiles(w).map((t: any) => t.attributes('aria-pressed'))).toEqual(['false', 'false', 'true', 'false'])
-    expect(tiles(w).map((t: any) => t.attributes('aria-selected'))).toEqual(['false', 'false', 'true', 'false'])
-    const yours = w.get('[data-testid="take-yours"]')
-    expect(yours.attributes('aria-pressed')).toBe('false')
-    expect(yours.attributes('aria-selected')).toBe('false')
+    expect(w.get('[data-testid="take-yours"]').attributes('aria-pressed')).toBe('false')
   })
 
   it('with nothing selected, "yours" is the pressed one', () => {
     const w = mountStrip()
     expect(w.get('[data-testid="take-yours"]').attributes('aria-pressed')).toBe('true')
-    expect(w.get('[data-testid="take-yours"]').attributes('aria-selected')).toBe('true')
+  })
+
+  it('uses aria-pressed ONLY — aria-selected is not valid on a button', () => {
+    // These tiles are toggle buttons, not options in a listbox/tablist. Carrying
+    // both states invites them to disagree, and the second one is ignored anyway.
+    const w = mountStrip({ selected: TAKES[2] })
+    for (const el of [...tiles(w), w.get('[data-testid="take-yours"]')]) {
+      expect((el as any).attributes('aria-selected')).toBeUndefined()
+      expect((el as any).attributes('role')).toBeUndefined() // a real <button>
+    }
   })
 
   it('every tile carries an accessible name, not just a picture', () => {

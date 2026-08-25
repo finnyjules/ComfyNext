@@ -3,7 +3,7 @@
 // no SDK. Haiku + structured outputs keep it fast and ~half a cent per ask.
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
-import { VIBE_SCHEMA, TAKES_SCHEMA, buildVibePrompt, parseTakesResponse } from '~/lib/vibePrompt'
+import { VIBE_SCHEMA, TAKES_SCHEMA, VARIANTS_UNSUPPORTED, buildVibePrompt, parseTakesResponse } from '~/lib/vibePrompt'
 import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, optionalVariants, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { meterAssist } from '../utils/anthropicMeter'
 
@@ -23,6 +23,25 @@ export function buildVibeRequestBody(prompt: string, variants?: number): Record<
   }
 }
 
+/** `optionalVariants`, but the rejection is TAGGED so a client can tell this
+ *  route's own field validation from the 400 the Anthropic call below can also
+ *  produce (whose status this route forwards verbatim). Still loud, still 2–4
+ *  only — the contract Task 1 set is unchanged; only the error carries a name
+ *  now. Exported for a plain-Node unit test, like `buildVibeRequestBody`. */
+export function parseVariants(raw: unknown): number | undefined {
+  try {
+    return optionalVariants(raw)
+  }
+  catch (e: any) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: VARIANTS_UNSUPPORTED,
+      message: e?.message || 'variants must be an integer between 2 and 4',
+      data: { code: VARIANTS_UNSUPPORTED },
+    })
+  }
+}
+
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'vibe', 60)
   const body = await readBody(event)
@@ -35,7 +54,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'controls (array, ≤500) is required' })
   }
   // Absent → today's single-patch call, byte-identical request and response.
-  const variants = optionalVariants(body?.variants)
+  const variants = parseVariants(body?.variants)
 
   const prompt = buildVibePrompt(controls, phrase, effectLabel, guidance, variants)
 

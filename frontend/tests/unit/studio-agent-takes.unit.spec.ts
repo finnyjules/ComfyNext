@@ -24,6 +24,7 @@ vi.mock('ofetch', () => ({ $fetch: (...args: unknown[]) => fetchMock(...args) })
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { readTakeLog, TAKE_LOG_KEY, type StudioTake } from '~/lib/agent/takes'
+import { VARIANTS_UNSUPPORTED } from '~/lib/vibePrompt'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 
 const CONTROLS: ControlSpec[] = [
@@ -318,6 +319,22 @@ describe('useStudioAgent — the two buttons', () => {
     expect(second.phrase).toContain('dreamier')
   })
 
+  it('a failed ↻ leaves no tile ringed over a config it is not showing', async () => {
+    fetchMock.mockResolvedValueOnce({ takes: TAKES })
+    const { agent, config } = makeAgent()
+    await agent.ask('dreamier')
+    const before = JSON.stringify(config)
+    agent.selectTake(agent.takes.value[0])
+
+    fetchMock.mockRejectedValueOnce(new Error('Overloaded'))
+    await agent.moreDirections()
+
+    expect(agent.error.value).toContain('Overloaded')
+    expect(agent.hasTakes.value).toBe(true) // the old strip is still usable
+    expect(agent.selectedTake.value).toBeNull()
+    expect(JSON.stringify(config)).toBe(before)
+  })
+
   it('↻ restores the original before refetching, so the next capture is honest', async () => {
     fetchMock.mockResolvedValue({ takes: TAKES })
     const { agent, config } = makeAgent()
@@ -363,6 +380,50 @@ describe('useStudioAgent — the pick log', () => {
   })
 })
 
+describe('useStudioAgent — abandoning an open strip', () => {
+  it('re-asking restores the original first, and records the rejection', async () => {
+    // The trap: retyping while a take is previewing would otherwise make that
+    // take the new baseline — unrecoverable (the original is gone) and
+    // unrecorded (the pick log never sees it rejected).
+    fetchMock.mockResolvedValue({ takes: TAKES })
+    const { agent, config } = makeAgent()
+    await agent.ask('dreamier')
+    agent.selectTake(agent.takes.value[0])
+    expect(config.hue).toBe(40)
+
+    await agent.ask('something else entirely')
+
+    expect(config.hue).toBe(10)
+    const abandoned = readTakeLog().find(e => e.action === 'dismiss')
+    // Logged against the phrase it was actually rejecting, not the new one.
+    expect(abandoned).toMatchObject({ action: 'dismiss', takeLabel: 'warmer', prompt: 'dreamier' })
+  })
+
+  it('abandonTakes is a no-op with no strip open', async () => {
+    fetchMock.mockResolvedValue({ takes: TAKES })
+    const { agent, config } = makeAgent()
+    const before = JSON.stringify(config)
+    agent.abandonTakes()
+    expect(readTakeLog()).toHaveLength(0)
+    expect(JSON.stringify(config)).toBe(before)
+  })
+
+  it('closing the studio abandons the strip the same way', async () => {
+    // What StudioModalShell calls on ✕ / Escape, before the surface saves.
+    fetchMock.mockResolvedValue({ takes: TAKES })
+    const { agent, config } = makeAgent()
+    await agent.ask('dreamier')
+    const before = JSON.stringify(config)
+    agent.selectTake(agent.takes.value[1])
+
+    agent.abandonTakes()
+
+    expect(JSON.stringify(config)).toBe(before)
+    expect(agent.hasTakes.value).toBe(false)
+    expect(readTakeLog().at(-1)).toMatchObject({ action: 'dismiss', takeLabel: 'softer' })
+  })
+})
+
 describe('useStudioAgent — degrading to today’s single tune', () => {
   it('falls back when an older server answers in the single-patch shape', async () => {
     fetchMock.mockResolvedValue({ changes: [{ key: 'hue', value: 40 }], rationale: 'warmer' })
@@ -378,9 +439,12 @@ describe('useStudioAgent — degrading to today’s single tune', () => {
     expect(fetchMock.mock.calls).toHaveLength(1)
   })
 
-  it('retries once without variants when the server rejects them (400)', async () => {
+  it('retries once without variants when the server TAGS the 400 as "no takes here"', async () => {
     fetchMock
-      .mockRejectedValueOnce(Object.assign(new Error('Bad Request'), { statusCode: 400 }))
+      .mockRejectedValueOnce(Object.assign(new Error('Bad Request'), {
+        statusCode: 400,
+        data: { statusMessage: VARIANTS_UNSUPPORTED, data: { code: VARIANTS_UNSUPPORTED } },
+      }))
       .mockResolvedValueOnce({ changes: [{ key: 'hue', value: 40 }], rationale: 'warmer' })
     const { agent, config } = makeAgent()
 
@@ -391,6 +455,21 @@ describe('useStudioAgent — degrading to today’s single tune', () => {
     expect(agent.hasProposal.value).toBe(true)
     expect(config.hue).toBe(40)
     expect(agent.error.value).toBe('')
+  })
+
+  it('an UNTAGGED 400 is a real error — shown, and never paid for twice', async () => {
+    // /api/vibe forwards Anthropic's status verbatim, so a genuine bad request
+    // to the model also arrives as a 400. Degrading on that would hide the bug
+    // and bill a second metered call that cannot fix it.
+    fetchMock.mockRejectedValue(Object.assign(new Error('invalid_request_error'), { statusCode: 400 }))
+    const { agent } = makeAgent()
+
+    await agent.ask('warmer')
+
+    expect(fetchMock.mock.calls).toHaveLength(1)
+    expect(agent.error.value).toContain('invalid_request_error')
+    expect(agent.hasTakes.value).toBe(false)
+    expect(agent.hasProposal.value).toBe(false)
   })
 
   it('does not retry — or strip — on a real failure', async () => {

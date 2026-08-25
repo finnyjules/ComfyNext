@@ -84,7 +84,13 @@ function onEsc(e: KeyboardEvent) {
   emit('dismiss')
 }
 onMounted(() => document.addEventListener('keydown', onEsc))
-onBeforeUnmount(() => document.removeEventListener('keydown', onEsc))
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onEsc)
+  // Going away with a take still previewing means the same thing as dismissing:
+  // put the original back. The host's own guard makes the ordinary
+  // keep/dismiss unmount (where the session is already closed) a no-op.
+  emit('dismiss')
+})
 
 const TILE = 'group relative h-[52px] overflow-hidden rounded-[5px] border transition enabled:cursor-pointer'
 const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-1 pt-3 text-left text-[10px] leading-none text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]'
@@ -97,7 +103,7 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
       <!-- ① yours — the anchor, and the undo -->
       <button data-testid="take-yours" type="button" aria-label="yours"
               :data-selected="selected ? 'false' : 'true'"
-              :aria-pressed="selected ? 'false' : 'true'" :aria-selected="selected ? 'false' : 'true'"
+              :aria-pressed="selected ? 'false' : 'true'"
               :class="[TILE, 'w-[76px] shrink-0 border-dashed',
                        selected ? 'border-white/25 hover:border-white/45' : 'border-white/55']"
               @mouseenter="onHover(null)" @focus="onHover(null)" @blur="onHover(null)"
@@ -113,7 +119,6 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
       <button v-for="(t, i) in takes" :key="i" data-testid="take-tile" type="button"
               :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
               :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
-              :aria-selected="selected === t ? 'true' : 'false'"
               :title="t.rationale"
               :class="[TILE, 'min-w-0 flex-1',
                        selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"

@@ -33,6 +33,7 @@ import { describeControls, validatePatch, type DescribedControl } from '~/lib/sp
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import { chooseSpreadKeys, logTakeEvent, spreadAroundTake, type StudioTake } from '~/lib/agent/takes'
+import { VARIANTS_UNSUPPORTED } from '~/lib/vibePrompt'
 import { takeThumbFor, type TakeThumb } from '~/lib/agent/takeThumbs'
 
 /** How many readings to ask for. The API accepts 2–4 and rejects anything else
@@ -57,13 +58,26 @@ function cloneConfig<T>(v: T): T {
   try { return JSON.parse(JSON.stringify(v)) as T } catch { return v }
 }
 
-/** True for the one failure that means "this server predates `variants`" — a
- *  400 from the route's own field validation. Anything else (auth, rate limit,
- *  overload, a malformed model reply) is a real error and is surfaced, not
- *  retried at the user's expense. */
-function isVariantsRejection(e: unknown): boolean {
-  const s = (e as { statusCode?: number; status?: number; response?: { status?: number } } | null)
-  return s?.statusCode === 400 || s?.status === 400 || s?.response?.status === 400
+/**
+ * True ONLY for the 400 `/api/vibe` raises for its own `variants` field — the
+ * one that means "this server won't answer in takes". A bare 400 is not enough:
+ * the route forwards Anthropic's status verbatim, so a real bad-request from the
+ * model call arrives as a 400 too, and silently degrading on that one would hide
+ * the bug AND bill the user for a second metered call it can never fix.
+ */
+function isVariantsUnsupported(e: unknown): boolean {
+  const err = e as {
+    statusCode?: number; status?: number; statusMessage?: string
+    response?: { status?: number }
+    data?: { statusMessage?: string; data?: { code?: string } }
+  } | null
+  const status = err?.statusCode ?? err?.status ?? err?.response?.status
+  if (status !== 400) return false
+  // h3 surfaces the tag as statusMessage; ofetch also parses the body into
+  // `.data`, so accept either spelling rather than depending on one layer.
+  return err?.statusMessage === VARIANTS_UNSUPPORTED
+    || err?.data?.statusMessage === VARIANTS_UNSUPPORTED
+    || err?.data?.data?.code === VARIANTS_UNSUPPORTED
 }
 
 /** opts.render returns a PNG data URL of the current studio canvas (enables the
@@ -265,6 +279,14 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     resetTakes()
   }
 
+  /** Abandoning an open strip — by retyping, or by closing the studio — must
+   *  behave exactly like dismissing it. Anything less turns a hovered take into
+   *  the new baseline, which is unrecoverable (the original is gone) and
+   *  unrecorded (the pick log never sees the rejection). */
+  function abandonTakes() {
+    if (hasTakes.value) dismissTakes()
+  }
+
   /** "≈ variations of this" — four parametric neighbours, computed here. No
    *  model call, and none of the honesty problems a fake one would have. */
   function variationsOfTake(t: StudioTake) {
@@ -281,6 +303,10 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   async function moreDirections() {
     if (busy.value || !opts.takes || !lastPhrase.value) return
     restoreTakeOriginal()
+    // Drop the selection with the preview it was showing: if the re-roll fails
+    // the old strip stays up, and a tile still ringed as "selected" over an
+    // unapplied config would be lying about what the studio is showing.
+    selectedTake.value = null
     busy.value = true; error.value = ''
     try {
       const avoid = takes.value.map(t => t.label).join(', ')
@@ -352,6 +378,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   async function ask(phrase: string) {
     const p = phrase.trim()
     if (!p || busy.value) return
+    // BEFORE lastPhrase moves: an open strip is being abandoned, and it is the
+    // OLD phrase that rejection belongs to.
+    abandonTakes()
     busy.value = true; error.value = ''; notice.value = ''; review.value = null; lastPhrase.value = p
     clearOriginal()
     resetTakes()
@@ -361,9 +390,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         try {
           reply = await requestTakes(opts.controls(), opts.params, opts.label(), p, opts.guidance?.(), TAKE_COUNT)
         } catch (e) {
-          // A server that predates `variants` rejects the field outright; ask it
-          // the way it understands rather than showing the user a dead end.
-          if (!isVariantsRejection(e)) throw e
+          // Only this server's own "I don't do takes" 400 is re-asked the
+          // single-patch way; every other failure is the user's to see.
+          if (!isVariantsUnsupported(e)) throw e
         }
         if (reply && reply.takes.length >= 2) { openTakes(reply); return }
         if (reply) {
@@ -419,6 +448,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert,
     // Four Takes
     takes, takeThumbs, takeCurrentThumb, selectedTake, hasTakes, canVaryTake,
-    previewTake, selectTake, keepTake, dismissTakes, moreDirections, variationsOfTake,
+    previewTake, selectTake, keepTake, dismissTakes, abandonTakes, moreDirections, variationsOfTake,
   }
 }

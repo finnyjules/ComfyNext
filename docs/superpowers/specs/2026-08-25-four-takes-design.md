@@ -17,10 +17,31 @@ control panel follows live; clicking selects; **keep** commits. Two buttons:
 Every pick and rejection is logged from day one: the training data for future
 personal-taste learning.
 
-Milestone A (this spec's build scope): the five fast studios — Gradient, Pattern
-(Texture), Shader, Shape, Vector Type. Milestone B (later, separate plan): the same
-strip on the canvas node at first-configure; 3D Studio when its 4-way render cost is
-measured.
+Milestone A (this spec's build scope, **amended during Task 4 — see below**): the
+fast studios that describe through the vibe seam — **Gradient, Shader, Shape,
+Vector Type**. Milestone B (later, separate plan): the same strip on the canvas
+node at first-configure; 3D Studio when its 4-way render cost is measured.
+
+### Amendment (2026-08-25, during Task 4): Pattern (Texture) is a follow-up
+
+This spec was written believing all five studios' describe bars ran through
+`useStudioAgent`/`useVibeControl`. Pattern's does not. It runs `useTextureAgent`
+→ `/api/agent-plan` over a **structural command surface** (`setFillColor`,
+`setFillGradient`, `linkFill`, … alongside `setParam`) — which is how "make the
+ground a sunset gradient" works today. Scope item 1 added `variants` to
+`/api/vibe`, whose vocabulary is flat parameter patches only, so routing
+Pattern's bar through takes would silently cost it per-role fill editing: a
+shipped capability traded for a filmstrip. Task 4 shipped the other four and
+left Pattern alone rather than regress it (`.superpowers/sdd/task-4-report.md`
+carries the full reasoning).
+
+**The follow-up, which needs its own task and no server change:**
+`/api/agent-plan` takes its schema and prompt from the CLIENT, so a multi-take
+structural ask is a client-side build — a `buildTakesCommandSchema(commands)`
+wrapper plus a takes-shaped parse in `lib/agent/protocol.ts`, takes carrying
+`commands` instead of `changes`, each applied to a cloned `TextureState` through
+the existing `applyTextureCommand`. `≈ variations of this` gates itself off for
+command-only takes via the `canVary` prop the strip already has.
 
 ## Scope (Milestone A)
 
@@ -52,15 +73,19 @@ measured.
    `{studio, prompt, takeLabel, changes, action, ts}` to a bounded local store
    (localStorage ring buffer, ~500 entries, exported helper for the future taste
    consumer). No server, no PII beyond the prompt text the user typed.
-6. **Wiring**: the five studios' describe bars route through the same in-studio
-   agent seam they use today (useStudioAgent/useVibeControl) — multi-take replaces
-   the single proposal UI when variants come back; single-change flows (canvas
-   tuneNode path) are UNTOUCHED this milestone.
+6. **Wiring**: the four vibe studios' describe bars route through the same
+   in-studio agent seam they use today (useStudioAgent/useVibeControl) —
+   multi-take replaces the single proposal UI when variants come back;
+   single-change flows (canvas tuneNode path) are UNTOUCHED this milestone.
+   Pattern (Texture) describes through a different seam entirely and is a named
+   follow-up — see the amendment above.
 
 ## Out of scope (recorded for Milestone B's plan)
 
 Canvas-node strip at first-configure; Scene3D; touching the canvas tuneNode
-protocol; model-generated near-variations; reading the pick log for personalization.
+protocol; model-generated near-variations; reading the pick log for
+personalization; **Pattern (Texture) — structural multi-take, per the amendment
+above**.
 
 ## Constraints
 

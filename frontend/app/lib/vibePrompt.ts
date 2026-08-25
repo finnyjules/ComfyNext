@@ -70,6 +70,20 @@ export const TAKES_SCHEMA = {
 export interface VibeChange { key: string, value: string | number }
 export interface VibeTake { label: string, changes: VibeChange[], rationale: string }
 
+/**
+ * The marker on the 400 this route raises for ITS OWN `variants` field
+ * validation — and on nothing else.
+ *
+ * It matters because `/api/vibe` forwards Anthropic's HTTP status verbatim, so
+ * a 400 coming back from a takes ask is ambiguous: "this server won't do takes"
+ * and "the model call was itself a bad request" look identical. Only the first
+ * may be quietly re-asked the single-patch way; the second is a real bug and
+ * must surface, not be paid for twice (each call is metered).
+ *
+ * Shared by both ends on purpose: one string, no drift.
+ */
+export const VARIANTS_UNSUPPORTED = 'variants_unsupported'
+
 /** Server-side count/shape guard for a takes response — belt-and-suspenders
  *  alongside TAKES_SCHEMA's own minItems/maxItems/label-is-just-a-string
  *  declaration, since a model can still return prose that merely parses as
