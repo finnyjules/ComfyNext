@@ -16,7 +16,12 @@
  *   • two explicit buttons: ↻ different directions (always) and ≈ variations of
  *     this (only once something is selected).
  *   • a take whose thumbnail failed shows an error tile and stays selectable —
- *     only the picture failed, not the config.
+ *     only the picture failed, not the config. A take with NO entry in the map
+ *     yet is a different thing: still drawing (the strip goes up the instant the
+ *     takes land, thumbnails stream in after), so it shows a pending tile.
+ *   • keyboard parity: focusing a tile previews it exactly as hovering does, and
+ *     blurring restores — the live preview is the whole point of the strip, and
+ *     it cannot be mouse-only.
  */
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
@@ -35,7 +40,10 @@ const props = withDefaults(defineProps<{
   current?: Thumb
   selected?: VibeTake | null
   busy?: boolean
-}>(), { current: null, selected: null, busy: false })
+  /** False when the selected take moved nothing a "±" could be taken around —
+   *  the host decides (it owns the controls); the strip just greys the button. */
+  canVary?: boolean
+}>(), { current: null, selected: null, busy: false, canVary: true })
 
 const emit = defineEmits<{
   /** Preview this take live, or (null) go back to the original. */
@@ -58,6 +66,9 @@ function srcOf(t: Thumb): string | null {
 
 const sources = computed(() => new Map(props.takes.map(t => [t, srcOf(props.thumbs.get(t))])))
 const currentSrc = computed(() => srcOf(props.current))
+/** No entry at all = the adapter has not answered yet. An entry of `null` = it
+ *  answered, and the render failed. Only the second is an error. */
+const pending = computed(() => new Set(props.takes.filter(t => !props.thumbs.has(t))))
 
 function onHover(take: VibeTake | null) {
   if (props.busy) return // mid-render: a preview swap now would fight the engine
@@ -65,7 +76,12 @@ function onHover(take: VibeTake | null) {
 }
 
 function onEsc(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('dismiss')
+  if (e.key !== 'Escape') return
+  // Absorb it. The studio shell behind this listens for Escape on `window` (so it
+  // runs after `document` in the bubble path) and skips a defaultPrevented event —
+  // without this, one Escape would dismiss the strip AND close the whole studio.
+  e.preventDefault()
+  emit('dismiss')
 }
 onMounted(() => document.addEventListener('keydown', onEsc))
 onBeforeUnmount(() => document.removeEventListener('keydown', onEsc))
@@ -79,11 +95,13 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
        class="flex flex-col gap-2 rounded-[8px] border border-white/10 bg-white/[0.03] p-2">
     <div data-testid="take-row" class="flex items-stretch gap-[5px]" @mouseleave="onHover(null)">
       <!-- ① yours — the anchor, and the undo -->
-      <button data-testid="take-yours" type="button"
+      <button data-testid="take-yours" type="button" aria-label="yours"
               :data-selected="selected ? 'false' : 'true'"
+              :aria-pressed="selected ? 'false' : 'true'" :aria-selected="selected ? 'false' : 'true'"
               :class="[TILE, 'w-[76px] shrink-0 border-dashed',
                        selected ? 'border-white/25 hover:border-white/45' : 'border-white/55']"
-              @mouseenter="onHover(null)" @click="emit('select', null)">
+              @mouseenter="onHover(null)" @focus="onHover(null)" @blur="onHover(null)"
+              @click="emit('select', null)">
         <img v-if="currentSrc" :src="currentSrc" alt="" class="h-full w-full object-cover">
         <span v-else class="block h-full w-full bg-white/[0.06]" />
         <span :class="TAG">yours</span>
@@ -94,12 +112,18 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
       <!-- ② the takes -->
       <button v-for="(t, i) in takes" :key="i" data-testid="take-tile" type="button"
               :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
+              :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
+              :aria-selected="selected === t ? 'true' : 'false'"
               :title="t.rationale"
               :class="[TILE, 'min-w-0 flex-1',
                        selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
-              @mouseenter="onHover(t)" @mouseleave="onHover(null)" @click="emit('select', t)">
+              @mouseenter="onHover(t)" @mouseleave="onHover(null)"
+              @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
         <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
-        <!-- ③ error tile: the render threw. Never a blank strip. -->
+        <!-- ③ still drawing — NOT a failure. -->
+        <span v-else-if="pending.has(t)" data-testid="take-pending"
+              class="block h-full w-full animate-pulse bg-white/[0.07]" />
+        <!-- ④ error tile: the render threw. Never a blank strip. -->
         <span v-else data-testid="take-error"
               class="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
           couldn’t draw
@@ -108,12 +132,12 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
       </button>
     </div>
 
-    <!-- ④ actions: diverge · converge · undo · commit -->
+    <!-- ⑤ actions: diverge · converge · undo · commit -->
     <div class="flex items-center gap-2">
       <StudioButton data-testid="take-more" variant="secondary" :disabled="busy" @click="emit('moreDirections')">
         ↻ different directions
       </StudioButton>
-      <StudioButton data-testid="take-variations" variant="secondary" :disabled="busy || !selected"
+      <StudioButton data-testid="take-variations" variant="secondary" :disabled="busy || !selected || !canVary"
                     @click="selected && emit('variationsOf', selected)">
         ≈ variations of this
       </StudioButton>

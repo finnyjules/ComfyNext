@@ -7,21 +7,70 @@
  *
  * Tuning is single-op (set a control's value), so changes are param patches, not
  * structural commands — but they ride the same AgentBar/AgentProposal UI.
+ *
+ * ## Four Takes
+ *
+ * A studio that passes `opts.takes` gets the OTHER answer shape: instead of one
+ * guess shown as a proposal list, the ask comes back as four genuinely different
+ * readings, shown as a filmstrip (`TakeStrip.vue`, mounted once in
+ * `StudioModalShell.vue` — so every studio wired here gets it without its own
+ * template). This composable owns the session: capture the original ONCE, preview
+ * a take by writing it into the live params, restore exactly on unhover/dismiss,
+ * commit through the SAME `recompute()` + `keep()` path an accepted proposal
+ * always used (so undo/autosave integration follows for free).
+ *
+ * Everything degrades: a server that rejects or ignores `variants`, or a reply
+ * with fewer than two usable takes, falls back to today's single proposal.
+ * A studio that passes no `opts.takes` never sends `variants` at all, and its
+ * request stays byte-identical to what it sends today.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { $fetch } from 'ofetch'
 import type { ControlSpec, Params, ParamValue } from '~/lib/spacetype/effect'
 import type { ProposedChange, VisualReview } from '~/composables/useLayoutAgent'
-import { useVibeControl } from '~/composables/useVibeControl'
-import { describeControls, validatePatch } from '~/lib/spacetype/controlDescriptor'
+import { useVibeControl, type VibeTakesReply } from '~/composables/useVibeControl'
+import { describeControls, validatePatch, type DescribedControl } from '~/lib/spacetype/controlDescriptor'
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
+import { chooseSpreadKeys, logTakeEvent, spreadAroundTake, type StudioTake } from '~/lib/agent/takes'
+import { takeThumbFor, type TakeThumb } from '~/lib/agent/takeThumbs'
+
+/** How many readings to ask for. The API accepts 2–4 and rejects anything else
+ *  loudly (Task 1's `optionalVariants`), so this is a constant, not a knob. */
+const TAKE_COUNT = 4
+const THUMB_SIZE = 160
+
+/** What a studio must tell us to draw take thumbnails: which adapter to use, its
+ *  config root, and how to view a COPY of that config as Params. The copy is why
+ *  `paramsOf` exists — a thumbnail must never be drawn by mutating the config the
+ *  user is looking at. */
+export interface StudioTakeSource {
+  studio: string
+  config: () => unknown
+  paramsOf: (config: unknown) => Params
+}
+
+/** A cheap deep copy. Every studio config this runs against is the same JSON blob
+ *  the studio persists, so JSON round-tripping is the honest tool; anything it
+ *  cannot copy is handed back as-is rather than half-copied. */
+function cloneConfig<T>(v: T): T {
+  try { return JSON.parse(JSON.stringify(v)) as T } catch { return v }
+}
+
+/** True for the one failure that means "this server predates `variants`" — a
+ *  400 from the route's own field validation. Anything else (auth, rate limit,
+ *  overload, a malformed model reply) is a real error and is surfaced, not
+ *  retried at the user's expense. */
+function isVariantsRejection(e: unknown): boolean {
+  const s = (e as { statusCode?: number; status?: number; response?: { status?: number } } | null)
+  return s?.statusCode === 400 || s?.status === 400 || s?.response?.status === 400
+}
 
 /** opts.render returns a PNG data URL of the current studio canvas (enables the
  *  visual self-review pass); opts.apiKey is the Anthropic key for that pass. Both
  *  optional — omit them and the agent is tune-only (no review). */
-export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null | Promise<string | null>; apiKey?: () => string; tier?: string; guidance?: () => string }) {
-  const { requestPatch } = useVibeControl()
+export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null | Promise<string | null>; apiKey?: () => string; tier?: string; guidance?: () => string; takes?: StudioTakeSource }) {
+  const { requestPatch, requestTakes } = useVibeControl()
   const busy = ref(false)
   const error = ref('')
   const notice = ref('')
@@ -56,6 +105,193 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       rationale,
       rerollable: true,
       accepted: true,
+    }
+  }
+
+  // ── Four Takes session ─────────────────────────────────────────────────────
+  // shallowRef throughout: the strip keys its thumbnails by the take OBJECT, and
+  // a deep ref would hand the component reactive proxies that no longer match
+  // the raw keys in that map.
+  const takes = shallowRef<StudioTake[]>([])
+  const takeThumbs = shallowRef<Map<StudioTake, TakeThumb>>(new Map())
+  const takeCurrentThumb = shallowRef<TakeThumb>(null)
+  const selectedTake = shallowRef<StudioTake | null>(null)
+  const takeDescribed = shallowRef<DescribedControl[]>([])
+  /** Every described control's value at the moment the strip opened — the frame
+   *  of reference the neighbour spread measures against. Must NOT be re-read
+   *  from live params, which carry whatever take is currently previewing. */
+  const takeBase = shallowRef<Record<string, ParamValue>>({})
+  /** The ONE capture: the prior value of every key any take touches. Restoring
+   *  writes these back verbatim, `undefined` included, so a key the config never
+   *  had does not survive a preview. */
+  let takeOriginal: Record<string, ParamValue> | null = null
+  let takeRound = 0
+
+  const hasTakes = computed(() => takes.value.length > 0)
+  /** "≈ variations of this" is honest only when the pick actually moved a dial:
+   *  spreading unrelated sliders around a colour-only take would be four
+   *  neighbours of something the user never asked about. */
+  const canVaryTake = computed(() => {
+    const t = selectedTake.value
+    if (!t) return false
+    return chooseSpreadKeys(takeDescribed.value, takeBase.value, t).length > 0
+  })
+
+  function applyTake(t: StudioTake) {
+    for (const ch of t.changes) opts.params[ch.key] = ch.value
+  }
+
+  function restoreTakeOriginal() {
+    if (!takeOriginal) return
+    for (const k of Object.keys(takeOriginal)) opts.params[k] = takeOriginal[k] as ParamValue
+  }
+
+  function resetTakes() {
+    takes.value = []
+    takeThumbs.value = new Map()
+    takeCurrentThumb.value = null
+    selectedTake.value = null
+    takeDescribed.value = []
+    takeBase.value = {}
+    takeOriginal = null
+  }
+
+  function logTake(action: 'keep' | 'dismiss' | 'switch', t: StudioTake | null) {
+    if (!opts.takes) return
+    logTakeEvent({
+      studio: opts.takes.studio,
+      prompt: lastPhrase.value,
+      takeLabel: t?.label ?? 'yours',
+      changes: t?.changes ?? [],
+      action,
+    })
+  }
+
+  /**
+   * Draw every tile. Fire-and-forget on purpose — the strip is already on screen
+   * with pending tiles, and each thumbnail replaces one as it lands. The base
+   * config is copied ONCE, synchronously, before the first await: the user can
+   * hover (and so mutate the live config) while these are still rendering.
+   */
+  async function renderTakeThumbs(list: StudioTake[]) {
+    const src = opts.takes
+    if (!src) return
+    const adapter = takeThumbFor(src.studio)
+    const baseSnapshot = cloneConfig(src.config())
+    if (!takeCurrentThumb.value) {
+      const yours = await adapter(cloneConfig(baseSnapshot), THUMB_SIZE)
+      if (takes.value === list) takeCurrentThumb.value = yours
+    }
+    for (const t of list) {
+      const snapshot = cloneConfig(baseSnapshot)
+      const p = src.paramsOf(snapshot)
+      for (const ch of t.changes) p[ch.key] = ch.value
+      const thumb = await adapter(snapshot, THUMB_SIZE)
+      if (takes.value !== list) return // superseded by a re-roll or a dismiss
+      takeThumbs.value = new Map(takeThumbs.value).set(t, thumb)
+    }
+  }
+
+  /** Show a list of takes. The live config MUST equal the original when this is
+   *  called — that is what makes the capture below the real prior value. */
+  function setTakes(list: StudioTake[]) {
+    takeOriginal ??= {}
+    for (const t of list) {
+      for (const ch of t.changes) {
+        if (!(ch.key in takeOriginal!)) takeOriginal![ch.key] = opts.params[ch.key] as ParamValue
+      }
+    }
+    takes.value = list
+    takeThumbs.value = new Map()
+    selectedTake.value = null
+    void renderTakeThumbs(list)
+  }
+
+  function openTakes(reply: VibeTakesReply) {
+    takeDescribed.value = reply.described
+    takeBase.value = Object.fromEntries(
+      reply.described.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]),
+    )
+    takeOriginal = {}
+    takeCurrentThumb.value = null
+    setTakes(reply.takes)
+  }
+
+  /** Hover: show `t`, or fall back to whatever is SELECTED (a selection is live,
+   *  so leaving the row must not undo it) and only then to the original. */
+  function previewTake(t: StudioTake | null) {
+    restoreTakeOriginal()
+    const show = t ?? selectedTake.value
+    if (show) applyTake(show)
+  }
+
+  /** Click a tile, or "yours" (null) to reselect the original. */
+  function selectTake(t: StudioTake | null) {
+    selectedTake.value = t
+    restoreTakeOriginal()
+    if (t) applyTake(t)
+    logTake('switch', t)
+  }
+
+  /**
+   * Commit the pick. Deliberately NOT "the values are already live, just clear
+   * the strip": the take is put back to the original and then written through
+   * `recompute()` — the exact writer an accepted proposal used — and committed
+   * with the existing `keep()`. Anything hanging off that path (undo, autosave,
+   * the studio's own watchers) therefore sees a keep identical to today's.
+   */
+  function keepTake() {
+    const t = selectedTake.value
+    if (!t) return
+    restoreTakeOriginal()
+    clearOriginal()
+    const built: ProposedChange[] = []
+    for (const ch of t.changes) {
+      if (ch.value === opts.params[ch.key]) continue // skip no-ops, same as ask()
+      original[ch.key] = opts.params[ch.key] as ParamValue
+      built.push(changeFor(ch.key, ch.value, t.rationale))
+    }
+    changes.value = built
+    recompute()
+    logTake('keep', t)
+    resetTakes()
+    keep()
+  }
+
+  function dismissTakes() {
+    if (!hasTakes.value) return
+    restoreTakeOriginal()
+    logTake('dismiss', selectedTake.value)
+    resetTakes()
+  }
+
+  /** "≈ variations of this" — four parametric neighbours, computed here. No
+   *  model call, and none of the honesty problems a fake one would have. */
+  function variationsOfTake(t: StudioTake) {
+    if (busy.value || !opts.takes) return
+    if (!chooseSpreadKeys(takeDescribed.value, takeBase.value, t).length) return
+    const next = spreadAroundTake(takeDescribed.value, takeBase.value, t, `${lastPhrase.value}#${++takeRound}`)
+    if (!next.length) return
+    restoreTakeOriginal()
+    setTakes(next)
+  }
+
+  /** "↻ different directions" — a fresh ask, pushed away from what came back
+   *  last time by naming those labels. */
+  async function moreDirections() {
+    if (busy.value || !opts.takes || !lastPhrase.value) return
+    restoreTakeOriginal()
+    busy.value = true; error.value = ''
+    try {
+      const avoid = takes.value.map(t => t.label).join(', ')
+      const phrase = `${lastPhrase.value} — give ${TAKE_COUNT} DIFFERENT directions${avoid ? `, none of them a restatement of: ${avoid}` : ''}. (round ${++takeRound})`
+      const reply = await requestTakes(opts.controls(), opts.params, opts.label(), phrase, opts.guidance?.(), TAKE_COUNT)
+      if (reply.takes.length >= 2) openTakes(reply)
+      else notice.value = 'No different directions came back — try rewording it.'
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+    } finally {
+      busy.value = false
     }
   }
 
@@ -99,23 +335,48 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     finally { reviewing.value = false }
   }
 
+  /** Today's answer shape: one patch, shown as an accept/reject proposal. */
+  function showProposal(patch: Record<string, ParamValue>, rationale: string, phrase: string) {
+    const built: ProposedChange[] = []
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === opts.params[key]) continue // skip no-ops
+      original[key] = opts.params[key] as ParamValue
+      built.push(changeFor(key, value, rationale))
+    }
+    changes.value = built
+    if (!built.length) notice.value = rationale || 'No changes for that request.'
+    recompute()
+    if (built.length) void runVisualReview(phrase) // fire-and-forget: proposal shows now, review catches up
+  }
+
   async function ask(phrase: string) {
     const p = phrase.trim()
     if (!p || busy.value) return
     busy.value = true; error.value = ''; notice.value = ''; review.value = null; lastPhrase.value = p
     clearOriginal()
+    resetTakes()
     try {
-      const { patch, rationale } = await requestPatch(opts.controls(), opts.params, opts.label(), p, opts.guidance?.())
-      const built: ProposedChange[] = []
-      for (const [key, value] of Object.entries(patch)) {
-        if (value === opts.params[key]) continue // skip no-ops
-        original[key] = opts.params[key] as ParamValue
-        built.push(changeFor(key, value, rationale))
+      if (opts.takes) {
+        let reply: VibeTakesReply | null = null
+        try {
+          reply = await requestTakes(opts.controls(), opts.params, opts.label(), p, opts.guidance?.(), TAKE_COUNT)
+        } catch (e) {
+          // A server that predates `variants` rejects the field outright; ask it
+          // the way it understands rather than showing the user a dead end.
+          if (!isVariantsRejection(e)) throw e
+        }
+        if (reply && reply.takes.length >= 2) { openTakes(reply); return }
+        if (reply) {
+          // One usable take, or the old single-patch shape: either way the answer
+          // is already paid for — show it as today's proposal.
+          const only = reply.takes[0]
+          const patch = reply.patch ?? Object.fromEntries((only?.changes ?? []).map(c => [c.key, c.value]))
+          showProposal(patch, reply.rationale ?? only?.rationale ?? '', p)
+          return
+        }
       }
-      changes.value = built
-      if (!built.length) notice.value = rationale || 'No changes for that request.'
-      recompute()
-      if (built.length) void runVisualReview(p) // fire-and-forget: proposal shows now, review catches up
+      const { patch, rationale } = await requestPatch(opts.controls(), opts.params, opts.label(), p, opts.guidance?.())
+      showProposal(patch, rationale, p)
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
@@ -154,5 +415,10 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     changes.value = []; clearOriginal(); notice.value = ''; review.value = null
   }
 
-  return { busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert }
+  return {
+    busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert,
+    // Four Takes
+    takes, takeThumbs, takeCurrentThumb, selectedTake, hasTakes, canVaryTake,
+    previewTake, selectTake, keepTake, dismissTakes, moreDirections, variationsOfTake,
+  }
 }

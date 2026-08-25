@@ -7,6 +7,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AgentBar from '~/components/agent/AgentBar.vue'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentProposal from '~/components/agent/AgentProposal.vue'
+import TakeStrip from '~/components/vue-canvas/studio/TakeStrip.vue'
 
 // `agent` is the useStudioAgent() return (an object of refs + actions). When
 // provided, the shell renders a bare prompt docked under the preview and lets the
@@ -24,6 +25,13 @@ const agentActive = computed(() => {
   const a = props.agent
   return !!a && (a.busy.value || a.reviewing?.value || a.hasProposal.value)
 })
+
+// Four Takes: the filmstrip is mounted ONCE, here, so every studio that hands the
+// shell a `useStudioAgent` gets it — there is no per-studio strip to drift. An
+// agent without the take session (Space Type's bespoke vibe flow, which supplies
+// its own #agentBar and no `agent` at all; Texture's structural command agent)
+// simply reports false and the shell is unchanged for it.
+const hasTakes = computed(() => !!props.agent?.hasTakes?.value)
 
 const rootEl = ref<HTMLElement | null>(null)
 function onKeydown(e: KeyboardEvent) {
@@ -66,6 +74,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <!-- Capped width + centred, matching the canvas prompt bar's proportions rather
                than stretching the full preview column, and `mb-3` so it lifts off the very
                bottom edge. Applies to every studio's bar, the default AgentBar included. -->
+          <!-- The take filmstrip sits directly under the preview, above the bar
+               that produced it: four readings of the last request, with the
+               current look pinned first. Same capped width as the bar. -->
+          <div v-if="hasTakes" class="mt-3 w-full max-w-[640px] self-center shrink-0">
+            <TakeStrip
+              :takes="agent.takes.value" :thumbs="agent.takeThumbs.value"
+              :current="agent.takeCurrentThumb.value" :selected="agent.selectedTake.value"
+              :busy="agent.busy.value" :can-vary="agent.canVaryTake.value"
+              @hover="agent.previewTake" @select="agent.selectTake"
+              @keep="agent.keepTake" @dismiss="agent.dismissTakes"
+              @more-directions="agent.moreDirections" @variations-of="agent.variationsOfTake"
+            />
+          </div>
           <div v-if="agent || $slots.agentBar" class="mt-3 mb-3 w-full max-w-[640px] self-center shrink-0">
             <slot name="agentBar">
               <AgentBar

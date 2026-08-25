@@ -119,6 +119,8 @@ const shaderAgent = useStudioAgent({
   // Force a fresh synchronous render of the current config to the preview canvas,
   // then export it for the agent's visual self-review.
   render: async () => { await renderFrame(0); return canvas.value?.toDataURL('image/png') ?? null },
+  // Four Takes: the thumbnail adapter + a Params view over a COPY of this config.
+  takes: { studio: 'shader', config: () => config.value, paramsOf: c => makeConfigParams(() => c, () => activeEffect.value) },
 })
 
 // Collections variable binding (Slice 2a, Task 7a) — same recipe as Gradient Studio

@@ -102,6 +102,9 @@ const gradientAgent = useStudioAgent({
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   guidance: () => GRADIENT_GUIDANCE,
   render: () => renderGradientForReview(),
+  // Four Takes: which thumbnail adapter draws a take, and how to read a COPY of
+  // this config as Params so a tile can be drawn without touching the live one.
+  takes: { studio: 'gradient', config: () => config.value, paramsOf: c => makeConfigParams(() => c, () => activeLayer.value) },
 })
 
 // Collections variable binding (Slice 2a, Task 6) — Gradient is the first inline-

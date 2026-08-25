@@ -77,8 +77,12 @@ watch(aspectKey, (k) => { canvasH.value = Math.max(16, Math.round(canvasW.value 
 // is selected (the per-layer panel is hidden then, so the fallback is never shown).
 const activeLayer = ref<number>(0)
 const isSelected = computed(() => activeLayer.value >= 0 && activeLayer.value < doc.value.layers.length)
-const activeLayerObj = computed<GeoLayer>(() => doc.value.layers[isSelected.value ? activeLayer.value : 0]!)
+const activeLayerIdx = computed(() => (isSelected.value ? activeLayer.value : 0))
+const activeLayerObj = computed<GeoLayer>(() => doc.value.layers[activeLayerIdx.value]!)
 const activeMark = computed<GeoShapeConfig>(() => activeLayerObj.value.mark)
+/** The same mark, but inside ANY copy of the doc — the live one for the panel, a
+ *  clone for a take's thumbnail. */
+const markIn = (d: GeoStudioDoc): GeoShapeConfig | undefined => d?.layers?.[activeLayerIdx.value]?.mark
 
 function saveConfig() {
   const n = currentNode(); if (!n) return
@@ -109,6 +113,10 @@ const shapeAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: paramsProxy, label: () => 'Shape studio',
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   guidance: () => GEO_GUIDANCE,
+  // Four Takes. The agent patches the SELECTED layer's mark, but a tile is drawn
+  // from the WHOLE doc — a take previewed live shows the composite, so a thumb of
+  // the isolated mark would disagree with the thing it is a picture of.
+  takes: { studio: 'shape', config: () => doc.value, paramsOf: c => makeConfigParams(() => markIn(c as GeoStudioDoc)) },
 })
 
 // ── StudioControlPanel wiring (per-layer). GEO_CONTROLS/GEO_SECTIONS drives every

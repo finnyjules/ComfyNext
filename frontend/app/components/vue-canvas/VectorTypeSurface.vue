@@ -306,6 +306,13 @@ const vtAgent = useStudioAgent({
   label: () => 'Vector Type',
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   guidance: () => VT_GUIDANCE,
+  // Four Takes: the thumbnail adapter + a Params view over a COPY of this config
+  // (same `appearance` list key the live proxy above uses).
+  takes: {
+    studio: 'vectortype',
+    config: () => config.value,
+    paramsOf: c => makeConfigParams(() => c, () => activeLayerIndex.value, 'appearance'),
+  },
 })
 
 // ── Collection variable bindings + sweeps ───────────────────────────────────

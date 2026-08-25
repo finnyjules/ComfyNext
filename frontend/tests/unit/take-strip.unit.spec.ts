@@ -116,6 +116,15 @@ describe('TakeStrip — emits', () => {
     expect(w.emitted('dismiss')).toHaveLength(1)
   })
 
+  it('Escape is absorbed, so the studio behind the strip does not also close', async () => {
+    const w = mountStrip()
+    const e = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    document.dispatchEvent(e)
+    await w.vm.$nextTick()
+    expect(w.emitted('dismiss')).toHaveLength(1)
+    expect(e.defaultPrevented).toBe(true)
+  })
+
   it('stops listening for Escape once unmounted (no leaked document listener)', () => {
     // Asserted on the listener itself, not on a post-unmount emit: an unmounted
     // wrapper stops recording emits, so a leaked handler would look "clean".
@@ -175,6 +184,80 @@ describe('TakeStrip — gating', () => {
     const w = mountStrip({ busy: true })
     await tiles(w)[0]!.trigger('mouseenter')
     expect(w.emitted('hover')).toBeUndefined()
+  })
+})
+
+describe('TakeStrip — pending vs failed thumbnails', () => {
+  it('a take with no map entry yet is PENDING, not an error', () => {
+    // The strip is shown the moment takes land and thumbnails stream in after,
+    // so "not drawn yet" must not read as "couldn't draw".
+    const w = mountStrip({ thumbs: new Map() })
+    expect(w.findAll('[data-testid="take-pending"]')).toHaveLength(4)
+    expect(w.findAll('[data-testid="take-error"]')).toHaveLength(0)
+  })
+
+  it('an entry that resolved to null is the error tile', () => {
+    const w = mountStrip({ thumbs: new Map([[TAKES[1]!, null]]) })
+    expect(w.findAll('[data-testid="take-error"]')).toHaveLength(1)
+    expect(w.findAll('[data-testid="take-pending"]')).toHaveLength(3)
+  })
+})
+
+describe('TakeStrip — accessibility', () => {
+  it('every tile reports its own pressed/selected state', () => {
+    const w = mountStrip({ selected: TAKES[2] })
+    expect(tiles(w).map((t: any) => t.attributes('aria-pressed'))).toEqual(['false', 'false', 'true', 'false'])
+    expect(tiles(w).map((t: any) => t.attributes('aria-selected'))).toEqual(['false', 'false', 'true', 'false'])
+    const yours = w.get('[data-testid="take-yours"]')
+    expect(yours.attributes('aria-pressed')).toBe('false')
+    expect(yours.attributes('aria-selected')).toBe('false')
+  })
+
+  it('with nothing selected, "yours" is the pressed one', () => {
+    const w = mountStrip()
+    expect(w.get('[data-testid="take-yours"]').attributes('aria-pressed')).toBe('true')
+    expect(w.get('[data-testid="take-yours"]').attributes('aria-selected')).toBe('true')
+  })
+
+  it('every tile carries an accessible name, not just a picture', () => {
+    const w = mountStrip()
+    expect(tiles(w).map((t: any) => t.attributes('aria-label'))).toEqual(
+      ['golden warm', 'soft dreamy', 'both, loud', 'restrained'],
+    )
+    expect(w.get('[data-testid="take-yours"]').attributes('aria-label')).toBe('yours')
+  })
+
+  it('keyboard focus previews exactly like hover, and blur restores', async () => {
+    const w = mountStrip()
+    await tiles(w)[1]!.trigger('focus')
+    expect(w.emitted('hover')![0]).toEqual([TAKES[1]])
+    await tiles(w)[1]!.trigger('blur')
+    expect(w.emitted('hover')![1]).toEqual([null])
+  })
+
+  it('focusing "yours" previews the original', async () => {
+    const w = mountStrip({ selected: TAKES[0] })
+    await w.get('[data-testid="take-yours"]').trigger('focus')
+    expect(w.emitted('hover')![0]).toEqual([null])
+  })
+
+  it('busy suppresses focus previews too (same guard as hover)', async () => {
+    const w = mountStrip({ busy: true })
+    await tiles(w)[0]!.trigger('focus')
+    expect(w.emitted('hover')).toBeUndefined()
+  })
+})
+
+describe('TakeStrip — variations gating', () => {
+  it('canVary:false greys the button even with a selection', () => {
+    const w = mountStrip({ selected: TAKES[0], canVary: false })
+    expect(w.get('[data-testid="take-variations"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-testid="take-keep"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('defaults to allowed, so a host that does not pass it is unaffected', () => {
+    const w = mountStrip({ selected: TAKES[0] })
+    expect(w.get('[data-testid="take-variations"]').attributes('disabled')).toBeUndefined()
   })
 })
 
