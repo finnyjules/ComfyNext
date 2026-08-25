@@ -369,6 +369,11 @@ function pickEffect(id: string) {
   // effect macro goes through that one). The reset-field set below is pinned
   // equal to its EFFECT_SWITCH_RESET_FIELDS by tests/unit/shader-agent-vocab —
   // a new StudioEffect field that a switch must clear has to be added in BOTH.
+  // The pin covers the field SET only, not behaviour, and the two already
+  // differ: switchStudioEffect no-ops when `id` is unchanged, so the agent
+  // cannot wipe a hand-tuned layer by re-asserting its current effect. This
+  // function has no such guard — re-picking the ALREADY-ACTIVE effect here
+  // still resets params to defaults. Open item, not intentional.
   // Preserve layerId/blend/opacity/enabled (and motion-track addressing, which
   // targets this effect by array index); only the id/params/customChars reset.
   config.value.effects[activeEffect.value] = { ...config.value.effects[activeEffect.value]!, id, params: {}, customChars: '' }

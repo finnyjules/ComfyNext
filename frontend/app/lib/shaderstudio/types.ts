@@ -59,6 +59,11 @@ export function ensureEffectMasks(cfg: ShaderStudioConfig): ShaderStudioConfig {
  * ShaderStudioSurface.vue's `pickEffect`, which resets exactly these three by
  * hand. Adding a field to StudioEffect that a switch must clear means adding it
  * here AND there — the pin fails until both agree.
+ *
+ * Scope of the pin: the reset FIELD SET, and nothing else. The twins already
+ * differ in behaviour — `switchStudioEffect` no-ops on a same-id switch and
+ * `pickEffect` does not (see below) — and the pin passing says nothing about
+ * that.
  */
 export const EFFECT_SWITCH_RESET_FIELDS = ['id', 'params', 'customChars'] as const
 
@@ -83,8 +88,15 @@ export const EFFECT_SWITCH_RESET_FIELDS = ['id', 'params', 'customChars'] as con
  * makes a redundant `{"effect": "<current id>"}` the COMMON case (the guidance's
  * worked examples all carry the key), and the swap row would be filtered as a
  * no-op — so the user's hand-tuned uniforms would vanish with nothing in the
- * proposal to show it happened. The picker has the same hazard when you re-pick
- * the active effect; guarding in this shared seam fixes it for every caller.
+ * proposal to show it happened.
+ *
+ * THE GUARD COVERS THE AGENT MACRO PATH ONLY. `pickEffect` is a parallel TWIN,
+ * not a caller of this function, so it does not inherit the guard: re-picking
+ * the already-active effect in the picker still resets that layer's params.
+ * That is an OPEN ITEM, left alone here because the .vue had foreign WIP.
+ * EFFECT_SWITCH_RESET_FIELDS pins the reset FIELD SET across the two — it says
+ * nothing about this behavioural difference, so the pin passing is not evidence
+ * the twins behave alike on a same-id switch.
  */
 export function switchStudioEffect(cfg: ShaderStudioConfig, index: number, def: EffectDef): ShaderStudioConfig {
   const prev = cfg.effects[index]
