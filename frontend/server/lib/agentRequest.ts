@@ -66,9 +66,13 @@ export function optionalTier(v: unknown): string | undefined {
 }
 
 /** /api/vibe's four-takes request field: how many differently-angled takes to
- *  propose instead of one patch. Bounded 2–4 (TAKES_SCHEMA's own bound) and
- *  rejected loudly outside that range, same philosophy as optionalTier — a
- *  bad value should 400, not silently clamp into a different contract. */
+ *  propose instead of one patch. Bounded 2–4 and rejected loudly outside that
+ *  range, same philosophy as optionalTier — a bad value should 400, not
+ *  silently clamp into a different contract. TAKES_SCHEMA can't express this
+ *  bound itself (structured outputs rejects `maxItems`; see the comment on
+ *  TAKES_SCHEMA in ~/lib/vibePrompt.ts) — this check plus
+ *  parseTakesResponse's own 2–4 guard on the way back in are the actual
+ *  enforcement. */
 export function optionalVariants(v: unknown): number | undefined {
   if (v === undefined || v === null) return undefined
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 2 || v > 4) {

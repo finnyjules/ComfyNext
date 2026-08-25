@@ -27,18 +27,26 @@ export const VIBE_SCHEMA = {
 /** Structured-output schema for a multi-take call: `variants` (2–4) genuinely
  *  different readings instead of one guess. Same fixed-shape `changes` array
  *  per take (strict json_schema forbids open objects, same reason as above).
- *  The server validates count/shape on the way back in (`parseTakesResponse`)
- *  — this schema is the model-facing half of that contract, not the only
+ *
+ *  The 2–4 count is NOT expressed as `minItems`/`maxItems` on `takes` — the
+ *  structured-outputs API rejects `maxItems` outright and only accepts
+ *  `minItems` values of 0 or 1
+ *  (https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+ *  — "Not supported" / "Restricted" JSON-schema keywords). The count lives in
+ *  the array's `description` instead (the docs' own recommended pattern) and
+ *  is enforced server-side on the way back in by `parseTakesResponse` — this
+ *  schema is the model-facing half of that contract, not the only
  *  enforcement of it. Value clamping is NOT done here or there: it stays
- *  validatePatch's job client-side, same as the single-patch path today. */
+ *  validatePatch's job client-side, same as the single-patch path today.
+ *  See UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS in
+ *  tests/unit/structured-output-schema.unit.spec.ts for the guard that keeps
+ *  this schema (and VIBE_SCHEMA) from regressing. */
 export const TAKES_SCHEMA = {
   type: 'object',
   properties: {
     takes: {
       type: 'array',
-      minItems: 2,
-      maxItems: 4,
-      description: 'Genuinely different readings of the request, each differing from the others on a named dimension — not numeric jitter of one idea.',
+      description: 'Return 2 to 4 genuinely different readings of the request, each differing from the others on a named dimension — not numeric jitter of one idea.',
       items: {
         type: 'object',
         properties: {
@@ -84,10 +92,13 @@ export interface VibeTake { label: string, changes: VibeChange[], rationale: str
  */
 export const VARIANTS_UNSUPPORTED = 'variants_unsupported'
 
-/** Server-side count/shape guard for a takes response — belt-and-suspenders
- *  alongside TAKES_SCHEMA's own minItems/maxItems/label-is-just-a-string
- *  declaration, since a model can still return prose that merely parses as
- *  JSON. Returns null (never throws) on anything malformed; the route turns
+/** Server-side count/shape guard for a takes response. TAKES_SCHEMA cannot
+ *  declare the 2–4 count itself (structured outputs rejects `maxItems`; see
+ *  the comment on TAKES_SCHEMA above) — this is the ONLY place the count is
+ *  actually enforced, not belt-and-suspenders on top of a schema-level bound.
+ *  It also guards label-is-just-a-string, since a model can still return
+ *  prose that merely parses as JSON. Returns null (never throws) on anything
+ *  malformed; the route turns
  *  that into its existing 502. Does NOT clamp or validate control keys/values
  *  — that stays validatePatch's job on the client, exactly as it is today for
  *  the single-patch path. */

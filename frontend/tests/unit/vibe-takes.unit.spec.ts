@@ -87,11 +87,17 @@ describe('variants requested: prompt block', () => {
 })
 
 describe('TAKES_SCHEMA', () => {
-  it('is strict and bounds takes to 2–4', () => {
+  it('is strict, and does NOT declare minItems/maxItems on takes — structured', () => {
+    // outputs rejects `maxItems` outright and only accepts `minItems` values
+    // of 0 or 1, so the 2-4 bound can't live on the wire schema. It lives in
+    // the array's `description` (below) and is enforced server-side instead,
+    // by parseVariants (request) and parseTakesResponse (response) — see the
+    // 'variants requested' and 'parseTakesResponse' describe blocks.
     expect(TAKES_SCHEMA.additionalProperties).toBe(false)
     expect(TAKES_SCHEMA.required).toEqual(['takes'])
-    expect(TAKES_SCHEMA.properties.takes.minItems).toBe(2)
-    expect(TAKES_SCHEMA.properties.takes.maxItems).toBe(4)
+    expect((TAKES_SCHEMA.properties.takes as any).minItems).toBeUndefined()
+    expect((TAKES_SCHEMA.properties.takes as any).maxItems).toBeUndefined()
+    expect(TAKES_SCHEMA.properties.takes.description).toMatch(/2 to 4|2–4|2-4/)
     const item = TAKES_SCHEMA.properties.takes.items
     expect(item.additionalProperties).toBe(false)
     expect(item.required).toEqual(['label', 'changes', 'rationale'])
