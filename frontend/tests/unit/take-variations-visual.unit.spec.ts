@@ -24,13 +24,19 @@ type Fake = { __shade: number }
 /** How the current test turns a config into a picture. */
 let shadeOf: (softness: number) => number = () => 0
 
+/** When the current test wants a render to FAIL rather than differ. */
+let failFor: (softness: number) => boolean = () => false
+
 vi.mock('~/lib/agent/takeThumbs', () => ({
-  takeThumbFor: () => async (config: any) => ({ __shade: shadeOf(Number(config.softness)) } as Fake),
+  takeThumbFor: () => async (config: any) => {
+    const s = Number(config.softness)
+    return failFor(s) ? null : ({ __shade: shadeOf(s) } as Fake)
+  },
 }))
 
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
-import { SUBTLE_SUFFIX, THUMB_DIFF_SIZE, readTakeLog, type StudioTake } from '~/lib/agent/takes'
+import { SUBTLE_SUFFIX, THUMB_DIFF_MIN, THUMB_DIFF_SIZE, readTakeLog, type StudioTake } from '~/lib/agent/takes'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 
 // ── the fake rasteriser ─────────────────────────────────────────────────────
@@ -91,13 +97,48 @@ beforeEach(() => {
   store.clear()
   drawn = null
   shadeOf = () => 0
+  failFor = () => false
 })
+
+/** The shipped invariant, stated once: no two tiles may be the same picture as
+ *  each other, or as the take they spread around, UNLESS the tile says so. */
+function assertDistinctOrLabelled(takes: StudioTake[], pickShade: number) {
+  const shade = (t: StudioTake) => shadeOf(Number(t.changes.find(c => c.key === 'softness')!.value))
+  const plain = takes.filter(t => !t.label.includes(SUBTLE_SUFFIX))
+  for (const t of plain) expect(Math.abs(shade(t) - pickShade)).toBeGreaterThanOrEqual(THUMB_DIFF_MIN)
+  for (let a = 0; a < plain.length; a++) {
+    for (let b = a + 1; b < plain.length; b++) {
+      expect(Math.abs(shade(plain[a]!) - shade(plain[b]!))).toBeGreaterThanOrEqual(THUMB_DIFF_MIN)
+    }
+  }
+}
 
 describe('≈ variations — the tiles are checked as PICTURES', () => {
   it('re-spreads a variation that rendered as the same picture as the pick', async () => {
     // Anything within 0.2 of the pick renders identically to it. The first
-    // spread's weaker slots land inside that; the wider re-spread does not.
-    shadeOf = s => (Math.abs(s - 0.5) < 0.2 ? 40 : 200)
+    // spread's weaker slots land inside that band; the wider re-spread does not.
+    shadeOf = s => (Math.abs(s - 0.5) < 0.2 ? 40 : Math.round(60 + s * 180))
+    const { agent } = makeAgent()
+    await agent.ask('dreamier')
+    await flush()
+
+    const pick = agent.takes.value[0]!
+    agent.selectTake(pick)
+    agent.variationsOfTake(pick)
+    const before = agent.takes.value.filter(t => Math.abs(move(t)) < 0.2).length
+    expect(before).toBeGreaterThan(0) // the spread really did produce look-alikes
+    await flush()
+
+    // …and every tile now renders differently from the take it spreads around.
+    for (const t of agent.takes.value) expect(move(t)).toBeGreaterThanOrEqual(0.2)
+    expect(agent.takes.value).toHaveLength(4)
+    expect(new Set(agent.takes.value.map(t => JSON.stringify(t.changes))).size).toBe(4)
+  })
+
+  it('catches tiles that look like EACH OTHER, not just like the pick', async () => {
+    // All four sit far from the pick, but they render as only two pictures —
+    // exactly the complaint a vs-parent check alone cannot see.
+    shadeOf = s => (s === 0.5 ? 10 : s > 0.5 ? 200 : 100)
     const { agent } = makeAgent()
     await agent.ask('dreamier')
     await flush()
@@ -107,12 +148,11 @@ describe('≈ variations — the tiles are checked as PICTURES', () => {
     agent.variationsOfTake(pick)
     await flush()
 
-    // Every tile now renders differently from the pick…
-    for (const t of agent.takes.value) expect(move(t)).toBeGreaterThanOrEqual(0.2)
-    // …and none of them had to be labelled a lie.
-    for (const t of agent.takes.value) expect(t.label).not.toContain(SUBTLE_SUFFIX)
     expect(agent.takes.value).toHaveLength(4)
-    expect(new Set(agent.takes.value.map(t => JSON.stringify(t.changes))).size).toBe(4)
+    assertDistinctOrLabelled(agent.takes.value, 10)
+    // Something had to give: with only two pictures available, at least one tile
+    // must admit it (rather than four tiles quietly claiming to be alternatives).
+    expect(agent.takes.value.some(t => t.label.includes(SUBTLE_SUFFIX))).toBe(true)
   })
 
   it('says "(subtle)" rather than pretending, when even the wider spread cannot separate them', async () => {
@@ -130,6 +170,26 @@ describe('≈ variations — the tiles are checked as PICTURES', () => {
 
     expect(agent.takes.value).toHaveLength(4)
     for (const t of agent.takes.value) expect(t.label).toContain(SUBTLE_SUFFIX)
+  })
+
+  it('a tile whose REDRAW failed is left unlabelled — "can\u2019t tell" is not "(subtle)"', async () => {
+    // The first pass drew fine and read as a look-alike, so a re-spread ran; the
+    // re-spread's render then failed. A null there means nothing was measured,
+    // and stamping "(subtle)" on it would be inventing a finding.
+    shadeOf = () => 40                       // every first-pass tile matches the pick
+    failFor = s => Math.abs(s - 0.5) > 0.28  // …and every wider re-spread fails to draw
+    const { agent } = makeAgent()
+    await agent.ask('dreamier')
+    await flush()
+
+    const pick = agent.takes.value[0]!
+    agent.selectTake(pick)
+    agent.variationsOfTake(pick)
+    await flush()
+
+    const redrawn = agent.takes.value.filter(t => agent.takeThumbs.value.get(t) === null)
+    expect(redrawn.length).toBeGreaterThan(0) // the redraw really did fail
+    for (const t of redrawn) expect(t.label).not.toContain(SUBTLE_SUFFIX)
   })
 
   it('leaves a spread alone when every tile already looks different', async () => {
@@ -160,7 +220,7 @@ describe('≈ variations — the tiles are checked as PICTURES', () => {
   })
 
   it('is deterministic: the same pick spread twice gives the same four tiles', async () => {
-    shadeOf = s => (Math.abs(s - 0.5) < 0.2 ? 40 : 200)
+    shadeOf = s => (Math.abs(s - 0.5) < 0.2 ? 40 : Math.round(60 + s * 180))
     const runs: string[][] = []
     for (let i = 0; i < 2; i++) {
       const { agent } = makeAgent()
@@ -188,6 +248,29 @@ describe('the pick log records how different it LOOKED', () => {
     const ev = readTakeLog().at(-1)!
     expect(ev.action).toBe('switch')
     expect(ev.visualDiff).toBe(160) // |200 − 40|, mean over every channel
+  })
+
+  it('also logs the distance the GUARD gates on — vs the take it spread around', async () => {
+    // visualDiff answers "how different from what I had"; visualDiffFromPick
+    // answers "how different from the thing this is a variation OF", which is
+    // the number THUMB_DIFF_MIN is compared against. Only the second can
+    // calibrate the constant, so both are recorded.
+    shadeOf = s => Math.round(s * 200)
+    const { agent } = makeAgent()
+    await agent.ask('dreamier')
+    await flush()
+    const pick = agent.takes.value[0]!
+    agent.selectTake(pick)
+    // A model round has nothing it was spread around.
+    expect(readTakeLog().at(-1)!.visualDiffFromPick).toBeUndefined()
+
+    agent.variationsOfTake(pick)
+    await flush()
+    agent.selectTake(agent.takes.value[1])
+    const ev = readTakeLog().at(-1)!
+    const shadeOfTake = (t: StudioTake) => shadeOf(Number(t.changes.find(c => c.key === 'softness')!.value))
+    expect(ev.visualDiffFromPick).toBe(Math.abs(shadeOfTake(agent.takes.value[1]!) - shadeOfTake(pick)))
+    expect(ev.visualDiff).toBeTypeOf('number')
   })
 
   it('omits the field rather than logging a fake 0 when it cannot be measured', async () => {

@@ -77,7 +77,16 @@ const isSlider = (c: DescribedControl | undefined): c is DescribedControl =>
 // below are chosen to satisfy it — 0.75 (weakest pattern step) × 0.18
 // (amplitude) × 0.9 (lowest jitter) = 0.1215. A test asserts the floor against
 // the constants, so tuning one of them without the others fails loudly.
-/** The smallest fraction of a control's range any variation may move it. */
+/**
+ * The smallest fraction of a control's range any variation may move it.
+ *
+ * A PRE-SNAP guarantee, honestly. Snapping to the control's own step can take
+ * back up to one step, so on a control whose step is a large slice of its range
+ * (0..10 by 1 — one step is already 10%) the promise degrades to "at least one
+ * step". A slider with only a handful of reachable values physically cannot
+ * carry four distinct tiles 12% apart; the code walks steps rather than
+ * pretending, and a spec pins both bounds.
+ */
 export const MIN_PRIMARY_MOVE = 0.12
 const AMPLITUDE = 0.18
 /** Two big steps and two smaller ones, so the four read as a spread rather than
@@ -164,13 +173,22 @@ function fourAround(c: DescribedControl, v: number, seed: string | number, key: 
     const inRange = (n: number) => n >= c.min! && n <= c.max!
     let n = snapClamp(c, inRange(v + off) ? v + off : v - off)
     if (used.has(n)) {
-      // Walk outward a step at a time, trying both sides, before giving up.
+      // Walk a step at a time, AWAY from the pick first. At a range boundary the
+      // mirror folds both signs onto the same side, so collisions are the norm
+      // there, and stepping back toward the pick is the only resolution that can
+      // shrink a move. Honestly: on the values that actually reach here (always
+      // step-snapped, since validatePatch runs first) the floor held with either
+      // preference — this is the safer tie-break, not a measured fix. The real
+      // boundary weakness is step granularity, which MIN_PRIMARY_MOVE documents
+      // and a spec pins. Both directions are still tried, so a free value is
+      // always found; only the order changed.
       const steps = Math.max(1, Math.round(range / c.step!))
+      const away = n >= v ? 1 : -1
       for (let k = 1; k <= steps; k++) {
-        const a = snapClamp(c, n + k * c.step!)
-        if (!used.has(a) && inRange(n + k * c.step!)) { n = a; break }
-        const b = snapClamp(c, n - k * c.step!)
-        if (!used.has(b) && inRange(n - k * c.step!)) { n = b; break }
+        const out = n + away * k * c.step!
+        if (!used.has(snapClamp(c, out)) && inRange(out)) { n = snapClamp(c, out); break }
+        const back = n - away * k * c.step!
+        if (!used.has(snapClamp(c, back)) && inRange(back)) { n = snapClamp(c, back); break }
       }
     }
     used.add(n)
@@ -285,6 +303,13 @@ export const THUMB_DIFF_SIZE = 32
  * A first estimate, and openly so — it is why `visualDiff` is written into every
  * pick-log event: the real value should come from reading a few hundred logged
  * scores, not from this guess.
+ *
+ * The one live calibration it has (gradient studio, real renders, 2026-08-25):
+ *   before the amplitude fix — worst pair among the four 4.99, worst tile vs the
+ *   pick 8.12 (the owner's "they look identical" report);
+ *   after — worst pair 9.88, worst tile vs the pick 11.54.
+ * So 6 sits between a complaint and an accepted spread, which is the right side
+ * of both — on a sample of one gradient.
  */
 export const THUMB_DIFF_MIN = 6
 
@@ -359,6 +384,12 @@ export interface TakeEvent {
    *  Free observability: THUMB_DIFF_MIN is a guess today, and these are the
    *  numbers that should replace it. */
   visualDiff?: number
+  /** How different it looked from the take it was spread AROUND — present only
+   *  for a "≈ variations" tile. The guard that decides whether a variation is
+   *  distinct enough measures exactly this, so it is the number that can
+   *  calibrate THUMB_DIFF_MIN; `visualDiff` (vs "yours") answers a different,
+   *  also-useful question and neither substitutes for the other. */
+  visualDiffFromPick?: number
 }
 
 export const TAKE_LOG_KEY = 'sailor.takeLog.v1'

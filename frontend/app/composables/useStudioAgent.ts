@@ -188,6 +188,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     // How different this take LOOKED from the current design. Free to collect
     // and the only way THUMB_DIFF_MIN ever stops being a guess.
     const visualDiff = t ? thumbDistance(takeThumbs.value.get(t), takeCurrentThumb.value) : null
+    // …and, for a spread tile, the distance the GUARD actually gates on. Logging
+    // only the vs-yours number would calibrate a threshold nothing measures.
+    const fromPick = t && spreadRef ? thumbDistance(takeThumbs.value.get(t), spreadRef.thumb) : null
     logTakeEvent({
       studio: opts.takes.studio,
       prompt: lastPhrase.value,
@@ -195,6 +198,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       changes: t?.changes ?? [],
       action,
       ...(visualDiff === null ? {} : { visualDiff: Number(visualDiff.toFixed(2)) }),
+      ...(fromPick === null ? {} : { visualDiffFromPick: Number(fromPick.toFixed(2)) }),
     })
   }
 
@@ -231,46 +235,104 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
    * The honest half of "≈ variations": the four configs being provably
    * different is not the promise — the four PICTURES being different is.
    *
-   * With the tiles drawn, each is pixel-compared against the take it spread
-   * around. One that reads as the same picture gets ONE re-spread at
-   * RESPREAD_AMPLIFY the amplitude with a different rotation seed; if the wider
-   * one still reads the same, it is kept (it moved further, so it is the better
-   * of the two) with `(subtle)` appended — saying so beats four tiles that
-   * quietly claim to be alternatives.
+   * Two passes, because there are two ways to disappoint. First each tile is
+   * compared with the take it spread AROUND (a variation indistinguishable from
+   * its own parent is not a variation). Then the four are compared with EACH
+   * OTHER — which is what the owner actually complained about, and what a
+   * vs-parent check alone can miss: four tiles can each sit far from the parent
+   * and still be crowded together.
+   *
+   * Either way the remedy is the same and is bounded: ONE re-spread of that slot
+   * at RESPREAD_AMPLIFY the amplitude with a different rotation seed. A slot that
+   * has already had its retry, and is still too close, is kept (it moved further,
+   * so it is the better of the two) with `(subtle)` appended and then left alone —
+   * saying so beats four tiles that quietly claim to be alternatives, and it is
+   * what stops the pairwise pass chasing a pair it cannot separate.
    *
    * A pair that cannot be measured (a data-URL thumb, no canvas, a render that
-   * failed) is left alone — `null` means "can't tell", never "identical".
+   * failed) is left alone — `null` means "can't tell", never "identical", so it
+   * never triggers a re-spread and never stamps `(subtle)`.
    */
   async function tightenAgainstPick(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
     const ref = spreadRef
     if (!ref) return
-    const refSig = thumbSignature(ref.thumb)
-    if (!refSig) return
+    const { take: refTake, seed: refSeed, thumb: refThumb } = ref
     let current = list
-    for (let i = 0; i < current.length; i++) {
-      const t = current[i]!
-      const d = pixelDistance(thumbSignature(takeThumbs.value.get(t)), refSig)
-      if (d === null || d >= THUMB_DIFF_MIN) continue
-      const wider = spreadAroundTake(
-        takeDescribed.value, takeBase.value, ref.take, `${ref.seed}~wider`,
-        { amplitudeScale: RESPREAD_AMPLIFY },
-      )[i]
-      if (!wider) continue
-      const thumb = await draw(wider)
-      if (takes.value !== current) return // superseded while we were drawing
-      const d2 = pixelDistance(thumbSignature(thumb), refSig)
-      const kept = (d2 !== null && d2 < THUMB_DIFF_MIN)
-        ? { ...wider, label: `${wider.label}${SUBTLE_SUFFIX}` }
-        : wider
+    /** Slots that have used their one re-spread. */
+    const retried = new Set<number>()
+    /** Slots already labelled `(subtle)` — the pairwise pass must stop picking
+     *  them, or it would loop on a pair no amplitude can separate. */
+    const conceded = new Set<number>()
+
+    const sigOf = (i: number) => thumbSignature(takeThumbs.value.get(current[i]!))
+
+    function commitSlot(i: number, next: StudioTake, thumb: TakeThumb) {
+      const old = current[i]!
       const nextList = current.slice()
-      nextList[i] = kept
+      nextList[i] = next
       const nextThumbs = new Map(takeThumbs.value)
-      nextThumbs.delete(t)
-      nextThumbs.set(kept, thumb)
+      nextThumbs.delete(old)
+      nextThumbs.set(next, thumb)
       current = nextList
       takes.value = nextList
       takeThumbs.value = nextThumbs
-      if (selectedTake.value === t) selectedTake.value = kept
+      if (selectedTake.value === old) selectedTake.value = next
+    }
+
+    /** Redraw slot `i` from a wider spread. False ⇒ superseded, stop entirely. */
+    async function widen(i: number): Promise<boolean> {
+      const wider = spreadAroundTake(
+        takeDescribed.value, takeBase.value, refTake, `${refSeed}~wider`,
+        { amplitudeScale: RESPREAD_AMPLIFY },
+      )[i]
+      retried.add(i)
+      if (!wider) return true
+      const thumb = await draw(wider)
+      if (takes.value !== current) return false
+      commitSlot(i, wider, thumb)
+      return true
+    }
+
+    function concede(i: number) {
+      conceded.add(i)
+      const t = current[i]!
+      if (t.label.endsWith(SUBTLE_SUFFIX)) return
+      commitSlot(i, { ...t, label: `${t.label}${SUBTLE_SUFFIX}` }, takeThumbs.value.get(t) ?? null)
+    }
+
+    // ① each tile against the take it spread around
+    const refSig = thumbSignature(refThumb)
+    if (refSig) {
+      for (let i = 0; i < current.length; i++) {
+        const d = pixelDistance(sigOf(i), refSig)
+        if (d === null || d >= THUMB_DIFF_MIN) continue
+        if (!await widen(i)) return
+        const d2 = pixelDistance(sigOf(i), refSig)
+        if (d2 !== null && d2 < THUMB_DIFF_MIN) concede(i)
+      }
+    }
+
+    // ② the four against each other. Each iteration takes the closest measurable
+    // pair whose LATER slot is still movable, and either widens it or concedes
+    // it — so every slot is touched at most twice and the loop always ends.
+    const closestPair = () => {
+      const sigs = current.map((_, i) => sigOf(i))
+      let best: { j: number, d: number } | null = null
+      for (let a = 0; a < sigs.length; a++) {
+        for (let b = a + 1; b < sigs.length; b++) {
+          if (conceded.has(b)) continue
+          const d = pixelDistance(sigs[a]!, sigs[b]!)
+          if (d === null || d >= THUMB_DIFF_MIN) continue
+          if (!best || d < best.d) best = { j: b, d }
+        }
+      }
+      return best
+    }
+    for (let guard = 0; guard < current.length * 2; guard++) {
+      const pair = closestPair()
+      if (!pair) break
+      if (retried.has(pair.j)) { concede(pair.j); continue }
+      if (!await widen(pair.j)) return
     }
   }
 

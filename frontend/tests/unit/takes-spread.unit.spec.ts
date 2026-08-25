@@ -86,6 +86,42 @@ describe('spreadAroundTake — the move is big enough to SEE', () => {
     expect(0.5 * 0.16 * 0.75).toBeLessThan(MIN_PRIMARY_MOVE)
   })
 
+  it('holds the floor at the range boundaries too, where the mirror collapses', () => {
+    // At an edge both signs of the offset fold onto the same side, so every slot
+    // collides and the step-walk decides the result. It now walks AWAY from the
+    // pick first, which is the only direction that cannot shrink the move.
+    for (const pick of [0, 0.02, 0.9, 0.98, 1]) {
+      const take: VibeTake = { label: 'edge', rationale: '', changes: [{ key: 'softness', value: pick }] }
+      for (const seed of ['a', 'b', 'c', 'seed-1', 'zz', 'q7']) {
+        const out = spreadAroundTake(CONTROLS, BASE, take, seed)
+        expect(new Set(out.map(n => valuesOf(n).softness)).size).toBe(4)
+        for (const n of out) {
+          const moved = Math.abs((valuesOf(n).softness as number) - pick) / (SOFT.max! - SOFT.min!)
+          expect(moved).toBeGreaterThanOrEqual(MIN_PRIMARY_MOVE)
+        }
+      }
+    }
+  })
+
+  it('names the WEAKER bound a coarse control can actually keep', () => {
+    // The floor is a pre-snap guarantee. Snapping to the step can only take back
+    // less than one step — so on a control whose own step is a big slice of its
+    // range (0..10 by 1: one step IS 10%), the honest promise is "at least one
+    // step", not 12%. Pinned rather than hidden, because a 3-value slider
+    // physically cannot carry four distinct tiles 12% apart.
+    const coarse: DescribedControl[] =
+      [{ path: 'cells', label: 'Cells', kind: 'slider', min: 0, max: 10, step: 1, current: 5 }]
+    for (const pick of [0, 1, 5, 9, 10]) {
+      const take: VibeTake = { label: 'edge', rationale: '', changes: [{ key: 'cells', value: pick }] }
+      for (const seed of ['a', 'b', 'seed-1', 'zz']) {
+        for (const n of spreadAroundTake(coarse, { cells: 5 }, take, seed)) {
+          const moved = Math.abs((valuesOf(n).cells as number) - pick) / 10
+          expect(moved).toBeGreaterThanOrEqual(1 / 10) // one step
+        }
+      }
+    }
+  })
+
   it('a wider re-spread reaches further than the first attempt', () => {
     const take: VibeTake = { label: 'mid', rationale: '', changes: [{ key: 'softness', value: 0.5 }] }
     const near = spreadAroundTake(CONTROLS, BASE, take, 'seed-1')
