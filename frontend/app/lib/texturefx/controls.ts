@@ -85,7 +85,9 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   // (and double-click reset returns to it). The 0.15 floor keeps the slider's low
   // end usefully sparse rather than near-bare — it does NOT by itself stop a blank
   // tile (it bounds the drop RATE, and 16 cells all dropping is a real 7% of
-  // seeds); the guarantee comes from chipKeepCell()'s force-kept cell.
+  // seeds). What guarantees a visible chip is chipKeepCell()'s force-kept cell
+  // PLUS its exemption from grout while forced — keeping the cell alone still let
+  // a wide Grout width swallow it. See chipSample().
   { key: 'chipDensity', label: 'Density', kind: 'slider', min: 0.15, max: 1, step: 0.01, default: 1, group: 'Chips', when: isChips },
   { key: 'chipGrout', label: 'Grout width', kind: 'slider', min: 0, max: 0.25, step: 0.005, default: 0.05, group: 'Chips', when: isChips },
   { key: 'chipSizeVar', label: 'Chip size variance', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.7, group: 'Chips', when: isChips },

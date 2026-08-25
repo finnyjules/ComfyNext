@@ -361,27 +361,88 @@ describe('chips density', () => {
     expect(roleField(chipParams({ chipDensity: 0.41 }))).not.toEqual(roleField(p))
   })
 
-  it('NO density can render a blank tile — every seed, every grid', () => {
-    // The floor alone does NOT give this. Density is an independent coin flip per
-    // cell, so a small grid comes up empty by chance: at chipCells 4 / density
-    // 0.15 that is 0.85^16 ≈ 7.4%, and 35 of the first 400 seeds really did render
-    // completely blank before the force-keep. This is the concrete regression:
-    expect(roleField(chipParams({ chipCells: 4, seed: 9, chipDensity: 0.15 }), 48)
-      .some(r => r < CHIP_INK_ROLES), 'chipCells 4 / seed 9 / density 0.15 is blank').toBe(true)
-
-    // …and the guarantee is exhaustive over the seeds Roll reaches, at BOTH the
-    // slider floor and density 0 (which the slider can't reach, but an agent or a
-    // hand-edited scene can). The smallest grid is the worst case — fewest coins.
-    const min = Number(TEXTURE_CONTROLS.find(c => c.key === 'chipDensity')!.min)
-    for (const density of [min, 0]) {
-      for (const cells of [4, 6, 12]) {
-        const blank: number[] = []
-        for (let seed = 1; seed <= 120; seed++) {
-          if (!roleField(chipParams({ chipCells: cells, seed, chipDensity: density }), 32)
-            .some(r => r < CHIP_INK_ROLES)) blank.push(seed)
+  it('NO setting can render a blank tile — every seed, every grid, every grout', () => {
+    // Two separate ways this claim has been wrong, both fixed, both pinned here:
+    //
+    //  1. The FLOOR does not give it. Density is an independent coin flip per
+    //     cell, so a small grid comes up empty by chance: at chipCells 4 /
+    //     density 0.15 that is 0.85^16 ≈ 7.4%, and 35 of the first 400 seeds
+    //     rendered completely blank. Fixed by force-keeping a cell.
+    //  2. Force-keeping a CELL is not the same as drawing a CHIP. Grout is
+    //     applied afterwards, and the lone survivor still has F2 neighbours
+    //     (dropped cells keep their feature points, they just aren't drawn), so
+    //     a wide grout swallowed it. Fixed by exempting the forced cell from the
+    //     grout test while it is being forced.
+    //
+    // The named counterexamples for each, kept as first-class cases.
+    // (Early-exit rather than roleField(): this sweep is thousands of tiles, and
+    // a tile with chips in it usually proves itself in the first few samples.)
+    const inked = (over: Record<string, unknown>, n = 48) => {
+      const p = chipParams(over)
+      const cells = Number(p.chipCells), seed = Number(p.seed)
+      const grout = Number(p.chipGrout), sizeVar = Number(p.chipSizeVar), d = Number(p.chipDensity)
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          if (chipSample((x + 0.5) / n, (y + 0.5) / n, cells, seed, grout, sizeVar, d).role < CHIP_INK_ROLES) return true
         }
-        expect(blank, `blank tiles at cells=${cells} density=${density}: seeds ${blank}`).toEqual([])
       }
+      return false
+    }
+    expect(inked({ chipCells: 4, seed: 9, chipDensity: 0.15 }), 'cells4/seed9/dens.15').toBe(true)
+    expect(inked({ chipCells: 4, seed: 16, chipGrout: 0.25, chipDensity: 0.15 }), 'cells4/grout.25/dens.15/seed16').toBe(true)
+    expect(inked({ chipCells: 12, seed: 407, chipDensity: 0 }), 'cells12/dens0/seed407').toBe(true)
+
+    // …and the guarantee is swept over the whole reachable corner: the slider
+    // floor AND density 0 (an agent or hand-edited scene can reach it), the
+    // grout range INCLUDING its 0.25 maximum, and the small grids that are the
+    // worst case (fewest coins). Grout was the axis the previous sweep never
+    // varied, which is how case 2 slipped through.
+    const spec = TEXTURE_CONTROLS.find(c => c.key === 'chipDensity')!
+    const groutMax = Number(TEXTURE_CONTROLS.find(c => c.key === 'chipGrout')!.max)
+    const blank: string[] = []
+    for (const density of [Number(spec.min), 0]) {
+      for (const grout of [0, 0.05, 0.12, groutMax]) {
+        for (const cells of [4, 6, 12]) {
+          for (let seed = 1; seed <= 150; seed++) {
+            if (!inked({ chipCells: cells, seed, chipGrout: grout, chipDensity: density }, 40)) {
+              blank.push(`cells${cells}/grout${grout}/dens${density}/seed${seed}`)
+            }
+          }
+        }
+      }
+    }
+    expect(blank, `blank tiles: ${blank.slice(0, 10).join(' ')}`).toEqual([])
+  }, 30000)
+
+  it('`second >= density` is exactly "the kept cell is the only chip in the tile"', () => {
+    // The grout exemption fires on that condition, so it has to mean what it says.
+    // Brute-forced against the real survivor count.
+    //
+    // The NARROWER test that was tried first — "the kept cell was rescued from its
+    // own hash" — is not equivalent, and this pins the difference: the minimum can
+    // sit just BELOW the threshold (so no rescue) while the runner-up sits above
+    // it (so the cell is still alone). chipCells 4 / density 0.15 / seeds 20, 38,
+    // 47 are exactly that, and grout 0.25 blanked all three under the narrow rule.
+    for (const cells of [4, 6, 12]) {
+      for (const seed of [9, 16, 20, 38, 47, 407, 999983]) {
+        const keep = chipKeepCell(cells, seed)
+        for (const density of [0, 0.15, 0.3, 0.5, 1]) {
+          let survivors = 0
+          for (let cy = 0; cy < cells; cy++) for (let cx = 0; cx < cells; cx++) {
+            const isKeep = cx === keep.cx && cy === keep.cy
+            if (isKeep || chipHash(cx, cy, seed + CHIP_SALT_DENSITY) < density) survivors++
+          }
+          expect(keep.second >= density, `cells=${cells} seed=${seed} density=${density}: survivors=${survivors}`)
+            .toBe(survivors === 1)
+        }
+      }
+    }
+    // The three seeds above are the ones that separate the two rules.
+    for (const seed of [20, 38, 47]) {
+      const keep = chipKeepCell(4, seed)
+      const keepHash = chipHash(keep.cx, keep.cy, seed + CHIP_SALT_DENSITY)
+      expect(keepHash, `seed ${seed}: keep survives on its own hash`).toBeLessThan(0.15)
+      expect(keep.second, `seed ${seed}: but it is still the only chip`).toBeGreaterThanOrEqual(0.15)
     }
   })
 
@@ -392,12 +453,17 @@ describe('chips density', () => {
     // Brute-forced here independently of the implementation.
     for (const cells of [2, 4, 9, 24]) {
       for (const seed of [1, 7, 999983]) {
+        const all: number[] = []
         let bx = -1, by = -1, best = Infinity
         for (let cy = 0; cy < cells; cy++) for (let cx = 0; cx < cells; cx++) {
           const h = chipHash(cx, cy, seed + CHIP_SALT_DENSITY)
+          all.push(h)
           if (h < best) { best = h; bx = cx; by = cy }
         }
-        expect(chipKeepCell(cells, seed), `cells=${cells} seed=${seed}`).toEqual({ cx: bx, cy: by })
+        // …and `second` is the runner-up hash, independently sorted here.
+        const sorted = [...all].sort((a, b) => a - b)
+        expect(chipKeepCell(cells, seed), `cells=${cells} seed=${seed}`)
+          .toEqual({ cx: bx, cy: by, second: sorted[1] })
         // It is inside the wrapped grid, so both tile edges agree on it.
         expect(bx).toBeLessThan(cells); expect(by).toBeLessThan(cells)
       }
@@ -714,9 +780,14 @@ describe('chips shader branch', () => {
     // The whole of Density on the GPU is these two lines. `>=` here is the exact
     // negation of the CPU's `hash < density`, and it is read BEFORE grout, so a
     // dropped cell is ground across its whole area rather than a grouted rim.
-    expect(chipsBranch).toContain('bool dropped = (cx1 != u_chipKeep.x || cy1 != u_chipKeep.y)')
-    expect(chipsBranch).toContain('&& chipHash(cx1, cy1, u_chipSalt[5]) >= clamp(u_chipDensity, 0.0, 1.0);')
-    expect(chipsBranch).toContain('if (dropped || f2 - f1 < max(u_chipGrout, 0.0)) {')
+    expect(chipsBranch).toContain('float dens = clamp(u_chipDensity, 0.0, 1.0);')
+    expect(chipsBranch).toContain('bool isKeep = (cx1 == u_chipKeep.x && cy1 == u_chipKeep.y);')
+    expect(chipsBranch).toContain('bool dropped = !isKeep && chipHash(cx1, cy1, u_chipSalt[5]) >= dens;')
+    // The grout exemption — the half that keeps the lone survivor VISIBLE, not
+    // merely kept. `!lone &&` guards the GROUT term only, never `dropped`, and
+    // `lone` reads the runner-up hash out of the uniform's z lane.
+    expect(chipsBranch).toContain('bool lone = isKeep && u_chipKeep.z >= dens;')
+    expect(chipsBranch).toContain('if (dropped || (!lone && f2 - f1 < max(u_chipGrout, 0.0))) {')
   })
 
   it('gets the never-dropped cell as a UNIFORM, not by scanning the tile per pixel', () => {
@@ -725,12 +796,12 @@ describe('chips shader branch', () => {
     // window), so pattern.ts's chipKeepCell() runs once per render on the CPU and
     // the answer arrives as u_chipKeep — the same move as the pre-hashed salts.
     // If this uniform is ever replaced by a loop in the shader, that is the bug.
-    expect(TEXTURE_FS).toContain('uniform vec2 u_chipKeep;')
+    expect(TEXTURE_FS).toContain('uniform vec3 u_chipKeep;')
     const src = readFileSync(resolve(__dirname, '../../app/lib/texturefx/renderer.ts'), 'utf8')
     expect(src, 'u_chipKeep declared but never uploaded').toContain(`u('u_chipKeep')`)
     // Uploaded from pattern.ts's own function — never a second implementation.
     expect(src).toContain('const keep = chipKeepCell(chipCells, chipSeed)')
-    expect(src).toContain('gl.uniform2f(u(\'u_chipKeep\'), keep.cx, keep.cy)')
+    expect(src).toContain('gl.uniform3f(u(\'u_chipKeep\'), keep.cx, keep.cy, keep.second)')
     // …on the SAME rounded cells/seed the CPU grid uses, or the two disagree.
     expect(src).toContain('const chipCells = Math.max(2, Math.round(Number(p.chipCells) || 12))')
     expect(src).toContain('const chipSeed = Math.round(Number(p.seed) || 1)')
@@ -769,7 +840,7 @@ describe('chips shader branch', () => {
     expect(chipsBranch, 'lane 2 is the RADIUS spread').toContain(`float spread = float(${CHIP_R_MIN}) + chipHash(cx, cy, u_chipSalt[2])`)
     expect(chipsBranch, 'lane 3 is the ROLE pick').toContain(`floor(chipHash(cx1, cy1, u_chipSalt[3]) * float(${CHIP_INK_ROLES}))`)
     expect(chipsBranch, 'lane 4 is the TONE').toContain('float tone = chipHash(cx1, cy1, u_chipSalt[4]);')
-    expect(chipsBranch, 'lane 5 is the DENSITY dropout').toContain('&& chipHash(cx1, cy1, u_chipSalt[5]) >=')
+    expect(chipsBranch, 'lane 5 is the DENSITY dropout').toContain('chipHash(cx1, cy1, u_chipSalt[5]) >= dens;')
   })
 
   it('every chip uniform the shader declares is actually uploaded by render()', () => {

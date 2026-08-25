@@ -141,6 +141,23 @@ export function chipHash(cx: number, cy: number, salt: number): number {
  * first 400 seeds really did render a completely blank tile. A control that can
  * produce a blank tile reads as broken, and Roll walks straight into it.
  *
+ * Keeping the cell is only half of it: grout is applied afterwards and swallowed
+ * the lone survivor whole (chipCells 4 / grout 0.25 / density 0.15 / seed 16 was
+ * still blank), so chipSample() also exempts this cell from the grout test while
+ * it is the ONLY chip in the tile. "Kept cell" and "visible chip" are not the
+ * same claim.
+ *
+ * Which is why `second` — the SECOND-smallest density-lane hash — is returned
+ * alongside the winner. "This cell is the only chip" is exactly `second >=
+ * density`: the kept cell always draws, and every other cell draws iff its hash
+ * is below density, so the runner-up failing the test means nothing else drew.
+ * The narrower test "the kept cell was rescued from its own hash" is NOT enough
+ * and was measured failing: at chipCells 4 / density 0.15, seeds 20, 38 and 47
+ * put the minimum hash just BELOW the threshold (0.131, 0.065, 0.122), so the
+ * cell survived on its own merits, was still the only chip, and grout 0.25 ate
+ * it. `second` catches those; a rescue is just the sub-case where the minimum
+ * fails too.
+ *
  * Keeping the ARGMIN rather than a fixed cell is what makes this invisible: that
  * cell is the last one any density would have dropped, so raising density never
  * un-keeps it and the field only ever grows monotonically. A no-op at density 1
@@ -154,23 +171,28 @@ export function chipHash(cx: number, cy: number, salt: number): number {
  *
  * Ties go to the first in row-major order (strict `<`), so it is deterministic.
  */
-export function chipKeepCell(cells: number, seed: number): { cx: number; cy: number } {
+export function chipKeepCell(cells: number, seed: number): { cx: number; cy: number; second: number } {
   const C = Math.max(2, Math.round(cells) || 12)
-  let best = Infinity, bx = 0, by = 0
+  let best = Infinity, second = Infinity, bx = 0, by = 0
   for (let cy = 0; cy < C; cy++) {
     for (let cx = 0; cx < C; cx++) {
       const h = chipHash(cx, cy, seed + CHIP_SALT_DENSITY)
-      if (h < best) { best = h; bx = cx; by = cy }
+      if (h < best) { second = best; best = h; bx = cx; by = cy }
+      else if (h < second) { second = h }
     }
   }
-  return { cx: bx, cy: by }
+  return { cx: bx, cy: by, second }
 }
 
 // Single-slot memo, the same shape as cachedStates(): chipSample() is called
 // per-pixel with a fixed (cells, seed) per render, so the C² scan runs once.
 // Keyed by both, so it is a pure function of its inputs, not hidden state.
-let _keepCache: { key: string, cell: { cx: number, cy: number } } | null = null
-function cachedKeep(cells: number, seed: number): { cx: number, cy: number } {
+// It DEGRADES rather than breaks if two parameter sets interleave (a sweep, or a
+// second chips render mid-frame): the key misses every call and each pixel pays
+// the C² scan — correct, just slow. Widen to an LRU if that ever shows up.
+type ChipKeep = ReturnType<typeof chipKeepCell>
+let _keepCache: { key: string, cell: ChipKeep } | null = null
+function cachedKeep(cells: number, seed: number): ChipKeep {
   const key = `${cells}|${seed}`
   if (!_keepCache || _keepCache.key !== key) _keepCache = { key, cell: chipKeepCell(cells, seed) }
   return _keepCache.cell
@@ -214,9 +236,12 @@ export type ChipSample = {
  *   Defaults to 1 so a caller written before Density is unchanged.
  *
  *   ONE cell is exempt: the tile's minimum-hash cell is force-kept at any density,
- *   so no setting can render a blank tile (see chipKeepCell for why the floor
- *   alone did not guarantee that). Exempt at density 1 too, where it changes
- *   nothing because no cell is dropped.
+ *   and while it is being force-kept it also skips the GROUT test, so no
+ *   combination of density, grout, grid and seed renders a blank tile. Both
+ *   halves were needed — see chipKeepCell for why the floor alone did not
+ *   guarantee it, and the `forced` branch below for why keeping a CELL was not
+ *   the same as drawing a CHIP. Inert at density 1, where nothing is dropped, so
+ *   the packed field is untouched.
  *
  *   A DROPPED CELL FALLS TO GROUND, across its whole area: the test is applied to
  *   the F1 owner AFTER the nearest-point search and BEFORE grout, so the survivors
@@ -266,9 +291,17 @@ export function chipSample(
   // tile — see chipKeepCell(). A no-op at density 1, where nothing drops anyway.
   const dens = clamp01(Number.isFinite(density) ? density : 1)
   const keep = cachedKeep(C, seed)
-  const dropped = (cx1 !== keep.cx || cy1 !== keep.cy)
-    && chipHash(cx1, cy1, seed + CHIP_SALT_DENSITY) >= dens
-  const isGround = dropped || f2 - f1 < gap
+  const isKeep = cx1 === keep.cx && cy1 === keep.cy
+  const dropped = !isKeep && chipHash(cx1, cy1, seed + CHIP_SALT_DENSITY) >= dens
+  // `lone` = the kept cell is the ONLY chip in the tile (the runner-up hash failed
+  // the density test, so nothing else drew — see chipKeepCell). That last chip
+  // must skip the GROUT test too, or the rescue is undone: its F2 neighbours are
+  // still there geometrically (a dropped cell keeps its feature point, it just
+  // isn't drawn), so a wide grout swallowed it and the tile went blank anyway.
+  // There is nothing left for it to grout against. Inert at density 1, where the
+  // runner-up always passes — so the packed field is untouched.
+  const lone = isKeep && keep.second >= dens
+  const isGround = dropped || (!lone && f2 - f1 < gap)
   const role = isGround
     ? CHIP_INK_ROLES
     : Math.min(CHIP_INK_ROLES - 1, Math.floor(chipHash(cx1, cy1, seed + CHIP_SALT_ROLE) * CHIP_INK_ROLES))

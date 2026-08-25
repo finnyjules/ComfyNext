@@ -94,9 +94,14 @@ before the edit. The slider FLOOR does not prevent a blank tile (it bounds the d
 rate: 16 cells all dropping was a real 7% of seeds at chipCells 4); the tile's
 minimum-hash cell is FORCE-KEPT instead, computed once per render by chipKeepCell()
 and handed to the shader as the u_chipKeep uniform — the FS cannot scan C² cells per
-pixel, so a CPU-computed constant is what keeps the twins identical (the gallery's
-'density floor' tile is that path's live proof: chipCells 4 / seed 9 / density 0.15
-rendered 100% ground before, and now reads 94.4% ground + one 5.6% chip at Δ 0.0). Tuner
+pixel, so a CPU-computed constant is what keeps the twins identical. Keeping the CELL
+was still not a visible CHIP: grout runs afterwards and swallowed the lone survivor
+whole, so while that cell is the only chip left (uniform's .z = the tile's runner-up
+density hash, ≥ density means nothing else drew) it skips the grout test too. Both
+halves were review catches, and the same shape of catch each time — a comment
+claiming more than the code enforced. The gallery's 'density floor' tile is the live
+proof: chipCells 4 / grout 0.25 / density 0.15 / seed 20 rendered 100% ground under
+BOTH earlier versions, and now reads 99.05% ground + one 0.95% chip at Δ 0.0. Tuner
 got terrazzo/mosaic/pebbles/sparse-speckle recipes + an APPROXIMATION HONESTY clause (out-of-vocab
 looks must be admitted), and no-op tune proposals (the live "square → square" row) are
 filtered at the shared pushTuneRow seam for all 8 studios. Gallery /dev/pattern-gallery

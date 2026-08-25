@@ -71,10 +71,13 @@ uniform float u_chipCells, u_chipGrout, u_chipSizeVar, u_chipDensity;
 // pre-hashed). Lanes are APPENDED, never reordered — the indices are the contract.
 uniform float u_chipSalt[6];
 // The one cell Density never drops (lowest density-lane hash in the tile), so no
-// setting renders a blank tile. A function of (cells, seed) only, so chipKeepCell()
-// computes it ONCE per render on the CPU and it arrives here as a constant — the
-// shader could not scan C² cells per pixel to find it. Same trick as u_chipSalt.
-uniform vec2 u_chipKeep;
+// setting renders a blank tile: .xy = that cell, .z = the tile's SECOND-lowest
+// density hash, which is how the shader knows the kept cell is the only chip left
+// (z >= density) and must skip grout too. A function of (cells, seed) only, so
+// chipKeepCell() computes all three ONCE per render on the CPU and they arrive
+// here as constants — the shader could not scan C² cells per pixel to find them.
+// Same trick as u_chipSalt.
+uniform vec3 u_chipKeep;
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
 uniform sampler2D u_rasterTex;
@@ -561,9 +564,15 @@ void main(){
     // chips SCATTERED on ground, not chips grown into the gaps. See chipSample().
     // u_chipKeep is force-kept at any density (see chipKeepCell) -- cx1/cy1 are
     // exact small integers out of posmod, so == is safe, as it is for id1 above.
-    bool dropped = (cx1 != u_chipKeep.x || cy1 != u_chipKeep.y)
-      && chipHash(cx1, cy1, u_chipSalt[5]) >= clamp(u_chipDensity, 0.0, 1.0);
-    if (dropped || f2 - f1 < max(u_chipGrout, 0.0)) {
+    float dens = clamp(u_chipDensity, 0.0, 1.0);
+    bool isKeep = (cx1 == u_chipKeep.x && cy1 == u_chipKeep.y);
+    bool dropped = !isKeep && chipHash(cx1, cy1, u_chipSalt[5]) >= dens;
+    // lone = the kept cell is the ONLY chip left (the tile's runner-up density hash
+    // failed too). It skips GROUT as well: the survivor's F2 neighbours still exist
+    // geometrically (a dropped cell keeps its feature point), so a wide grout would
+    // swallow the last chip and blank the tile. Mirrors chipSample() exactly.
+    bool lone = isKeep && u_chipKeep.z >= dens;
+    if (dropped || (!lone && f2 - f1 < max(u_chipGrout, 0.0))) {
       col = evalFill(${CHIP_INK_ROLES}, fc, v_uv);          // grout = the ground role
     } else {
       int role = int(min(float(${CHIP_INK_ROLES} - 1), floor(chipHash(cx1, cy1, u_chipSalt[3]) * float(${CHIP_INK_ROLES}))));
@@ -966,7 +975,7 @@ class TextureFxRenderer {
     // The never-dropped cell, from pattern.ts's own function on the SAME rounded
     // cells/seed the CPU uses — a per-render constant, never a per-pixel search.
     const keep = chipKeepCell(chipCells, chipSeed)
-    gl.uniform2f(u('u_chipKeep'), keep.cx, keep.cy)
+    gl.uniform3f(u('u_chipKeep'), keep.cx, keep.cy, keep.second)
     gl.uniform1fv(u('u_chipSalt[0]'), chipSaltLanes(chipSeed))
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
