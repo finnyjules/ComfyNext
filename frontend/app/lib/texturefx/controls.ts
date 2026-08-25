@@ -13,6 +13,7 @@ const isProcedural = (p: Params) => String(p.mode) === 'procedural'
 const isTruchet = (p: Params) => String(p.mode) === 'truchet'
 const isRaster = (p: Params) => String(p.mode) === 'raster'
 const isShapes = (p: Params) => String(p.mode) === 'shapes'
+const isChips = (p: Params) => String(p.mode) === 'chips'
 
 // Which figure motifs read which knob. `bands` = concentric-band / wave-hump count;
 // `waveAmp` = wave amplitude; `lineWeight` = mark thickness (grid + the line figures).
@@ -21,9 +22,10 @@ const FIGURE_WAVE = new Set(['waves', 'zigzag'])
 const FIGURE_LINEWEIGHT = new Set(['grid', 'waves', 'zigzag', 'cross', 'graph'])
 
 export const TEXTURE_CONTROLS: TextureControl[] = [
-  // Lattice controls — hidden in raster mode (raster is whole-tile, no lattice).
-  { key: 'lattice', label: 'Lattice', kind: 'select', options: [...LATTICES], default: 'square', group: 'Lattice', when: (p) => !isRaster(p) },
-  { key: 'cells', label: 'Cells', kind: 'slider', min: 2, max: 40, step: 2, default: 8, group: 'Lattice', when: (p) => !isRaster(p) },
+  // Lattice controls — hidden in raster mode (raster is whole-tile, no lattice)
+  // and in chips mode (chips scatter on their own grid, sized by 'Chips across').
+  { key: 'lattice', label: 'Lattice', kind: 'select', options: [...LATTICES], default: 'square', group: 'Lattice', when: (p) => !isRaster(p) && !isChips(p) },
+  { key: 'cells', label: 'Cells', kind: 'slider', min: 2, max: 40, step: 2, default: 8, group: 'Lattice', when: (p) => !isRaster(p) && !isChips(p) },
 
   { key: 'mode', label: 'Content', kind: 'select', options: [...MODES], default: 'procedural', group: 'Cell' },
   { key: 'shapeFamily', label: 'Shape', kind: 'select', options: [...SHAPE_FAMILIES], default: 'octagon', group: 'Cell', when: isShapes },
@@ -55,7 +57,9 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'bands', label: 'Repeat', kind: 'slider', min: 2, max: 16, step: 1, default: 6, group: 'Content', when: (p) => isProcedural(p) && FIGURE_BANDS.has(String(p.motif)) },
   { key: 'waveAmp', label: 'Wave depth', kind: 'slider', min: 0, max: 0.45, step: 0.01, default: 0.3, group: 'Content', when: (p) => isProcedural(p) && FIGURE_WAVE.has(String(p.motif)) },
   { key: 'majorEvery', label: 'Major every', kind: 'slider', min: 2, max: 8, step: 1, default: 4, group: 'Content', when: (p) => isProcedural(p) && String(p.motif) === 'graph' },
-  { key: 'jitter', label: 'Color jitter', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Content', when: isProcedural },
+  // Shared by procedural (swaps the two inks per cell) and chips (shifts each
+  // chip's lightness) — see chipTone() in pattern.ts for why they differ.
+  { key: 'jitter', label: 'Color jitter', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Content', when: (p) => isProcedural(p) || isChips(p) },
 
   // Truchet controls — shown only in truchet mode.
   { key: 'tileFamily', label: 'Tile family', kind: 'select', options: [...TILE_FAMILIES], default: 'arcs', group: 'Truchet', when: isTruchet },
@@ -66,6 +70,16 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   // 'Line weight' sizes the arc/band stroke — used by arcs, weave, multiscale.
   // Hidden for diagonal (a solid two-tone split has no stroke to size).
   { key: 'truchetWeight', label: 'Line weight', kind: 'slider', min: 0.06, max: 0.5, step: 0.01, default: 0.18, group: 'Truchet', when: (p) => isTruchet(p) && String(p.tileFamily) !== 'diagonal' },
+
+  // Chips controls — irregular scattered cells (terrazzo, mosaic, pebbles,
+  // stained glass). 'Chips across' is the wrapped cell-noise grid (chips are
+  // roughly one per cell, so it reads as chip count / size); 'Grout width' is
+  // how wide the ground shows between neighbouring chips; 'Chip size variance'
+  // blends every chip identical → wildly mixed sizes. Colour jitter (above)
+  // varies each chip's tone. See pattern.ts's chipSample() for the math.
+  { key: 'chipCells', label: 'Chips across', kind: 'slider', min: 4, max: 24, step: 1, default: 12, group: 'Chips', when: isChips },
+  { key: 'chipGrout', label: 'Grout width', kind: 'slider', min: 0, max: 0.25, step: 0.005, default: 0.05, group: 'Chips', when: isChips },
+  { key: 'chipSizeVar', label: 'Chip size variance', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.7, group: 'Chips', when: isChips },
 
   // Stroke controls — outline the boundaries between regions in shapes mode.
   // 'uniform' = one stroke color on all edges; 'per-role' = each region's edge

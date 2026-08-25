@@ -24,6 +24,10 @@ export const ROLES_BY_FAMILY: Record<string, string[]> = {
   tripods: ['armA', 'armB', 'armC'],
   triangles: ['up', 'down'], diamond: ['a', 'b'], shippou: ['overlap', 'circle', 'field'],
   seigaiha: ['ringA', 'ringB', 'ringC'],
+  // Chips (terrazzo family): the chips cycle the ink roles, the grout is ground.
+  // The ink count must equal CHIP_INK_ROLES in pattern.ts (pinned by a unit test),
+  // and the ground role must stay LAST — chipSample() emits it as index inkRoles.
+  chips: ['chipA', 'chipB', 'ground'],
 }
 
 const PROCEDURAL_FAMILIES = new Set(['checker', 'stripes', 'dots', 'grid', 'rings', 'squares', 'diamonds', 'waves', 'zigzag', 'cross', 'graph'])
@@ -35,6 +39,8 @@ export function activeFamily(p: Params): string {
   if (String(p.mode) === 'truchet') return String(p.tileFamily)
   if (String(p.mode) === 'procedural') return String(p.motif)
   if (String(p.mode) === 'shapes') return String(p.shapeFamily)
+  // Chips has a single family — the mode IS the family (no family picker).
+  if (String(p.mode) === 'chips') return 'chips'
   return 'checker' // raster mode has no roles; harmless default
 }
 export function rolesFor(p: Params): string[] {

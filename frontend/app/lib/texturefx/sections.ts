@@ -7,5 +7,6 @@ import { POST_SECTIONS } from '~/lib/studio/post/controls'
 // tile-density controls (sheetPreset/sheetW/sheetH/tilePx — see texturefx/sheet.ts).
 // POST_SECTIONS (Bloom, Color, Duotone, ...) is appended so the shared post
 // stack's sections land after Fills — see controls.ts's `...postControls(...)`.
-export const TEXTURE_SECTIONS = ['Lattice', 'Cell', 'Content', 'Truchet', 'Raster', 'Stroke', 'Stylize', 'Fills', 'Output', ...POST_SECTIONS] as const
+// 'Chips' holds the terrazzo/mosaic knobs, shown only in chips mode.
+export const TEXTURE_SECTIONS = ['Lattice', 'Cell', 'Content', 'Truchet', 'Chips', 'Raster', 'Stroke', 'Stylize', 'Fills', 'Output', ...POST_SECTIONS] as const
 export type TextureSection = typeof TEXTURE_SECTIONS[number]

@@ -19,6 +19,146 @@ function hash1(i: number): number {
 
 const posmod = (a: number, n: number) => ((a % n) + n) % n
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x)
+const fract = (x: number) => x - Math.floor(x)
+
+// --- Chips: irregular scattered cells (terrazzo / mosaic / pebbles) ---------
+// Every other Texture Studio mode is a REGULAR lattice; chips is cell noise
+// (Worley) on a WRAPPED grid: one hashed feature point per cell, each with its
+// own hashed radius scale, and a pixel belongs to the chip whose feature point
+// is nearest in radius-weighted distance. Grout appears where the nearest and
+// the second-nearest (from a DIFFERENT chip) are nearly tied, which is the
+// mathematical definition of "on the boundary between two cells".
+//
+// Seamless BY CONSTRUCTION, not by luck: a feature point's offset and radius are
+// hashed from the cell id already taken mod `cells`, while its POSITION is that
+// id's un-wrapped grid coordinate. At u=0 the window spans cells -2..2 and at
+// u=1 it spans cells-2..cells+2 — the same wrapped ids at the same relative
+// offsets, so both edges of the tile compute the identical distance set.
+//
+// Mirrorable: pure arithmetic over the loop bounds below, no Math.random, no
+// closures over mutable state, no per-render caches. The shader twin runs the
+// same fixed 5×5 loop with the same salts.
+
+/** Half-width of the neighbourhood scanned for feature points (5×5 window).
+ *  Ring 2 is reachable: a pixel in the far corner of its own small chip can sit
+ *  at weighted distance ~1.4/CHIP_R_MIN, which a ring-2 point of the widest
+ *  radius (weighted ≥ 2/CHIP_R_MAX) can beat. Ring 3 (weighted ≥ 3/CHIP_R_MAX)
+ *  cannot, which is what bounds the loop at 2. */
+export const CHIP_NEIGHBORHOOD = 2
+/** Hashed radius-scale range at chipSizeVar = 1 (1.0 = every chip the same). */
+export const CHIP_R_MIN = 0.6
+export const CHIP_R_MAX = 1.5
+/** Ink roles chips cycle through; the ground/grout role is index CHIP_INK_ROLES.
+ *  Kept in step with ROLES_BY_FAMILY.chips in roles.ts (pinned by a unit test).
+ *  Capped at 2 because the fill machinery (renderer's u_fill* uniform arrays,
+ *  the Fills panel) resolves exactly 3 roles. */
+export const CHIP_INK_ROLES = 2
+/** How far colour jitter may push a chip's lightness (±30% at jitter = 1). */
+export const CHIP_TONE_RANGE = 0.6
+
+// Salts keep the five per-cell hashes independent. They are fractional so that
+// `seed + SALT` can never collide with another integer seed's salted value.
+const SALT_X = 0.317, SALT_Y = 1.523, SALT_R = 2.719, SALT_ROLE = 3.911, SALT_TONE = 4.507
+
+/**
+ * Per-cell hash to 0..1 — Dave Hoskins' hash13, the same construction the GLSL
+ * `cellHash()` in renderer.ts uses, so the shader branch computes the same chips
+ * from the same salts (shared formula, like truchetStates' shared grid).
+ * Precision-safe: it never forms a huge float, unlike hash1's multiply-by-primes
+ * above. The CPU runs it in float64 and the GPU in float32, so the low bits can
+ * differ — that can nudge a feature point by ~1e-7, never break the wrap.
+ *
+ * One deviation from renderer.ts's cellHash, and it matters: stock hash13 adds
+ * the SAME constant (33.33) to all three lanes, which makes the mix symmetric in
+ * x and y — cellHash(1,2) === cellHash(2,1). On a scattered field that mirrors
+ * every chip across the tile diagonal. A per-lane constant breaks the symmetry.
+ * The shader twin must use this vector, not the scalar.
+ *
+ *   vec3 p = fract(vec3(cx, cy, salt) * 0.1031);
+ *   p += dot(p, p.yzx + vec3(33.33, 41.17, 27.83));
+ *   return fract((p.x + p.y) * p.z);
+ */
+export function chipHash(cx: number, cy: number, salt: number): number {
+  let px = fract(cx * 0.1031), py = fract(cy * 0.1031), pz = fract(salt * 0.1031)
+  const d = px * (py + 33.33) + py * (pz + 41.17) + pz * (px + 27.83)   // dot(p, p.yzx + vec3(...))
+  px += d; py += d; pz += d
+  return fract((px + py) * pz)
+}
+
+export type ChipFeature = { x: number; y: number; r: number }
+
+/** The feature point of wrapped cell (cx,cy): its offset INSIDE the cell (0..1)
+ *  plus a radius scale. sizeVar blends 1.0 (every chip identical) toward the
+ *  hashed [CHIP_R_MIN, CHIP_R_MAX] range — a bigger radius divides the weighted
+ *  distance by more, so that chip claims more ground. */
+export function chipFeature(cx: number, cy: number, seed: number, sizeVar: number): ChipFeature {
+  const spread = CHIP_R_MIN + chipHash(cx, cy, seed + SALT_R) * (CHIP_R_MAX - CHIP_R_MIN)
+  return {
+    x: chipHash(cx, cy, seed + SALT_X),
+    y: chipHash(cx, cy, seed + SALT_Y),
+    r: 1 + clamp01(sizeVar) * (spread - 1),
+  }
+}
+
+export type ChipSample = {
+  /** 0..CHIP_INK_ROLES-1 = the chip's ink role; CHIP_INK_ROLES = grout/ground. */
+  role: number
+  /** Wrapped id of the owning chip's cell. */
+  cellX: number
+  cellY: number
+  /** Weighted distance to the nearest feature point, and to the nearest one
+   *  belonging to a DIFFERENT chip (so a chip never grouts against itself). */
+  f1: number
+  f2: number
+  /** Per-chip 0..1 hash — what colour jitter rides. */
+  tone: number
+}
+
+export function chipSample(
+  u: number, v: number, cells: number, seed: number, grout: number, sizeVar: number,
+): ChipSample {
+  const C = Math.max(2, Math.round(cells) || 12)
+  const gx = u * C, gy = v * C
+  const ix = Math.floor(gx), iy = Math.floor(gy)
+  let f1 = Infinity, f2 = Infinity, id1 = -1, cx1 = 0, cy1 = 0
+  for (let dy = -CHIP_NEIGHBORHOOD; dy <= CHIP_NEIGHBORHOOD; dy++) {
+    for (let dx = -CHIP_NEIGHBORHOOD; dx <= CHIP_NEIGHBORHOOD; dx++) {
+      const jx = ix + dx, jy = iy + dy
+      const cx = posmod(jx, C), cy = posmod(jy, C)
+      const f = chipFeature(cx, cy, seed, sizeVar)
+      const d = Math.hypot(gx - (jx + f.x), gy - (jy + f.y)) / f.r
+      const id = cy * C + cx
+      if (d < f1) {
+        // The old best becomes the best-of-the-others — unless it was this very
+        // chip seen through another wrap window, in which case f2 already holds
+        // the nearest point of a different chip.
+        if (id !== id1) f2 = f1
+        f1 = d; id1 = id; cx1 = cx; cy1 = cy
+      } else if (id !== id1 && d < f2) {
+        f2 = d
+      }
+    }
+  }
+  const gap = Math.max(0, Number(grout) || 0)
+  const isGround = f2 - f1 < gap
+  const role = isGround
+    ? CHIP_INK_ROLES
+    : Math.min(CHIP_INK_ROLES - 1, Math.floor(chipHash(cx1, cy1, seed + SALT_ROLE) * CHIP_INK_ROLES))
+  return { role, cellX: cx1, cellY: cy1, f1, f2, tone: chipHash(cx1, cy1, seed + SALT_TONE) }
+}
+
+/**
+ * Colour jitter for a chip. Procedural mode spends `jitter` on a per-cell coin
+ * flip that swaps the two ink roles (see `swap` in patternColor below); a chip
+ * already picks its ink role by hash, so a swap there would be invisible — the
+ * same knob shifts the chip's LIGHTNESS instead, which is what varied terrazzo
+ * chips actually need. At jitter 0 the factor is exactly 1, so the chip is the
+ * role colour to the bit.
+ */
+export function chipTone(c: [number, number, number], tone: number, jitter: number): [number, number, number] {
+  const k = 1 + (tone - 0.5) * clamp01(jitter) * CHIP_TONE_RANGE
+  return [clamp01(c[0] * k), clamp01(c[1] * k), clamp01(c[2] * k)]
+}
 
 /**
  * Toroidal, deterministic Truchet state field (0/1) for "structured" placement.
@@ -193,6 +333,18 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
   const BG = hexToRgb(String(p.background))
   // seed is injected by textureDefaults()/Roll, not part of TEXTURE_CONTROLS
   const seed = Math.round(Number(p.seed) || 1)
+
+  // Chips has no lattice — it scatters its own wrapped cell grid at chipCells,
+  // so it short-circuits before latticeCell(). Roles: 0 = chipA, 1 = chipB,
+  // 2 = ground (grout), matching ROLES_BY_FAMILY.chips / legacyColor's A/B/BG.
+  if (String(p.mode) === 'chips') {
+    const chipCells = Math.max(2, Math.round(Number(p.chipCells) || 12))
+    const grout = Number.isFinite(Number(p.chipGrout)) ? Number(p.chipGrout) : 0.05
+    const sizeVar = Number.isFinite(Number(p.chipSizeVar)) ? Number(p.chipSizeVar) : 0.7
+    const s = chipSample(u, v, chipCells, seed, grout, sizeVar)
+    if (s.role >= CHIP_INK_ROLES) return out(BG)
+    return out(chipTone(s.role === 0 ? A : B, s.tone, Number(p.jitter) || 0))
+  }
 
   const { cx, cy, fx, fy } = latticeCell(String(p.lattice), cells, u, v)
   // One seamless per-cell hash (modded cx/cy) shared by truchet state + jitter swap.
