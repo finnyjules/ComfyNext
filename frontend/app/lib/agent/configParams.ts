@@ -50,11 +50,24 @@ export function makeConfigParams(
   activeLayer: () => number = () => 0,
   listKey = 'layers',
   idKey = 'id',
+  /** The RELATIVE prefix — "the active member of `listKey`". Was hard-coded to
+   *  'layer'; parameterized for Scene3D, whose members are objects and whose
+   *  natural relative prefix is therefore `object.` (its `primitive` macro
+   *  re-describes against the object it just created, and the model addresses
+   *  that object relatively because it cannot know the new id). Defaults to
+   *  'layer', so every existing caller is unaffected.
+   *
+   *  An `activeLayer()` that resolves to no member (e.g. -1) makes the whole
+   *  relative key DEAD — read `undefined`, write dropped — the same posture the
+   *  absolute `<listKey>.<id>.` path already takes for an unresolvable id. That
+   *  matters: without it a relative key would fall through to the root and the
+   *  write below would fabricate a bogus top-level `object` property. */
+  relativePrefix = 'layer',
 ): Params {
   function base(key: string): { obj: AnyObj | null; parts: string[] } {
     const parts = key.split('.')
     let obj = root() as AnyObj | null
-    if (parts[0] === 'layer') {
+    if (parts[0] === relativePrefix) {
       const layers = (obj as AnyObj | null)?.[listKey] as AnyObj[] | undefined
       obj = layers?.[activeLayer()] ?? null
       parts.shift()

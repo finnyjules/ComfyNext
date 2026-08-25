@@ -374,6 +374,13 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
  *  a sculpt, remesh or merge result). */
 export const NOT_PLACEABLE_KINDS: PrimitiveKind[] = ['svgPath', 'mesh']
 
+/** Every kind that HAS a blank form to place — PRIMITIVE_KINDS minus the
+ *  import-only ones above. Derived, never hand-listed, so a new primitive joins
+ *  the add menu and the agent's `primitive` macro in the same commit that
+ *  declares it. This is the macro's option list (see `scenePrimitiveMacro`). */
+export const PLACEABLE_PRIMITIVE_KINDS: PrimitiveKind[] =
+  PRIMITIVE_KINDS.filter(k => !NOT_PLACEABLE_KINDS.includes(k))
+
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
 export const ENVIRONMENT_KINDS: EnvironmentKind[] = ['room', 'darkStrips', 'softbox', 'colorGels']
 
@@ -589,6 +596,70 @@ export function createPrimitive(kind: PrimitiveKind, existing: SceneObject[] = [
   // primParams.ts) — no content to seed, like every other primitive.
   if (kind === 'text') obj.content = { text: 'Text', font: DEFAULT_FONT_URL }
   return obj
+}
+
+/**
+ * The `primitive` MACRO's seam: put a primitive of `kind` in the scene and say
+ * which object the rest of the patch should talk to.
+ *
+ * It ADDS — it never rewrites an existing object's kind. That is not timidity,
+ * it is what the studio supports: no control names an object's kind, and the
+ * surface never assigns `.primitive` on an existing object, so there is no
+ * kind-switch behaviour to mirror. Inventing one would silently turn the box a
+ * user positioned and shaded into a gem. Adding is exactly what the add menu
+ * does, through the very same `createPrimitive`.
+ *
+ * SAME KIND IS A NO-OP, deliberately, and for the reason the shader macro's
+ * same-id guard exists (shaderstudio/types.ts): the guidance's worked example
+ * primes the model to send `primitive` on nearly every turn, so a redundant
+ * `{"primitive": "gem"}` against a doc that already has a gem is the COMMON
+ * case. Appending on it would grow a pile of identical stones, one per turn,
+ * with no row in the proposal to show it — the additive form of the same silent
+ * destruction. So an existing primitive of that kind is TARGETED instead, and
+ * the patch's overrides land on the object the user has already tuned.
+ *
+ * Returns null for a kind with no blank form (NOT_PLACEABLE_KINDS) — those only
+ * ever exist carrying imported data the agent has no way to supply.
+ */
+export function addOrTargetPrimitive(
+  doc: SceneDoc,
+  kind: PrimitiveKind,
+): { doc: SceneDoc; targetId: string; created: boolean } | null {
+  if (!PLACEABLE_PRIMITIVE_KINDS.includes(kind)) return null
+  const existing = doc.objects.find(
+    (o): o is PrimitiveObject => o.kind === 'primitive' && o.primitive === kind,
+  )
+  if (existing) return { doc, targetId: existing.id, created: false }
+  const obj = createPrimitive(kind, doc.objects)
+  doc.objects.push(obj)
+  return { doc, targetId: obj.id, created: true }
+}
+
+/**
+ * Which object the relative `object.*` keys resolve to, as an INDEX into
+ * `doc.objects` (configParams' `activeLayer` contract).
+ *
+ * A SceneDoc carries no selection — selection is engine state (engine.ts's
+ * private `selectedId`), and the tuner runs headless with no engine at all. So
+ * "active" here means precisely one thing: the object the `primitive` macro just
+ * created or targeted THIS run. Keyed by doc identity in a WeakMap rather than
+ * stored on the doc, because it is scratch state for one patch — writing it into
+ * SceneDoc would persist it into the saved widget and change the doc format.
+ *
+ * Returns -1 when no macro ran, which makes every relative key dead (read
+ * `undefined`, write dropped) instead of fabricating a top-level `object`
+ * property on the doc.
+ */
+const MACRO_TARGET = new WeakMap<object, string>()
+
+export function setSceneMacroTarget(doc: SceneDoc, id: string): void {
+  MACRO_TARGET.set(doc as object, id)
+}
+
+export function sceneMacroTargetIndex(doc: SceneDoc): number {
+  const id = MACRO_TARGET.get(doc as object)
+  if (!id) return -1
+  return doc.objects.findIndex(o => o.id === id)
 }
 
 /** Cheap 32-bit string digest (FNV-1a), prefixed with length so two different

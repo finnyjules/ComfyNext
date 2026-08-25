@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import {
   sceneStackControls, sceneAgentControls, sceneBindableControls, SCENE_GUIDANCE,
+  SCENE_PRIMITIVE_MACRO_KEY,
 } from '~/lib/scene3d/agentControls'
 import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
-import { defaultDoc, createPrimitive, createLight, MATERIAL_TYPES, PRIMITIVE_KINDS, ENVIRONMENT_KINDS, type SceneDoc } from '~/lib/scene3d/config'
+import {
+  defaultDoc, createPrimitive, createLight,
+  MATERIAL_TYPES, PRIMITIVE_KINDS, ENVIRONMENT_KINDS, PLACEABLE_PRIMITIVE_KINDS,
+  type SceneDoc, type PrimitiveKind, type MaterialType, type EnvironmentKind,
+} from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 
 // stripMeta is not exported — tested indirectly through the public functions, same
@@ -209,10 +214,46 @@ describe('SCENE_GUIDANCE', () => {
     }
   })
 
-  // The tuner patches EXISTING controls; no control names an object's primitive
-  // kind, so the guidance must not promise it can turn a box into a gem.
-  it('does not claim it can change an object\'s primitive kind', () => {
+  // No control names an object's primitive kind, and the `primitive` macro only
+  // ADDS — so the guidance must not promise it can turn a box into a gem.
+  it('does not claim it can convert an existing object to another kind', () => {
     expect(SCENE_CONTROLS.some(c => c.key === 'object.kind')).toBe(false)
-    expect(SCENE_GUIDANCE.toLowerCase()).toMatch(/cannot change|can't change/)
+    expect(SCENE_GUIDANCE).toMatch(/never converts an existing object/)
+  })
+
+  // The `primitive` macro's own teaching. Detector test: every id and key the
+  // worked example names must be REAL, so a rename fails here rather than in the
+  // live vibe call where the model would send a key that silently drops.
+  it('teaches the `primitive` macro, and the worked example names only real ids', () => {
+    expect(SCENE_GUIDANCE).toContain(SCENE_PRIMITIVE_MACRO_KEY)
+    expect(SCENE_GUIDANCE).toMatch(/WORKED EXAMPLE/)
+
+    // Pull the example's JSON out of the prose and check every key/value for real.
+    const m = SCENE_GUIDANCE.match(/WORKED EXAMPLE[^:]*:\s*(\{[^}]*\})/)
+    expect(m, 'the worked example must be parseable JSON').toBeTruthy()
+    const example = JSON.parse(m![1]!) as Record<string, string | number>
+
+    // The macro's own value must be a placeable kind.
+    expect(PLACEABLE_PRIMITIVE_KINDS).toContain(example[SCENE_PRIMITIVE_MACRO_KEY] as PrimitiveKind)
+    expect(MATERIAL_TYPES).toContain(example['object.material.type'] as MaterialType)
+    expect(ENVIRONMENT_KINDS).toContain(example['lighting.environment'] as EnvironmentKind)
+
+    // Every `object.params.*` key must be a real param OF THE KIND the example
+    // creates — the pairing is the point, since params are per-kind.
+    const kind = example[SCENE_PRIMITIVE_MACRO_KEY] as PrimitiveKind
+    const kindParams = new Set((PRIMITIVE_PARAMS[kind] ?? []).map(p => p.key))
+    for (const key of Object.keys(example)) {
+      if (!key.startsWith('object.params.')) continue
+      expect(kindParams.has(key.slice('object.params.'.length)), `${key} is not a ${kind} param`).toBe(true)
+    }
+
+    // Every `object.material.*` / doc-level key must exist in the schema. The
+    // opal* ones are gated behind an opalescent material, which is exactly what
+    // the example sets, so assert against the FULL declared vocabulary.
+    const declared = new Set(SCENE_CONTROLS.map(c => c.key))
+    for (const key of Object.keys(example)) {
+      if (key === SCENE_PRIMITIVE_MACRO_KEY || key.startsWith('object.params.')) continue
+      expect(declared.has(key), `${key} is not a declared control`).toBe(true)
+    }
   })
 })

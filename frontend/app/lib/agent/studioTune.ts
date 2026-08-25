@@ -51,8 +51,16 @@ import { fetchShaderFxCatalog, getEffect, getEffectSync } from '~/lib/shaderfx/c
 // Scene3D (3D Studio): config.ts/agentControls.ts are three-free by construction (same
 // constraint controls.ts documents), so — like Gradient/Shape — these import statically
 // rather than dynamically; only VectorType's font.ts needs the dynamic-import treatment.
-import { parseDoc as parseSceneDoc, serializeDoc as serializeSceneDoc } from '~/lib/scene3d/config'
-import { SCENE_GUIDANCE, sceneBindableControls } from '~/lib/scene3d/agentControls'
+import {
+  parseDoc as parseSceneDoc, serializeDoc as serializeSceneDoc,
+  addOrTargetPrimitive, setSceneMacroTarget, sceneMacroTargetIndex,
+  MATERIAL_TYPES,
+  type SceneDoc, type PrimitiveObject, type PrimitiveKind, type MaterialType,
+} from '~/lib/scene3d/config'
+import {
+  SCENE_GUIDANCE, sceneBindableControls, sceneAgentControls,
+  scenePrimitiveMacro, SCENE_PRIMITIVE_MACRO_KEY,
+} from '~/lib/scene3d/agentControls'
 
 const MEDIA_OPS = new Set(['generateImage', 'editImage', 'removeImageBackground'])
 
@@ -354,8 +362,13 @@ interface PatchAdapter {
   /** Display value of the macro BEFORE it was applied (the tune row's "before"). */
   macroBefore?: (config: any) => string
   /** Re-derive the control list after the macro swapped the config. Declaring
-   *  this changes the ordering contract for THIS adapter — see runParamPatch. */
-  recontrol?: (config: any) => ControlSpec[] | Promise<ControlSpec[]>
+   *  this changes the ordering contract for THIS adapter — see runParamPatch.
+   *
+   *  `raw` is the model's UNVALIDATED patch. Scene3D needs it because one of its
+   *  scalars GATES the others: `object.material.type` decides whether the opal*
+   *  knobs are offered at all, and it arrives in the same patch that wants to set
+   *  them. Describing without looking at it would drop every gated override. */
+  recontrol?: (config: any, raw: Record<string, ParamValue>) => ControlSpec[] | Promise<ControlSpec[]>
 }
 
 async function runParamPatch(node: any, request: string, apiKey: string, a: PatchAdapter): Promise<TuneResult> {
@@ -411,7 +424,7 @@ async function runParamPatch(node: any, request: string, apiKey: string, a: Patc
       config = swapped
       params = a.params(config) // re-bind the flat view to the new config
       if (a.recontrol) {
-        const described2 = describeControls(await a.recontrol(config), params)
+        const described2 = describeControls(await a.recontrol(config, raw), params)
         patch = validatePatch(raw, described2)
         byPath = new Map(described2.map(d => [d.path, d]))
       }
@@ -644,23 +657,41 @@ function scene3dWidgetIndex(node: any): number {
  *
  * `params` passes `listKey: 'objects'` (configParams.ts's parameter, matching
  * `SceneDoc.objects`) so `objects.<id>.*` keys resolve id→index against the
- * live doc. Controls come from `sceneBindableControls` — the ABSOLUTE
- * `objects.<id>.*` + doc-level (Lighting/Camera/Post) keys only, never the
- * relative `object.*` namespace `sceneAgentControls` also offers: there is no
- * live selection headlessly, AND `makeConfigParams`'s only relative prefix is
- * the literal string `'layer'` (not parameterized) — an `object.*` key would
- * not resolve against a selection at all, it would silently create a bogus
- * top-level `object` key on the SceneDoc instead (see configParams.ts's
- * `write`, which fabricates missing intermediate objects).
+ * live doc.
+ *
+ * THE RESTING vocabulary is still absolute-only: `sceneBindableControls` — the
+ * `objects.<id>.*` + doc-level (Lighting/Camera/Post) keys — because there is no
+ * live selection headlessly, so a relative `object.*` key would have nothing to
+ * point AT. What changed is that "nothing to point at" is now expressible: the
+ * `primitive` macro records the object it created (`sceneMacroTargetIndex`) and
+ * `makeConfigParams`'s relative prefix is parameterized to `'object'`, so
+ * `object.*` resolves to THAT object and — when no macro ran — to index -1,
+ * which makes the key dead rather than fabricating a bogus top-level `object`
+ * property on the SceneDoc (configParams' `write` creates missing containers).
+ *
+ * The relative keys are OFFERED only in the post-macro `recontrol` list, which
+ * is the one moment they mean something: the model has just asked for a shape
+ * that did not exist when it wrote the patch, so it cannot name the new id.
  */
 const scene3dAdapter: PatchAdapter = {
   read: (n: any) => {
     const i = scene3dWidgetIndex(n)
     const raw = i >= 0 ? String(n?.data?.widgetsValues?.[i] ?? '') : ''
     const config = parseSceneDoc(raw)
-    return { config, controls: sceneBindableControls(config) }
+    // The `primitive` macro rides ON TOP of the bindable list rather than inside
+    // it: `sceneBindableControls` also feeds the Collections bind menu, where a
+    // persisted binding to a verb would write a dead `doc.primitive` property.
+    // Same split as Shader's catalog-gated `effect` and Gradient's
+    // `includePreset`.
+    return { config, controls: [scenePrimitiveMacro(config), ...sceneBindableControls(config)] }
   },
-  params: (config: any) => makeConfigParams(() => config, () => 0, 'objects'),
+  // `object.` is the RELATIVE prefix (configParams' 5th arg), resolving to
+  // whatever the macro created or targeted this run — see sceneMacroTargetIndex.
+  // With no macro it resolves to -1 → every relative key dead, which is what the
+  // old hard-coded 'layer' prefix could not express.
+  params: (config: any) => makeConfigParams(
+    () => config, () => sceneMacroTargetIndex(config), 'objects', 'id', 'object',
+  ),
   write: (n: any, config: any) => {
     const i = scene3dWidgetIndex(n)
     if (i < 0) return
@@ -670,6 +701,51 @@ const scene3dAdapter: PatchAdapter = {
   clone: (config: any) => parseSceneDoc(serializeSceneDoc(config)),
   label: '3D Studio',
   guidance: SCENE_GUIDANCE,
+  macroKey: SCENE_PRIMITIVE_MACRO_KEY,
+  macroBefore: (config: SceneDoc) =>
+    config.objects.find((o): o is PrimitiveObject => o.kind === 'primitive')?.primitive ?? '(empty scene)',
+  // Runs through the studio's own add seam, so the object is field-for-field
+  // what the add menu would have placed. Records the target so the relative
+  // `object.*` keys in the SAME patch resolve to it.
+  applyPreset: (kind: string, config: SceneDoc) => {
+    const out = addOrTargetPrimitive(config, kind as PrimitiveKind)
+    if (!out) return null
+    setSceneMacroTarget(out.doc, out.targetId)
+    return out.doc
+  },
+  // Adding an object changes which keys EXIST (`objects.<newid>.*` did not exist
+  // when the patch was written — the model cannot know an id that has not been
+  // minted yet). So re-describe, and re-validate the ORIGINAL raw patch against
+  // the new list: the relative `object.*` overrides the guidance asks for are
+  // recovered here even though the first validation pass dropped them.
+  recontrol: (config: SceneDoc, raw: Record<string, ParamValue>) => {
+    const i = sceneMacroTargetIndex(config)
+    const target = i >= 0 ? config.objects[i] : undefined
+    // ONE scalar in this patch gates the others. `object.material.type` decides
+    // which material knobs `visibleSceneControls` offers at all — opalHueShift &
+    // friends are opalescent-only — and it arrives in the SAME patch that wants
+    // to set them. The object we just created still wears DEFAULT_MATERIAL, so
+    // describing against it as-is would offer no opal* key and validatePatch
+    // would drop every one of them. "a 3d iridescent diamond" would come back a
+    // plain grey stone.
+    //
+    // So describe against the material the patch is ABOUT to install, then put
+    // the real value back: the write-through loop below still performs the type
+    // change for real, which keeps its proposal row honest (a pre-applied type
+    // would read opalescent → opalescent and be filtered as a no-op).
+    let restore: (() => void) | undefined
+    if (target && target.kind !== 'light') {
+      const want = raw['object.material.type'] ?? raw[`objects.${target.id}.material.type`]
+      if (typeof want === 'string' && (MATERIAL_TYPES as string[]).includes(want)) {
+        const prev = target.material.type
+        target.material.type = want as MaterialType
+        restore = () => { target.material.type = prev }
+      }
+    }
+    const out = [...sceneAgentControls(config, target), ...sceneBindableControls(config)]
+    restore?.()
+    return out
+  },
 }
 
 /** Exposed for tests only — the adapter is otherwise reached via the registry. */

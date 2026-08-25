@@ -2,7 +2,7 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
 import { derivedShaderFillControls, shaderFillControls } from '~/lib/shaderfill/controls'
 import { SCENE_CONTROLS, visibleSceneControls, type SceneControl } from './controls'
-import type { SceneDoc, SceneObject } from './config'
+import { PLACEABLE_PRIMITIVE_KINDS, type SceneDoc, type SceneObject, type PrimitiveObject } from './config'
 
 /** Strip the schema-only fields (`when`/`agent`/`animatable`/`summary`/`bindable`/
  *  `entry`/`optionLabels`) a `SceneControl` may carry, and drop anything explicitly
@@ -154,6 +154,39 @@ export function sceneAgentControls(doc: SceneDoc, activeObj?: SceneObject): Cont
 }
 
 /**
+ * The macro key. NOT a config path — `runParamPatch` intercepts it, adds the
+ * primitive through the studio's own `addOrTargetPrimitive` seam and deletes the
+ * key before any write-through, exactly as it does Gradient's `preset` and
+ * Shader's `effect`. Anything that maps this vocabulary onto real config leaves
+ * (the Collections bind menu, via `sceneBindableControls`) must NOT offer it:
+ * bound to a column it would write a dead `doc.primitive` property on every
+ * sweep row.
+ */
+export const SCENE_PRIMITIVE_MACRO_KEY = 'primitive'
+
+/**
+ * Build the `primitive` macro control over the PLACEABLE kinds — the same list
+ * the studio's own add menu enumerates, derived from PRIMITIVE_KINDS minus
+ * NOT_PLACEABLE_KINDS so the two can never drift.
+ *
+ * This is what makes a FRESH node tunable at all: `defaultDoc()` has
+ * `objects: []`, so without it the vocabulary is doc-level lighting and nothing
+ * else, and "a 3d iridescent diamond" has no object to be iridescent.
+ */
+export function scenePrimitiveMacro(doc: SceneDoc): ControlSpec {
+  const current = doc.objects.find((o): o is PrimitiveObject => o.kind === 'primitive')
+  return {
+    key: SCENE_PRIMITIVE_MACRO_KEY,
+    label: 'Primitive',
+    kind: 'select',
+    options: [...PLACEABLE_PRIMITIVE_KINDS],
+    default: current?.primitive ?? PLACEABLE_PRIMITIVE_KINDS[0]!,
+    group: 'Object',
+    hint: 'Put a shape in the scene. Set this FIRST when the scene has no object yet, or when the ask names a shape that is not there; then address it with the object.* keys in the same patch. A kind that is already in the scene is TARGETED, not duplicated.',
+  }
+}
+
+/**
  * The vocabulary a COLLECTION BINDING may be made against.
  *
  * `sceneAgentControls` minus the relative `object.*` keys, plus the same
@@ -197,7 +230,10 @@ Doc-level groups — Lighting, Camera, Post — apply to the whole scene and nee
 
 MATERIAL: \`object.material.type\` picks the shading model (standard/phong/toon/matcap/glass/fresnel/gradient/opalescent/image/shaderFill); most of the other material sliders only apply to SOME types and are withheld from the control list otherwise (roughness/metalness need a PBR type, clearcoat/sheen/transmission need standard or glass, shininess/specular are phong-only, opalHueShift/opalFrequency/opalAngleMix/opalFlowSpeed/opalStrength are opalescent-only) — never set a control that isn't offered for the object's current type. \`object.material.color\` is the base colour on standard/glass/phong/toon/fresnel and the lit substrate tint under an opalescent material; the other types derive colour a different way (matcap id, gradient ramp, image, shader) and ignore it. OPALESCENT is the thin-film / holographic look — a rainbow that flows across the surface with viewing angle: its spectrum comes from the same gradient-stop ramp, then opalHueShift rotates it, opalFrequency sets how many bands wrap the form, opalAngleMix blends shape-driven ↔ view-driven flow, opalFlowSpeed animates it over time (0 = still), and opalStrength fades the rainbow over the base colour. Opalescent also takes the glossy-coat knobs — clearcoat / clearcoatRoughness / envMapIntensity (shared with standard/glass) — plus metalness: clearcoat 0 is a matte soap-bubble, and raising clearcoat + reflection + metalness with low roughness turns it into a wet chrome-holo.
 
-GEM / IRIDESCENT RECIPE: "iridescent", "opalescent", "opal", "holographic", "rainbow sheen" and "oil-slick" all mean ONE thing — set \`object.material.type\` to 'opalescent'. Never answer those words with a gradient material or a plain colour change. Iridescent-gem/diamond asks ("a 3d iridescent diamond", "a shiny gemstone") are that material plus low \`roughness\`, high \`clearcoat\` and \`lighting.environment\` = 'darkStrips', whose bright bars are what make facets read. When the object is a GEM primitive its CUT is geometry, not material: \`object.params.points\` (more points = more, smaller facets), \`spread\` (wider stone) and \`depth\` (flat cut-gem slab ↔ chunky stone) — a "sharper cut"/"more brilliant" ask is those. You CANNOT change an object's primitive kind from here (no such control is offered), so a request to turn something INTO a gem can only restyle the object that is already there — say so rather than pretending.
+ADDING A SHAPE — the \`primitive\` MACRO: \`primitive\` is a VERB, not a stored value. Set it to put a shape in the scene (gem, box, sphere, torus, text…), then address that shape with the RELATIVE \`object.*\` keys in the SAME patch — you cannot know its \`objects.<id>.\` name, because it does not exist until the macro runs. Set it FIRST whenever the scene is empty, or when the ask names a shape that is not in it. A kind already present is TARGETED, never duplicated, so re-sending it is safe and preserves that object's tuning. It only ADDS — it never converts an existing object into another kind (no control changes an object's kind), so "turn the box into a gem" adds a gem and leaves the box; say so rather than implying the box changed.
+
+GEM / IRIDESCENT RECIPE: "iridescent", "opalescent", "opal", "holographic", "rainbow sheen" and "oil-slick" all mean ONE thing — \`object.material.type\` = 'opalescent'. Never answer those words with a gradient material or a plain colour change. A gem/diamond ask is \`primitive\` = 'gem' plus that material, low \`roughness\`, high \`clearcoat\`, and \`lighting.environment\` = 'darkStrips', whose bright bars are what make facets read. The gem's CUT is geometry, not material: \`object.params.points\` (more points = more, smaller facets), \`spread\` (wider stone) and \`depth\` (flat cut-gem slab ↔ chunky stone) — a "sharper cut" / "more brilliant" ask is those.
+WORKED EXAMPLE — "a 3d iridescent diamond" on an empty scene: {"primitive":"gem", "object.material.type":"opalescent", "object.material.opalStrength":0.9, "object.material.clearcoat":1, "object.material.roughness":0.05, "object.params.points":24, "lighting.environment":"darkStrips"}.
 
 RELIEF NEEDS LIGHT: \`object.material.relief.*\` is a bump/height field that perturbs how the surface catches light — it is INVISIBLE on a flat-shaded or unlit material (an unlit shaderFill has no lighting response at all, so relief there does nothing). Reach for relief only once the material is a lit type (standard/glass/phong/etc, or a shaderFill with unlit off), and pair \`relief.scale\` (how raised the detail looks) with \`relief.contrast\` (how much it catches the light) — a flat-looking relief usually needs MORE contrast, not more scale.
 
