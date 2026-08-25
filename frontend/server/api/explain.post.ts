@@ -1,4 +1,4 @@
-import { modelForTier } from '../lib/aiModels'
+import { effortForTier, modelForTier } from '../lib/aiModels'
 import { assertRateLimit } from '../lib/rateLimit'
 import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
 import { meterAssist } from '../utils/anthropicMeter'
@@ -26,6 +26,9 @@ export default defineEventHandler(async (event) => {
       body: JSON.stringify({
         model: modelForTier('plan'),
         max_tokens: 1024,
+        // Latency cap — no output_config.format here (plain-text explanation,
+        // not structured output), so effort is the only field added.
+        ...(effortForTier('plan') ? { output_config: { effort: effortForTier('plan') } } : {}),
         messages: [
           {
             role: 'user',

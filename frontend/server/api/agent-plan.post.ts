@@ -11,7 +11,7 @@
  */
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
-import { modelForTier } from '../lib/aiModels'
+import { effortForTier, modelForTier } from '../lib/aiModels'
 import { MAX_PROMPT_CHARS, optionalApiKey, optionalTier, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { extractModelText } from '../lib/modelText'
 import { meterAssist } from '../utils/anthropicMeter'
@@ -21,6 +21,22 @@ interface AgentPlanBody {
   tier?: string
   prompt?: string
   schema?: unknown
+}
+
+/** Pure request-body builder, exported for a plain-Node unit test (no h3/fetch
+ *  mocking needed) — asserts output_config.effort actually lands in the body
+ *  Anthropic receives, not just that effortForTier returns the right value. */
+export function buildAgentPlanRequestBody(tier: string | undefined, prompt: string, schema: unknown) {
+  const effort = effortForTier(tier)
+  return {
+    model: modelForTier(tier),
+    max_tokens: 2048,
+    output_config: {
+      format: { type: 'json_schema' as const, schema },
+      ...(effort ? { effort } : {}),
+    },
+    messages: [{ role: 'user' as const, content: prompt }],
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -43,12 +59,7 @@ export default defineEventHandler(async (event) => {
       'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
     },
-    body: JSON.stringify({
-      model: modelForTier(tier),
-      max_tokens: 2048,
-      output_config: { format: { type: 'json_schema', schema } },
-      messages: [{ role: 'user', content: prompt }],
-    }),
+    body: JSON.stringify(buildAgentPlanRequestBody(tier, prompt, schema)),
   })
 
   if (!res.ok) {

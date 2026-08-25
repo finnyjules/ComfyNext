@@ -7,7 +7,7 @@
  */
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
-import { modelForTier } from '../lib/aiModels'
+import { effortForTier, modelForTier } from '../lib/aiModels'
 import { MAX_IMAGE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, optionalTier, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { extractModelText } from '../lib/modelText'
 import { meterAssist } from '../utils/anthropicMeter'
@@ -53,7 +53,12 @@ export default defineEventHandler(async (event) => {
     body: JSON.stringify({
       model: modelForTier(tier),
       max_tokens: 2048,
-      output_config: { format: { type: 'json_schema', schema } },
+      output_config: {
+        format: { type: 'json_schema', schema },
+        // Latency cap — see server/lib/aiModels.ts for why 'plan' gets 'low'
+        // and 'patch' (Haiku, no effort support) stays unset.
+        ...(effortForTier(tier) ? { effort: effortForTier(tier) } : {}),
+      },
       // Cache the static instruction prefix: reviews cluster (iterate → render →
       // review, Variations bursts), so the 5-minute ephemeral window hits often.
       ...(system

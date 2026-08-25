@@ -104,14 +104,21 @@ interface Outcome {
   opCount: number
   ops: string[]
   stopReason: string
+  /** Wall-clock time for the (possibly retried) call, ms. Lets the owner's next
+   *  key-gated run measure the output_config.effort latency fix directly. */
+  ms: number
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 /** Same request shape as server/api/agent-plan.post.ts (non-streaming,
- *  json_schema output_config, max_tokens 2048, first text block). Retries once
- *  on 429/5xx. */
-async function callModel(model: ModelId, prompt: string, schema: Record<string, unknown>): Promise<{ text: string; stopReason: string }> {
+ *  json_schema output_config, max_tokens 2048, first text block), now including
+ *  output_config.effort — 'low' is valid on both claude-sonnet-4-6 and
+ *  claude-sonnet-5 (see server/lib/aiModels.ts), so both arms of the A/B send
+ *  it identically and the comparison stays apples-to-apples. Retries once on
+ *  429/5xx. */
+async function callModel(model: ModelId, prompt: string, schema: Record<string, unknown>): Promise<{ text: string; stopReason: string; ms: number }> {
+  const started = Date.now()
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -123,7 +130,7 @@ async function callModel(model: ModelId, prompt: string, schema: Record<string, 
       body: JSON.stringify({
         model,
         max_tokens: 2048,
-        output_config: { format: { type: 'json_schema', schema } },
+        output_config: { format: { type: 'json_schema', schema }, effort: 'low' },
         messages: [{ role: 'user', content: prompt }],
       }),
     })
@@ -137,7 +144,7 @@ async function callModel(model: ModelId, prompt: string, schema: Record<string, 
     const text = Array.isArray(json.content)
       ? (json.content.find(b => typeof b?.text === 'string' && b.text)?.text as string | undefined) ?? ''
       : ''
-    return { text, stopReason: String(json.stop_reason ?? '') }
+    return { text, stopReason: String(json.stop_reason ?? ''), ms: Date.now() - started }
   }
   throw new Error('unreachable')
 }
@@ -147,18 +154,18 @@ async function runOne(model: ModelId, phrase: string): Promise<Outcome> {
   const prompt = buildAgentPrompt(snapshot, phrase)
   const schema = buildCommandSchema(snapshot.commands)
 
-  let text: string, stopReason: string
+  let text: string, stopReason: string, ms: number
   try {
-    ({ text, stopReason } = await callModel(model, prompt, schema))
+    ({ text, stopReason, ms } = await callModel(model, prompt, schema))
   } catch (e) {
-    return { firstAddNode: `ERROR: ${(e as Error).message.slice(0, 60)}`, tunedAfter: false, reasoning: '', opCount: 0, ops: [], stopReason: 'error' }
+    return { firstAddNode: `ERROR: ${(e as Error).message.slice(0, 60)}`, tunedAfter: false, reasoning: '', opCount: 0, ops: [], stopReason: 'error', ms: 0 }
   }
 
   const parsed = parseAgentResponse(text)
   if (parsed.parseFailed) {
     // A max_tokens cut mid-JSON is a truncation, not a model that can't emit JSON.
     const label = stopReason === 'max_tokens' ? 'TRUNCATED' : 'MALFORMED'
-    return { firstAddNode: label, tunedAfter: false, reasoning: text.slice(0, 100), opCount: 0, ops: [], stopReason }
+    return { firstAddNode: label, tunedAfter: false, reasoning: text.slice(0, 100), opCount: 0, ops: [], stopReason, ms }
   }
 
   const ops = parsed.commands.map(c => c.op)
@@ -175,12 +182,18 @@ async function runOne(model: ModelId, phrase: string): Promise<Outcome> {
     opCount: parsed.commands.length,
     ops,
     stopReason,
+    ms,
   }
 }
 
 const REPORT_PATH = fileURLToPath(new URL('../../../docs/superpowers/evals/2026-08-24-plan-model-ab.md', import.meta.url))
 
 function esc(s: string): string { return s.replace(/\|/g, '\\|').replace(/\n/g, ' ') }
+
+function avgMs(rows: Array<{ results: Record<ModelId, Outcome> }>, model: ModelId): number {
+  const vals = rows.map(r => r.results[model].ms).filter(ms => ms > 0)
+  return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0
+}
 
 function buildReport(rows: Array<{ prompt: string; results: Record<ModelId, Outcome> }>): string {
   const [OLD, NEW] = MODELS
@@ -206,7 +219,11 @@ function buildReport(rows: Array<{ prompt: string; results: Record<ModelId, Outc
     'The PRODUCTION canvas-planner request: `describeCanvas` → `buildAgentPrompt` +',
     '`buildCommandSchema` (app/lib/agent/…), posted to `/v1/messages` in the exact shape',
     '`server/api/agent-plan.post.ts` uses (non-streaming, `output_config.format` =',
-    '`json_schema`, `max_tokens: 2048`, first text block). Snapshot: an EMPTY canvas —',
+    '`json_schema`, `output_config.effort: \'low\'`, `max_tokens: 2048`, first text block).',
+    'Both arms send `effort: \'low\'` — valid on claude-sonnet-4-6 and claude-sonnet-5 alike',
+    '(server/lib/aiModels.ts) — so the pick-stability AND latency comparisons are',
+    'apples-to-apples, not confounded by one arm thinking harder than the other.',
+    'Snapshot: an EMPTY canvas —',
     "the first-prompt case — with a catalog assembled from the app's own",
     '`AGENT_CAPABILITIES` through the real `buildCatalog` ranking pipeline.',
     '',
@@ -217,9 +234,12 @@ function buildReport(rows: Array<{ prompt: string; results: Record<ModelId, Outc
     '',
     `First \`addNode\` agreement: **${agree}/${rows.length}**.`,
     '',
-    `| Prompt | ${OLD} → first addNode | tuneNode follows | ${NEW} → first addNode | tuneNode follows |`,
-    '| --- | --- | --- | --- | --- |',
-    ...rows.map(r => `| ${esc(r.prompt)} | \`${esc(r.results[OLD].firstAddNode)}\` | ${r.results[OLD].tunedAfter ? 'yes' : 'no'} | \`${esc(r.results[NEW].firstAddNode)}\` | ${r.results[NEW].tunedAfter ? 'yes' : 'no'} |`),
+    `Average wall-clock per call: \`${OLD}\` **${avgMs(rows, OLD)}ms**, \`${NEW}\` **${avgMs(rows, NEW)}ms**`,
+    '(0 excluded from the average when a call errored).',
+    '',
+    `| Prompt | ${OLD} → first addNode | tuneNode follows | ms | ${NEW} → first addNode | tuneNode follows | ms |`,
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...rows.map(r => `| ${esc(r.prompt)} | \`${esc(r.results[OLD].firstAddNode)}\` | ${r.results[OLD].tunedAfter ? 'yes' : 'no'} | ${r.results[OLD].ms} | \`${esc(r.results[NEW].firstAddNode)}\` | ${r.results[NEW].tunedAfter ? 'yes' : 'no'} | ${r.results[NEW].ms} |`),
     '',
     '## Reasoning (first ~100 chars) and full op sequence',
     '',
@@ -261,10 +281,12 @@ describe('plan-tier A/B eval (env-gated)', () => {
       // eslint-disable-next-line no-console
       console.log(`  ${'-'.repeat(48)}+${'-'.repeat(29)}+${'-'.repeat(29)}`)
       for (const r of rows) {
-        const cell = (o: Outcome) => `${o.firstAddNode}${o.tunedAfter ? ' +tune' : ''}`
+        const cell = (o: Outcome) => `${o.firstAddNode}${o.tunedAfter ? ' +tune' : ''} (${o.ms}ms)`
         // eslint-disable-next-line no-console
         console.log(`  ${r.prompt.slice(0, 48).padEnd(48)}| ${cell(r.results[OLD]).slice(0, 28).padEnd(28)}| ${cell(r.results[NEW])}`)
       }
+      // eslint-disable-next-line no-console
+      console.log(`\n  avg ms — ${OLD}: ${avgMs(rows, OLD)}, ${NEW}: ${avgMs(rows, NEW)}`)
 
       mkdirSync(dirname(REPORT_PATH), { recursive: true })
       writeFileSync(REPORT_PATH, buildReport(rows), 'utf8')
