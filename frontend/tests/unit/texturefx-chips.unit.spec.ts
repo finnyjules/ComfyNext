@@ -1,12 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
-  CHIP_INK_ROLES, CHIP_NEIGHBORHOOD, CHIP_R_MAX, CHIP_R_MIN,
+  CHIP_INK_ROLES, CHIP_NEIGHBORHOOD, CHIP_R_MAX, CHIP_R_MIN, CHIP_TONE_RANGE,
+  CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE,
   chipFeature, chipHash, chipSample, chipTone, patternColor, type RGBA,
 } from '~/lib/texturefx/pattern'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { rolesFor } from '~/lib/texturefx/roles'
 import { MODES } from '~/lib/texturefx/types'
 import { describeTexture } from '~/lib/agent/surfaces/texture'
+import { TEXTURE_FS, chipSaltLanes } from '~/lib/texturefx/renderer'
+import { TEXTURE_GUIDANCE } from '~/lib/agent/studioTune'
+
+// studioTune.ts pulls in ofetch's $fetch at module scope; nothing here calls a
+// tuner, so the mock only has to satisfy the import (same as scene3d-registry).
+vi.mock('ofetch', () => ({ $fetch: vi.fn() }))
 
 // --- helpers ---------------------------------------------------------------
 
@@ -424,5 +433,161 @@ describe('chips: pinned hash + independent brute force', () => {
     const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length)
     expect(mean).toBeGreaterThan(0.42); expect(mean).toBeLessThan(0.58)
     expect(sd).toBeGreaterThan(0.25)      // uniform 0..1 has sd 0.289
+  })
+})
+
+// --- the GPU twin ----------------------------------------------------------
+// The shader can't run here (a WebGL context needs a browser), so these are
+// SOURCE assertions on the one fragment shader render() compiles — the house
+// style for shader coverage (see shapefx-post.unit.spec.ts's POST_FRAG block).
+// The CPU sampler above stays the behavioural truth; pixel-level agreement is
+// checked with a tolerance on /dev/pattern-gallery's chips row.
+
+describe('chips shader branch', () => {
+  /** Just the chips branch: from its gate to the shapes gate that follows it. */
+  const chipsBranch = (() => {
+    const start = TEXTURE_FS.indexOf('if (u_mode > 3.5)')
+    const end = TEXTURE_FS.indexOf('if (u_mode > 2.5)')
+    return TEXTURE_FS.slice(start, end)
+  })()
+
+  it('gates on the chips MODE INDEX, and gates before the shapes branch', () => {
+    // The hazard this test exists for: the shapes gate is a bare `u_mode > 2.5`,
+    // so chips (index 4) used to render the SHAPES branch — a believable wrong
+    // tile, not a blank one. Chips must therefore return FIRST.
+    expect(MODES.indexOf('chips' as any)).toBe(4)
+    const chipsGate = TEXTURE_FS.indexOf('if (u_mode > 3.5)')
+    const shapesGate = TEXTURE_FS.indexOf('if (u_mode > 2.5)')
+    expect(chipsGate, 'chips branch missing from the shader').toBeGreaterThan(0)
+    expect(chipsGate, 'chips must be gated BEFORE shapes').toBeLessThan(shapesGate)
+    // 3.5 is the midpoint between shapes (3) and chips (4) — if chips ever moves,
+    // this threshold has to move with it.
+    expect(MODES.indexOf('chips' as any) - 0.5).toBe(3.5)
+  })
+
+  it('interpolates pattern.ts constants instead of retyping them', () => {
+    // Retyped constants are how the twins drift: these must be the SAME numbers
+    // the CPU used, which is only guaranteed if the template literal read them.
+    expect(chipsBranch).toContain(`for (int dy = -${CHIP_NEIGHBORHOOD}; dy <= ${CHIP_NEIGHBORHOOD}; dy++)`)
+    expect(chipsBranch).toContain(`for (int dx = -${CHIP_NEIGHBORHOOD}; dx <= ${CHIP_NEIGHBORHOOD}; dx++)`)
+    expect(chipsBranch).toContain(`float(${CHIP_R_MIN})`)
+    expect(chipsBranch).toContain(`float(${CHIP_R_MAX})`)
+    expect(chipsBranch).toContain(`float(${CHIP_TONE_RANGE})`)
+    expect(chipsBranch).toContain(`evalFill(${CHIP_INK_ROLES}, fc, v_uv)`)   // ground = grout
+    // The salts never appear in GLSL at all — they are folded into the
+    // u_chipSalt lanes on the JS side (chipSaltLanes), so a literal here would
+    // mean someone hand-typed one.
+    for (const s of [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE]) {
+      expect(TEXTURE_FS, `salt ${s} hand-typed into the shader`).not.toContain(String(s))
+    }
+  })
+
+  it('uses the ASYMMETRIC per-lane hash, not the shared scalar cellHash', () => {
+    // cellHash() adds 33.33 to all three lanes, which makes it symmetric in x/y
+    // and mirrors every chip across the tile diagonal (the CPU twin has its own
+    // test for the asymmetry).
+    expect(TEXTURE_FS).toContain('vec3(33.33, 41.17, 27.83)')
+    expect(chipsBranch).toContain('chipHash(')
+    expect(chipsBranch, 'chips must not fall back to the symmetric cellHash').not.toContain('cellHash(')
+  })
+
+  it('keeps F2 on a DIFFERENT cell id (a chip never grouts against itself)', () => {
+    expect(chipsBranch).toContain('if (id != id1) f2 = f1;')
+    expect(chipsBranch).toContain('else if (id != id1 && d < f2)')
+    // wrapped id vs un-wrapped position — the split that makes the tile seamless
+    expect(chipsBranch).toContain('float cx = posmod(jx, C), cy = posmod(jy, C);')
+    expect(chipsBranch).toContain('vec2 fp = vec2(jx + chipHash(cx, cy, u_chipSalt[0]), jy + chipHash(cx, cy, u_chipSalt[1]));')
+  })
+
+  it('jitter is one mix toward white/black — no clamp on the colour, no branch', () => {
+    expect(chipsBranch).toContain('col = mix(col, vec3(step(0.5, tone)), abs(tone - 0.5) * clamp(u_jitter, 0.0, 1.0) * float(0.6));')
+  })
+
+  it('every chip uniform the shader declares is actually uploaded by render()', () => {
+    const src = readFileSync(resolve(__dirname, '../../app/lib/texturefx/renderer.ts'), 'utf8')
+    for (const name of ['u_chipCells', 'u_chipGrout', 'u_chipSizeVar']) {
+      expect(TEXTURE_FS, `${name} not declared`).toContain(name)
+      expect(src, `${name} declared but never set`).toContain(`u('${name}')`)
+    }
+    expect(TEXTURE_FS).toContain('uniform float u_chipSalt[5];')
+    expect(src).toContain(`u('u_chipSalt[0]')`)
+    // Colour jitter is the SHARED uniform, not a chips-only copy.
+    expect(chipsBranch).toContain('u_jitter')
+  })
+})
+
+describe('chipSaltLanes (the float32 seed hazard)', () => {
+  /** chipHash exactly as the GLSL computes it: the third lane arrives already
+   *  hashed. If this stops equalling pattern.ts's chipHash, the shader is
+   *  computing a different field from the CPU and every chips tile drifts. */
+  const glslChipHash = (cx: number, cy: number, pz: number) => {
+    const fr = (x: number) => x - Math.floor(x)
+    let px = fr(cx * 0.1031), py = fr(cy * 0.1031), pzz = pz
+    const d = px * (py + 33.33) + py * (pzz + 41.17) + pzz * (px + 27.83)
+    px += d; py += d; pzz += d
+    return fr((px + py) * pzz)
+  }
+  const SALTS = [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE]
+
+  it('pre-hashing the salt is the identical function, lane for lane', () => {
+    for (const seed of [1, 3, 7, 977, 123457, 999983]) {
+      const lanes = chipSaltLanes(seed)
+      expect(lanes.length).toBe(SALTS.length)
+      for (let i = 0; i < SALTS.length; i++) {
+        for (const [cx, cy] of [[0, 0], [1, 2], [5, 11], [23, 17]] as [number, number][]) {
+          expect(glslChipHash(cx, cy, lanes[i]!), `seed ${seed} lane ${i} cell ${cx},${cy}`)
+            .toBe(chipHash(cx, cy, seed + SALTS[i]!))
+        }
+      }
+    }
+  })
+
+  it('every lane is a 0..1 fraction — which is the point (float32 keeps those)', () => {
+    // A raw seed + salt is not: at seed 1e6 a float32 ulp is 0.0625, which
+    // swallows the salts whole and would reshuffle the entire tile on the GPU
+    // while the CPU (float64) kept the old one.
+    for (const seed of [1, 1_000_000]) {
+      for (const l of chipSaltLanes(seed)) { expect(l).toBeGreaterThanOrEqual(0); expect(l).toBeLessThan(1) }
+    }
+    // ...and the five lanes stay distinct, so the five hashes stay independent.
+    expect(new Set(chipSaltLanes(7)).size).toBe(SALTS.length)
+  })
+})
+
+// --- the tuner's chips vocabulary ------------------------------------------
+
+describe('texture tuner guidance', () => {
+  it('keeps the honesty clause and names the three chips looks', () => {
+    expect(TEXTURE_GUIDANCE).toContain('Never present an approximation as an exact match.')
+    for (const look of ['terrazzo', 'mosaic', 'pebbles']) {
+      expect(TEXTURE_GUIDANCE.toLowerCase(), `no recipe for ${look}`).toContain(look)
+    }
+  })
+
+  it('names only control keys, roles and commands that actually exist', () => {
+    // Same detector as geoshape's guidance test: every control key, role key and
+    // command op the prose names is camelCase, and ordinary English never
+    // produces a lowercase-then-uppercase token — so a renamed or typo'd name
+    // gets pulled out here and fails, instead of quietly sending the model after
+    // a control that no longer exists.
+    const snapshot = describeTexture({ params: chipParams() })
+    const keys = new Set(TEXTURE_CONTROLS.map(c => c.key))
+    const roles = new Set(rolesFor({ mode: 'chips' } as any))
+    const ops = new Set(snapshot.commands.map(c => c.op))
+    const candidates = new Set(TEXTURE_GUIDANCE.match(/\b[a-z][a-z0-9]*[A-Z][a-zA-Z0-9]*\b/g) ?? [])
+    expect(candidates.size, 'the field-name detector found nothing — check the regex').toBeGreaterThan(3)
+    for (const c of candidates) expect(keys.has(c) || roles.has(c) || ops.has(c), c).toBe(true)
+    // The recipes lean on all three chip sliders…
+    for (const k of ['chipCells', 'chipGrout', 'chipSizeVar']) expect(candidates.has(k), k).toBe(true)
+    // …plus jitter, which the detector can't see (one lowercase word).
+    expect(TEXTURE_GUIDANCE).toContain('jitter')
+  })
+
+  it('does not promise more chip colours than the shader can paint', () => {
+    // CHIP_INK_ROLES is 2 by decision — a third ink needs the fill uniform arrays
+    // widened first, so the recipe must say two inks + ground, not "3-4 chips".
+    expect(rolesFor({ mode: 'chips' } as any).length).toBe(CHIP_INK_ROLES + 1)
+    expect(TEXTURE_GUIDANCE).toContain('two ink colours plus the ground')
+    expect(TEXTURE_GUIDANCE).not.toMatch(/three chip colou?rs|four chip colou?rs/i)
   })
 })

@@ -251,6 +251,25 @@ async function runCommandSurface<S>(node: any, request: string, apiKey: string, 
  *  can reuse it verbatim via its own `guidance`. */
 const APPROXIMATION_HONESTY_GUIDANCE = 'If the requested look is not achievable with the modes and controls available here, do not force an exact match: configure the closest approximation you can with the commands above, and say so in "message" — name the requested look and state plainly that this only approximates it. Never present an approximation as an exact match.'
 
+/**
+ * Texture's own guidance: the honesty clause plus look recipes for the CHIPS
+ * mode, whose three sliders are not self-describing (nothing in "Chips across /
+ * Grout width / Chip size variance" says "terrazzo"). Recipes are prose the model
+ * reads, deliberately NOT hardcoded logic — a phrase that only half-matches
+ * should still be free to land between two of these.
+ *
+ * Chip colours are set through the ROLE commands (setFillColor on chipA / chipB /
+ * ground), not setParam — colorA/colorB/background are hidden controls.
+ * Chips carries exactly TWO ink colours plus the ground, by decision; a request
+ * for "four colours of chip" is an approximation case (see the clause above),
+ * and colour jitter is what supplies the rest of the variety.
+ */
+export const TEXTURE_GUIDANCE = `${APPROXIMATION_HONESTY_GUIDANCE}
+Chips-mode look recipes (mode "chips" scatters irregular cells; its chip colours are the roles chipA/chipB with the grout on ground, so set them with setFillColor, not setParam):
+- "terrazzo" / "speckled stone": chipCells 10-14, chipGrout thin (0.03-0.06), chipSizeVar high (0.7-0.9), ground an off-white, chipA/chipB two muted stone inks, jitter 0.5-0.8 so no two chips share a tone. Chips holds two ink colours plus the ground — the tonal spread comes from jitter, so say so rather than promising more colours.
+- "mosaic" / "tile work": tighter, more regular grid (chipCells 16-22), chipSizeVar low (0.1-0.3), grout stronger (0.08-0.12) in a darker ground.
+- "pebbles" / "river stones": few big chips (chipCells 5-8), chipSizeVar high (0.8-1), grout wide (0.1-0.18).`
+
 /** Texture Studio: state is a single `Params` bag under sailor_textureStudio
  *  (merged over defaults so pre-newer-key nodes still describe cleanly). No media
  *  ops. */
@@ -265,7 +284,7 @@ export async function tuneTextureNode(node: any, request: string, apiKey: string
     apply: applyTextureCommand,
     summarize: summarizeTextureChange,
     verify: verifyTexture,
-    guidance: APPROXIMATION_HONESTY_GUIDANCE,
+    guidance: TEXTURE_GUIDANCE,
   })
 }
 

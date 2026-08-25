@@ -87,9 +87,12 @@ export const CHIP_TONE_RANGE = 0.6
  * Salts keeping the five per-cell hashes independent. Fractional, so `seed +
  * SALT` can never collide with another integer seed's salted value.
  *
- * EXPORTED because the fragment shader in renderer.ts is a template literal:
- * Task 3 interpolates these values into the GLSL source (`${CHIP_SALT_X}`) so
- * the two twins cannot drift. Never retype the numbers in the shader.
+ * EXPORTED so the shader twin cannot drift from these numbers. Unlike the other
+ * chip constants (which renderer.ts interpolates straight into its GLSL template
+ * literal), the salts reach the GPU as a UNIFORM: chipSaltLanes() there folds
+ * each `seed + salt` through the hash's first step in float64 and uploads the
+ * 0..1 result, because a float32 ulp at a six-digit Roll seed is wide enough to
+ * swallow the salt whole. Either way — never retype the numbers in the shader.
  */
 export const CHIP_SALT_X = 0.317
 export const CHIP_SALT_Y = 1.523

@@ -40,7 +40,7 @@ import type { Params } from '~/lib/spacetype/effect'
 const TILE = 128        // tile render size
 const DISP = TILE * 2   // 2×2 repeat display
 
-interface Item { key: string; label: string; params: Params; kind: 'proc' | 'truchet' | 'shape'; delta: number }
+interface Item { key: string; label: string; params: Params; kind: 'proc' | 'truchet' | 'shape' | 'chips'; delta: number }
 
 function mk(kind: Item['kind'], name: string, extra: Partial<Params>): Item {
   return { key: `${kind}:${name}`, label: name, kind, delta: 0, params: { ...textureDefaults(), cells: 8, ...extra } as Params }
@@ -49,11 +49,24 @@ function mk(kind: Item['kind'], name: string, extra: Partial<Params>): Item {
 const procItems = MOTIFS.map((m) => mk('proc', m, { mode: 'procedural', motif: m }))
 const truchetItems = TILE_FAMILIES.map((f) => mk('truchet', f, { mode: 'truchet', tileFamily: f }))
 const shapeItems = SHAPE_FAMILIES.map((f) => mk('shape', f, { mode: 'shapes', shapeFamily: f }))
+// Chips is the one mode with no family list to enumerate — it has a single family
+// and three sliders — so the parity row is the looks those sliders reach instead:
+// the shipped defaults plus the three recipes the tuner's guidance names.
+const CHIP_LOOKS: { name: string; params: Partial<Params> }[] = [
+  { name: 'default', params: {} },
+  { name: 'terrazzo', params: { chipCells: 12, chipGrout: 0.045, chipSizeVar: 0.8, jitter: 0.65 } },
+  { name: 'mosaic', params: { chipCells: 18, chipGrout: 0.09, chipSizeVar: 0.2, jitter: 0.2 } },
+  { name: 'pebbles', params: { chipCells: 7, chipGrout: 0.13, chipSizeVar: 0.9, jitter: 0.5 } },
+  { name: 'no grout', params: { chipGrout: 0, jitter: 0 } },
+  { name: 'big seed', params: { seed: 999983 } },   // float32 seed-precision check
+]
+const chipItems = CHIP_LOOKS.map((l) => mk('chips', l.name, { mode: 'chips', ...l.params }))
 
 const groups = reactive([
   { title: `Procedural motifs (${procItems.length})`, items: procItems },
   { title: `Truchet families (${truchetItems.length})`, items: truchetItems },
   { title: `Shape families (${shapeItems.length})`, items: shapeItems },
+  { title: `Chips looks (${chipItems.length})`, items: chipItems },
 ])
 
 const maxDelta = ref(0)
@@ -68,6 +81,8 @@ const hexRgb = (hex: string): [number, number, number] => {
 function cpuTile(item: Item): Uint8ClampedArray {
   const p = item.params
   const out = new Uint8ClampedArray(TILE * TILE * 4)
+  // Only the shape branch below reads `fam` (chips has a single family and takes
+  // the patternColor path, same as proc/truchet).
   const fam = String(item.kind === 'proc' ? p.motif : item.kind === 'truchet' ? p.tileFamily : p.shapeFamily)
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {

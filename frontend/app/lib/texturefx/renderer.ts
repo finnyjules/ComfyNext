@@ -7,7 +7,11 @@
 
 import type { Params } from '~/lib/spacetype/effect'
 import { LATTICES, MOTIFS, MODES, TILE_FAMILIES, SHAPE_FAMILIES, postSettingsFromParams } from '~/lib/texturefx/types'
-import { truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
+import {
+  truchetStates, multiscaleLevels,
+  CHIP_NEIGHBORHOOD, CHIP_R_MIN, CHIP_R_MAX, CHIP_INK_ROLES, CHIP_TONE_RANGE,
+  CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE,
+} from '~/lib/texturefx/pattern'
 import { getRaster } from '~/lib/texturefx/raster'
 import { fillForRole, hexToRgb } from '~/lib/texturefx/fills'
 import { rolesFor } from '~/lib/texturefx/roles'
@@ -38,7 +42,10 @@ in vec2 v_uv; out vec4 frag;
 uniform sampler2D u_src;
 void main(){ frag = texture(u_src, v_uv); }`
 
-const FS = `#version 300 es
+// EXPORTED so unit tests can pin the shader branches (and the values interpolated
+// into them) without a GL context — the same source assertions shapefx/post.ts's
+// POST_FRAG gets. This is the only fragment shader render() ever compiles.
+export const TEXTURE_FS = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 frag;
 uniform float u_cells, u_lattice, u_motif, u_scale, u_lw, u_jitter, u_seed;
@@ -55,6 +62,12 @@ uniform float u_strokeMode, u_strokeW;   // 0 off, 1 uniform, 2 per-role; width 
 uniform vec3 u_strokeColor;              // uniform-mode stroke
 uniform vec3 u_strokeRole[3];            // per-role stroke colors
 uniform float u_placement;
+// chips mode: wrapped cell-noise grid size, grout width, chip size variance.
+// Colour jitter reuses u_jitter above (it shifts chip LIGHTNESS here — see chipTone()).
+uniform float u_chipCells, u_chipGrout, u_chipSizeVar;
+// Pre-hashed third hash lane per salt — 0 = X, 1 = Y, 2 = R, 3 = ROLE, 4 = TONE
+// (chipSaltLanes() below fills it; see chipHash() for why it arrives pre-hashed).
+uniform float u_chipSalt[5];
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
 uniform sampler2D u_rasterTex;
@@ -194,6 +207,26 @@ vec3 evalFill(int r, vec2 fc, vec2 tc){
 float cellHash(float cx, float cy, float salt){
   vec3 p = fract(vec3(cx, cy, salt) * 0.1031);
   p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
+// Per-cell hash for CHIPS — the GLSL twin of chipHash() in pattern.ts. Two
+// deliberate differences from cellHash() directly above, both load-bearing:
+//
+//  1. A PER-LANE constant vector (33.33, 41.17, 27.83) instead of the scalar
+//     33.33. The scalar form is symmetric — cellHash(1,2) == cellHash(2,1) —
+//     which on a scattered field mirrors every chip across the tile diagonal.
+//     (pattern.ts's twin carries the same vector; a unit test pins the asymmetry.)
+//  2. The third lane arrives PRE-HASHED as fract((seed + salt) * 0.1031),
+//     computed in float64 by chipSaltLanes() below, rather than being derived
+//     here from a raw seed + salt. Algebraically the identical expression, one
+//     step earlier — but Roll hands out seeds up to 1e6, where a float32 ulp is
+//     0.0625, big enough to quantise the salt away and reshuffle the whole tile.
+//     A 0..1 lane value survives float32 to ~1e-7, which is the low-bit
+//     disagreement the CPU/GPU parity check already tolerates.
+float chipHash(float cx, float cy, float pz){
+  vec3 p = vec3(fract(cx * 0.1031), fract(cy * 0.1031), pz);
+  p += dot(p, p.yzx + vec3(33.33, 41.17, 27.83));
   return fract((p.x + p.y) * p.z);
 }
 
@@ -467,7 +500,63 @@ int shapeRole(vec2 uv, out vec2 cf, out float shade) {
 }
 
 void main(){
+  // chips mode (MODES index 4) -- irregular scattered cells (terrazzo / mosaic /
+  // pebbles). Mirrors chipSample() + chipTone() in pattern.ts: the same five
+  // salts (interpolated from its exported constants, never retyped), the same
+  // fixed ${CHIP_NEIGHBORHOOD * 2 + 1}x${CHIP_NEIGHBORHOOD * 2 + 1} window, and the same "F2 must come from a DIFFERENT
+  // cell" rule (without it a chip grouts against its own wrapped image at low
+  // chip counts). Gated FIRST, ahead of the shapes branch: that one is a bare
+  // u_mode > 2.5, so before this branch existed picking Chips rendered SHAPES
+  // -- a believable wrong tile, not a blank one.
+  if (u_mode > 3.5) {
+    float C = max(2.0, floor(u_chipCells + 0.5));
+    vec2 g = v_uv * C;
+    float ix = floor(g.x), iy = floor(g.y);
+    float sv = clamp(u_chipSizeVar, 0.0, 1.0);
+    float f1 = 1e9, f2 = 1e9, id1 = -1.0, cx1 = 0.0, cy1 = 0.0;
+    for (int dy = -${CHIP_NEIGHBORHOOD}; dy <= ${CHIP_NEIGHBORHOOD}; dy++) {
+      for (int dx = -${CHIP_NEIGHBORHOOD}; dx <= ${CHIP_NEIGHBORHOOD}; dx++) {
+        float jx = ix + float(dx), jy = iy + float(dy);
+        // Hash the WRAPPED cell id, measure to the UN-wrapped position. That split
+        // is what makes the tile seamless -- see pattern.ts's chipSample() header.
+        float cx = posmod(jx, C), cy = posmod(jy, C);
+        float spread = float(${CHIP_R_MIN}) + chipHash(cx, cy, u_chipSalt[2]) * (float(${CHIP_R_MAX}) - float(${CHIP_R_MIN}));
+        float rr = 1.0 + sv * (spread - 1.0);   // sizeVar 0 = every chip the same radius
+        vec2 fp = vec2(jx + chipHash(cx, cy, u_chipSalt[0]), jy + chipHash(cx, cy, u_chipSalt[1]));
+        float d = length(g - fp) / rr;
+        float id = cy * C + cx;
+        if (d < f1) {
+          // The old best becomes best-of-the-others -- unless it was this very chip
+          // seen through another wrap window, in which case f2 already holds one.
+          if (id != id1) f2 = f1;
+          f1 = d; id1 = id; cx1 = cx; cy1 = cy;
+        } else if (id != id1 && d < f2) {
+          f2 = d;
+        }
+      }
+    }
+    // Cell-local frame for role fills. Chips has no CPU fill twin (patternColor()
+    // resolves chips straight to the three palette colours), so "cell-local" here
+    // means the chip GRID cell the pixel falls in -- the closest analogue of what
+    // every other mode passes, and identical to them for the solid fills chips ships with.
+    vec2 fc = fract(g);
+    vec3 col;
+    if (f2 - f1 < max(u_chipGrout, 0.0)) {
+      col = evalFill(${CHIP_INK_ROLES}, fc, v_uv);          // grout = the ground role
+    } else {
+      int role = int(min(float(${CHIP_INK_ROLES} - 1), floor(chipHash(cx1, cy1, u_chipSalt[3]) * float(${CHIP_INK_ROLES}))));
+      col = evalFill(role, fc, v_uv);
+      // Colour jitter shifts the chip's LIGHTNESS toward white/black -- one mix,
+      // no clamp, no branch, so jitter 0 is the role colour to the bit and no
+      // palette can clip flat. Mirrors chipTone().
+      float tone = chipHash(cx1, cy1, u_chipSalt[4]);
+      col = mix(col, vec3(step(0.5, tone)), abs(tone - 0.5) * clamp(u_jitter, 0.0, 1.0) * float(${CHIP_TONE_RANGE}));
+    }
+    frag = vec4(col, 1.0);
+    return;
+  }
   // shapes mode (MODES index 3) -- geometric tiling families. Mirrors shapes.ts.
+  // Catches index 3 only (chips returned above).
   if (u_mode > 2.5) {
     vec2 cf; float shade;
     int role = shapeRole(v_uv, cf, shade);
@@ -645,6 +734,29 @@ void main(){
   frag = vec4(c, 1.0);
 }`
 
+/**
+ * The five chip hash lanes for a seed, in the order the `u_chipSalt` uniform
+ * expects: X, Y, R, ROLE, TONE.
+ *
+ * Each entry is `fract((seed + salt) * 0.1031)` — the third lane of pattern.ts's
+ * chipHash(), lifted out of the shader and evaluated in float64 here. The shader
+ * cannot do it: Roll hands out seeds up to 1e6, and a float32 ulp up there is
+ * 0.0625, which swallows the salts (0.317 … 4.507) whole and reshuffles every
+ * chip. A 0..1 fraction survives the upload to ~1e-7, so the two twins stay
+ * inside the low-bit tolerance the parity check allows.
+ *
+ * Exported for the unit test, which reconstructs chipHash() from a lane and
+ * checks it equals pattern.ts's chipHash() — that identity is the whole licence
+ * for hashing the salt early.
+ */
+export function chipSaltLanes(seed: number): number[] {
+  const lane = (salt: number) => {
+    const x = (seed + salt) * 0.1031
+    return x - Math.floor(x)
+  }
+  return [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE].map(lane)
+}
+
 class TextureFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
@@ -712,7 +824,7 @@ class TextureFxRenderer {
 
   // fragmentSrc defaults to the main tile shader; blitBack() below passes BLIT_FS
   // to compile a second program off the same VS (see VS's layout(location=0) note).
-  private compile(gl: WebGL2RenderingContext, fragmentSrc: string = FS): WebGLProgram {
+  private compile(gl: WebGL2RenderingContext, fragmentSrc: string = TEXTURE_FS): WebGLProgram {
     const sh = (type: number, src: string) => {
       const s = gl.createShader(type)!
       gl.shaderSource(s, src); gl.compileShader(s)
@@ -815,6 +927,13 @@ class TextureFxRenderer {
     gl.uniform3fv(u('u_strokeRole[0]'), hexToRgb(String(p.shapeStrokeA ?? '#0e1116')))
     gl.uniform3fv(u('u_strokeRole[1]'), hexToRgb(String(p.shapeStrokeB ?? '#0e1116')))
     gl.uniform3fv(u('u_strokeRole[2]'), hexToRgb(String(p.shapeStrokeC ?? '#0e1116')))
+    // Chips knobs. chipCells is rounded HERE (the same max(2, round()) chipSample()
+    // applies) so the GLSL grid and the CPU grid agree cell-for-cell; the defaults
+    // mirror pattern.ts's, not the control list's, for the same reason.
+    gl.uniform1f(u('u_chipCells'), Math.max(2, Math.round(Number(p.chipCells) || 12)))
+    gl.uniform1f(u('u_chipGrout'), Number.isFinite(Number(p.chipGrout)) ? Number(p.chipGrout) : 0.05)
+    gl.uniform1f(u('u_chipSizeVar'), Number.isFinite(Number(p.chipSizeVar)) ? Number(p.chipSizeVar) : 0.7)
+    gl.uniform1fv(u('u_chipSalt[0]'), chipSaltLanes(Math.round(Number(p.seed) || 1)))
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)
     gl.uniform3fv(u('u_a'), hexToRgb(String(p.colorA)))
