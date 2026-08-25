@@ -3,7 +3,8 @@ import {
   sceneStackControls, sceneAgentControls, sceneBindableControls, SCENE_GUIDANCE,
 } from '~/lib/scene3d/agentControls'
 import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
-import { defaultDoc, createPrimitive, createLight, type SceneDoc } from '~/lib/scene3d/config'
+import { defaultDoc, createPrimitive, createLight, MATERIAL_TYPES, PRIMITIVE_KINDS, ENVIRONMENT_KINDS, type SceneDoc } from '~/lib/scene3d/config'
+import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 
 // stripMeta is not exported — tested indirectly through the public functions, same
 // as vectortype/shapefx's own agentControls specs would (no module exposes it either).
@@ -175,5 +176,43 @@ describe('SCENE_GUIDANCE', () => {
   it('is a non-empty string', () => {
     expect(typeof SCENE_GUIDANCE).toBe('string')
     expect(SCENE_GUIDANCE.length).toBeGreaterThan(100)
+  })
+
+  // The routing fix (capabilities.ts) sends "a 3d iridescent diamond" HERE, so the
+  // tuner that runs straight after the addNode has to know what those words mean.
+  // It described the material only as "thin-film / holographic" — the user-facing
+  // words iridescent / opal / gem / diamond appeared nowhere, leaving the model to
+  // guess (a gradient material, or just a colour change).
+  it('teaches the gem / iridescent recipe in the user\'s own words', () => {
+    for (const word of ['iridescent', 'opal', 'gem', 'diamond']) {
+      expect(SCENE_GUIDANCE.toLowerCase(), `guidance never says "${word}"`).toContain(word)
+    }
+  })
+
+  // Detector test, in the shape of geoshape's "guidance names only keys that exist":
+  // every identifier the recipe names must be a REAL id in the schema, so a rename
+  // or a hallucinated knob fails here rather than at runtime in the vibe call.
+  it('the recipe names only real material types, primitive kinds, environments and gem params', () => {
+    expect(MATERIAL_TYPES).toContain('opalescent')
+    expect(PRIMITIVE_KINDS).toContain('gem')
+    expect(ENVIRONMENT_KINDS).toContain('darkStrips')
+
+    // The gem's own geometry params, reached as `object.params.<key>`.
+    const gemParams = new Set((PRIMITIVE_PARAMS.gem ?? []).map(p => p.key))
+    expect(gemParams.size, 'gem primitive declares no params').toBeGreaterThan(0)
+    for (const key of ['points', 'spread', 'depth']) {
+      expect(gemParams.has(key), `gem param "${key}" named by guidance does not exist`).toBe(true)
+    }
+    // …and the guidance must actually reference them, or the check above is vacuous.
+    for (const key of ['points', 'spread', 'depth']) {
+      expect(SCENE_GUIDANCE, `guidance omits gem param "${key}"`).toContain(key)
+    }
+  })
+
+  // The tuner patches EXISTING controls; no control names an object's primitive
+  // kind, so the guidance must not promise it can turn a box into a gem.
+  it('does not claim it can change an object\'s primitive kind', () => {
+    expect(SCENE_CONTROLS.some(c => c.key === 'object.kind')).toBe(false)
+    expect(SCENE_GUIDANCE.toLowerCase()).toMatch(/cannot change|can't change/)
   })
 })

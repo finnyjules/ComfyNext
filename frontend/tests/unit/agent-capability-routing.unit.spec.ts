@@ -553,7 +553,8 @@ describe('planner A/B eval corpus routes correctly', () => {
 //     The eval only sampled one phrasing; these pin the family, and the second
 //     half pins the lane BORDERS the look vocabulary must not cross:
 //     VectorType/SpaceType keep flat + kinetic type, Generate3DNode keeps
-//     image-to-3D, Shape Studio keeps faceted gems.
+//     image-to-3D, Shape Studio keeps FLAT faceted logo marks (block 8c below
+//     redrew that last border — the 3D gem itself is 3D Studio's).
 describe('3D Studio owns the glass/chrome 3D LOOK without stealing neighbours', () => {
   const owns = ['chrome 3d text', 'glassy 3d logo', 'metallic 3d word', 'shiny chrome lettering in 3d', 'glossy 3d render of a word', 'iridescent 3d shape']
   for (const phrase of owns) {
@@ -566,8 +567,10 @@ describe('3D Studio owns the glass/chrome 3D LOOK without stealing neighbours', 
     { phrase: 'variable font animation', expect: 'VectorType' },     // flat vector outlines stay VectorType's
     { phrase: 'image to 3d', expect: 'Generate3DNode' },             // image→mesh stays Generate3DNode's
     { phrase: 'make a 3d model', expect: 'Generate3DNode' },
-    { phrase: '3d gem', expect: 'ShapeStudio' },                     // faceted gems stay Shape Studio's
-    { phrase: 'faceted gem', expect: 'ShapeStudio' },
+    // "3d gem" / "faceted gem" USED to be pinned to ShapeStudio here. Block 8c
+    // moves them: a flat 2D vector tool has no business owning a 3D gem. What
+    // Shape Studio keeps is the FLAT logo-mark phrasing.
+    { phrase: 'faceted logo mark', expect: 'ShapeStudio' },
     { phrase: 'make a text effect for the word SALE', expect: 'TextEffectNode' },
   ]
   for (const { phrase, expect: exp } of borders) {
@@ -575,4 +578,71 @@ describe('3D Studio owns the glass/chrome 3D LOOK without stealing neighbours', 
       expect(topN(phrase, 1)[0]).toBe(exp)
     })
   }
+})
+
+// 8c. The 3D-vs-FLAT gem lane split.
+//
+//     Reported live from the canvas prompt bar: "a 3d iridescent diamond" opened
+//     SHAPE STUDIO — the flat 2D vector clone-and-arrange LOGO generator — and
+//     drew a ring of stars. Shape Studio's intent list still carried the gem
+//     vocabulary from the shapefx era, from BEFORE the gem primitive and the
+//     opalescent thin-film material moved into 3D Studio (app/lib/scene3d/gem.ts
+//     builds the convex-hull stone, materials.ts shades it). Its capability
+//     summary still advertised "low-poly primitives and gems … real-time orbit"
+//     for a tool whose tune adapter is now GEO_GUIDANCE, a 2D vector generator.
+//
+//     8b's border block deliberately pinned "3d gem" to ShapeStudio and kept
+//     Scene3D off "gem"/"crystal" to protect it (9799d89fb). The live failure
+//     proves that split was drawn on the wrong side of the line. The line now
+//     runs on 3D/MATERIAL/RENDER words vs FLAT/LOGO/MARK words, not on the word
+//     "gem" itself.
+describe('gem lane: 3D + material words → 3D Studio, flat + logo words → Shape Studio', () => {
+  const scene = [
+    'a 3d iridescent diamond',   // the reported live failure
+    '3d gem',
+    '3d diamond',
+    'iridescent diamond',
+    'crystal render',
+    'faceted 3d jewel',
+    'shiny gemstone',
+    // Must SURVIVE the split — 8b's flagship case, re-pinned here because
+    // adding gem vocabulary to Scene3D reshuffles its own intent ranking.
+    'a glassy chrome 3D version of the word BLOOM',
+  ]
+  // ORDER is the assertion, not mere presence. When this was reported, "a 3d
+  // iridescent diamond" already had Scene3DStudio in top-3 — with ShapeStudio
+  // sitting right behind it at #2, close enough that the planner picked the
+  // flat tool. A top-3 bar would have passed while the bug shipped. What has to
+  // hold is that the flat vector tool ranks BELOW the 3D one for these.
+  const rank = (phrase: string, node: string) => topN(phrase, 12).indexOf(node)
+  const outranks = (phrase: string, winner: string, loser: string) => {
+    const w = rank(phrase, winner), l = rank(phrase, loser)
+    expect(w, `${winner} unranked for "${phrase}"`).toBeGreaterThanOrEqual(0)
+    // A loser that fell off the list entirely (-1) is the strongest pass.
+    if (l >= 0) expect(w, `"${phrase}": ${winner}@${w} must outrank ${loser}@${l}`).toBeLessThan(l)
+  }
+
+  for (const phrase of scene) {
+    it(`"${phrase}" → Scene3DStudio in top-3, above ShapeStudio`, () => {
+      expect(topN(phrase, 3)).toContain('Scene3DStudio')
+      outranks(phrase, 'Scene3DStudio', 'ShapeStudio')
+    })
+  }
+
+  const shape = ['a faceted gem logo', 'gem logo', 'faceted logo mark', 'flat crystal icon']
+  for (const phrase of shape) {
+    it(`"${phrase}" → ShapeStudio in top-3, above Scene3DStudio`, () => {
+      expect(topN(phrase, 3)).toContain('ShapeStudio')
+      outranks(phrase, 'ShapeStudio', 'Scene3DStudio')
+    })
+  }
+
+  // Structural, not phrasing-based: whatever the intents say, a FLAT 2D vector
+  // tool must never claim a bare "3d" intent. This is the assertion that would
+  // have caught the shipped bug at its source.
+  it('Shape Studio claims no bare "3d" intent and describes no 3D behaviour', () => {
+    const shapeCap = AGENT_CAPABILITIES.find(c => c.nodeType === 'ShapeStudio')!
+    expect(shapeCap.intents.filter(i => /\b3d\b/i.test(i)), 'ShapeStudio 3d intents').toEqual([])
+    expect(/\b3d\b|orbit/i.test(shapeCap.summary), 'ShapeStudio summary claims 3D').toBe(false)
+  })
 })
