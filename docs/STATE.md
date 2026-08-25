@@ -19,7 +19,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (**schema-drawn** from GRADIENT_CONTROLS) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
 | Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask, + mode-gated params) | ✅ descriptor (+ mask) | 806 + 63 effects |
-| Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
+| Texture Studio | ✅ | ❌ | ✅ (data-driven, + **chips/Worley** mode) | ✅ commands (+ approximation honesty) | ~2,300 |
 | Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ + **layer stack** (rail, per-layer scoping, placement) | ✅ descriptor (active layer only) | ~1,900 (lib/geoshape + studio.ts) |
 | Shot Director | ✅ | ✅ keyframes | ✅ | ❌ | 988 |
 | Smart Layout | ✅ batch export | ❌ | ✅ | ✅ commands | 7,262 (UI) |
@@ -30,6 +30,29 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Texture Studio chips mode — terrazzo lands, Act 2 family 1 opens — LANDED 2026-08-25
+
+Driven by a live agent failure ("make me a seamless terrazzo pattern" rendered polka-dot
+wallpaper — every Texture mode was a regular lattice tiling). New `chips` content mode:
+wrapped Worley cells (hash grid → feature points, F1/F2 metric, grout where near-tied,
+per-cell radius scale for size variety), seamless by construction, zero new deps — the
+CPU math in pattern.ts is the tested truth, the fragment shader mirrors it with
+PRE-HASHED salt uniforms (raw seed must NEVER enter the shader: float32 hash
+amplification turns ~1e-4 seed error into a 47%-different tile at seed 12345 —
+documented at three sites). Three factory controls (chipCells/chipGrout/chipSizeVar)
++ jitter → panel/agent/sweeps derived, zero hand-written UI (one wrinkle: a new control
+GROUP also needs the sections.ts allow-list — second declaration site, test-guarded).
+Two ink roles + ground (fill-uniform arrays cap at 3; widening list recorded). Tuner
+got terrazzo/mosaic/pebbles recipes + an APPROXIMATION HONESTY clause (out-of-vocab
+looks must be admitted), and no-op tune proposals (the live "square → square" row) are
+filtered at the shared pushTuneRow seam for all 8 studios. Gallery /dev/pattern-gallery
+has a 6-look chips row, live-verified: GPU/CPU Δ ≤ 0.3/255, 0 errors. Review rounds
+caught: symmetric hash13 (would have mirrored chips diagonally — the OLD renderer
+cellHash still has this latent bug for truchet, tracked), a wrong window-bound proof,
+clipping jitter on light palettes, un-narrowed defaults. OWED: one live prompt→terrazzo
+run through /api/agent-plan (needs the operator key — Julien-gated). Spec/plan:
+`docs/superpowers/specs|plans/2026-08-25-texture-chips-terrazzo*`.
 
 ### 3D Studio — full schema derivation (parity with Gradient) — LANDED 2026-08-24
 

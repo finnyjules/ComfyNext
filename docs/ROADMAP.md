@@ -36,7 +36,7 @@ Why first: it changes the cost of everything after it. The pattern already exist
 
 | Family | Stressor it adds | First candidates |
 |---|---|---|
-| **Data-driven form** | a data input port (Collection half-solves it) | simplex-noise fields, d3-delaunay/Voronoi, d3-force |
+| **Data-driven form** | a data input port (Collection half-solves it) | **STARTED 2026-08-25**: Worley/chips cell engine landed in Texture Studio (terrazzo/mosaic/pebbles) — hashed seeds for now; the data-input-port stressor is still open (points from data next). Remaining candidates: simplex-noise fields, d3-force |
 | **Physics / simulation** | a simulation runtime contract (step, seed, determinism for bakes) | Matter.js, boids, reaction-diffusion (GPU) |
 | **Vector + variable type** | geometry-out surfaces (bake cascade assumes pixels) | fontkit variable axes, marching-squares → paths, potrace |
 
