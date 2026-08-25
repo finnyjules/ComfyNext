@@ -84,7 +84,7 @@ export const CHIP_INK_ROLES = 2
 export const CHIP_TONE_RANGE = 0.6
 
 /**
- * Salts keeping the five per-cell hashes independent. Fractional, so `seed +
+ * Salts keeping the six per-cell hashes independent. Fractional, so `seed +
  * SALT` can never collide with another integer seed's salted value.
  *
  * EXPORTED so the shader twin cannot drift from these numbers. Unlike the other
@@ -102,6 +102,9 @@ export const CHIP_SALT_Y = 1.523
 export const CHIP_SALT_R = 2.719
 export const CHIP_SALT_ROLE = 3.911
 export const CHIP_SALT_TONE = 4.507
+/** Lane 5 — the DENSITY dropout (see chipSample). Appended, never inserted: the
+ *  five lanes above must keep their index, or every saved terrazzo reshuffles. */
+export const CHIP_SALT_DENSITY = 5.213
 
 /**
  * Per-cell hash to 0..1 — Dave Hoskins' hash13, the same construction the GLSL
@@ -157,8 +160,31 @@ export type ChipSample = {
   tone: number
 }
 
+/**
+ * @param density Fraction of cells that draw a chip at all, 0..1. The cell keeps
+ *   its chip iff `chipHash(cell, seed + CHIP_SALT_DENSITY) < density`; the hash
+ *   is a 0..1 fraction that never reaches 1, so density 1 keeps EVERY cell and
+ *   reproduces the fully-packed field byte for byte. That back-compat is pinned
+ *   by a characterization test holding the pre-Density role field as a literal.
+ *   Defaults to 1 so a caller written before Density is unchanged.
+ *
+ *   A DROPPED CELL FALLS TO GROUND, across its whole area: the test is applied to
+ *   the F1 owner AFTER the nearest-point search and BEFORE grout, so the survivors
+ *   keep exactly the shapes they had at density 1 and the holes read as chips
+ *   SCATTERED ON GROUND (speckle, confetti, sparse terrazzo). Grout is irrelevant
+ *   inside a hole — a dropped cell is ground even at grout 0.
+ *
+ *   The rejected alternative, noted here because it is the other reasonable
+ *   reading: drop the cell from the CANDIDATE SET instead, so the nearest
+ *   surviving chip wins the pixel and chips GROW into the gaps — a "packed"
+ *   variant, coarser chips at low density rather than fewer. That needs the drop
+ *   test inside the neighbourhood loop (and a wider window, since a survivor may
+ *   now have to reach past several dropped rings), so it is a future mode, not a
+ *   flag on this one.
+ */
 export function chipSample(
   u: number, v: number, cells: number, seed: number, grout: number, sizeVar: number,
+  density = 1,
 ): ChipSample {
   const C = Math.max(2, Math.round(cells) || 12)
   const gx = u * C, gy = v * C
@@ -183,7 +209,12 @@ export function chipSample(
     }
   }
   const gap = Math.max(0, Number(grout) || 0)
-  const isGround = f2 - f1 < gap
+  // Density dropout — see the @param note above. Non-finite (an unset param on an
+  // older scene) reads as 1, the packed field. `>= dens` is the exact negation of
+  // "kept iff hash < dens"; the shader twin carries that same comparison.
+  const dens = clamp01(Number.isFinite(density) ? density : 1)
+  const dropped = chipHash(cx1, cy1, seed + CHIP_SALT_DENSITY) >= dens
+  const isGround = dropped || f2 - f1 < gap
   const role = isGround
     ? CHIP_INK_ROLES
     : Math.min(CHIP_INK_ROLES - 1, Math.floor(chipHash(cx1, cy1, seed + CHIP_SALT_ROLE) * CHIP_INK_ROLES))
@@ -398,7 +429,9 @@ export function patternColor(p: Params, u: number, v: number): RGBA {
     const chipCells = Math.max(2, Math.round(Number(p.chipCells) || 12))
     const grout = Number.isFinite(Number(p.chipGrout)) ? Number(p.chipGrout) : 0.05
     const sizeVar = Number.isFinite(Number(p.chipSizeVar)) ? Number(p.chipSizeVar) : 0.7
-    const s = chipSample(u, v, chipCells, seed, grout, sizeVar)
+    // Unset on scenes saved before Density → 1, the fully-packed look they were authored in.
+    const density = Number.isFinite(Number(p.chipDensity)) ? Number(p.chipDensity) : 1
+    const s = chipSample(u, v, chipCells, seed, grout, sizeVar, density)
     if (s.role >= CHIP_INK_ROLES) return out(BG)
     return out(chipTone(s.role === 0 ? A : B, s.tone, Number(p.jitter) || 0))
   }

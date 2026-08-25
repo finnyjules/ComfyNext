@@ -254,8 +254,8 @@ export const APPROXIMATION_HONESTY_GUIDANCE = 'If the requested look is not achi
 
 /**
  * Texture's own guidance: the honesty clause plus look recipes for the CHIPS
- * mode, whose three sliders are not self-describing (nothing in "Chips across /
- * Grout width / Chip size variance" says "terrazzo"). Recipes are prose the model
+ * mode, whose four sliders are not self-describing (nothing in "Chips across /
+ * Density / Grout width / Chip size variance" says "terrazzo"). Recipes are prose the model
  * reads, deliberately NOT hardcoded logic — a phrase that only half-matches
  * should still be free to land between two of these.
  *
@@ -267,9 +267,10 @@ export const APPROXIMATION_HONESTY_GUIDANCE = 'If the requested look is not achi
  */
 export const TEXTURE_GUIDANCE = `${APPROXIMATION_HONESTY_GUIDANCE}
 Chips-mode look recipes (mode "chips" scatters irregular cells; its chip colours are the roles chipA/chipB with the grout on ground, so set them with setFillColor, not setParam):
-- "terrazzo" / "speckled stone": chipCells 10-14, chipGrout thin (0.03-0.06), chipSizeVar high (0.7-0.9), ground an off-white, chipA/chipB two muted stone inks, jitter 0.5-0.8 so no two chips share a tone. Chips holds two ink colours plus the ground — the tonal spread comes from jitter, so say so rather than promising more colours.
-- "mosaic" / "tile work": tighter, more regular grid (chipCells 16-22), chipSizeVar low (0.1-0.3), grout stronger (0.08-0.12) in a darker ground.
-- "pebbles" / "river stones": few big chips (chipCells 5-8), chipSizeVar high (0.8-1), grout wide (0.1-0.18).`
+- "terrazzo" / "speckled stone": chipCells 10-14, chipGrout thin (0.03-0.06), chipSizeVar high (0.7-0.9), ground an off-white, chipA/chipB two muted stone inks, jitter 0.5-0.8 so no two chips share a tone. Chips holds two ink colours plus the ground — the tonal spread comes from jitter, so say so rather than promising more colours. Leave chipDensity at 1 (packed) unless the ask is for a sparse look.
+- "mosaic" / "tile work": tighter, more regular grid (chipCells 16-22), chipSizeVar low (0.1-0.3), grout stronger (0.08-0.12) in a darker ground. chipDensity stays 1 — tile work has no bare patches.
+- "pebbles" / "river stones": few big chips (chipCells 5-8), chipSizeVar high (0.8-1), grout wide (0.1-0.18). Drop chipDensity a little (0.7-0.9) for stones strewn on sand rather than packed.
+- "sparse speckle" / "scattered confetti" / "flecks": chipDensity low (0.3-0.5) so most cells fall to bare ground, chipCells high (14-22) for small flecks, chipGrout 0 (the ground already surrounds each fleck), chipSizeVar 0.4-0.8, jitter 0.4-0.7. Dropped cells show the ground colour, so set ground with setFillColor to the paper/backdrop you want.`
 
 /** Texture Studio: state is a single `Params` bag under sailor_textureStudio
  *  (merged over defaults so pre-newer-key nodes still describe cleanly). No media

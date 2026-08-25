@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   CHIP_INK_ROLES, CHIP_NEIGHBORHOOD, CHIP_R_MAX, CHIP_R_MIN, CHIP_TONE_RANGE,
-  CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE,
+  CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE, CHIP_SALT_DENSITY,
   chipFeature, chipHash, chipSample, chipTone, patternColor, type RGBA,
 } from '~/lib/texturefx/pattern'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
@@ -27,13 +27,30 @@ const chipParams = (over: Record<string, unknown> = {}) => ({
 function roleField(p: any, n = 32): number[] {
   const cells = Number(p.chipCells), seed = Number(p.seed)
   const grout = Number(p.chipGrout), sizeVar = Number(p.chipSizeVar)
+  const density = Number.isFinite(Number(p.chipDensity)) ? Number(p.chipDensity) : 1
   const out: number[] = []
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
-      out.push(chipSample((x + 0.5) / n, (y + 0.5) / n, cells, seed, grout, sizeVar).role)
+      out.push(chipSample((x + 0.5) / n, (y + 0.5) / n, cells, seed, grout, sizeVar, density).role)
     }
   }
   return out
+}
+
+/** The same field as a digit string, so it can be pinned as one literal. When
+ *  `density` is omitted the 6-argument call is made — the shape every caller
+ *  written before Density used. */
+function fieldStr(cells: number, seed: number, grout: number, sizeVar: number, n: number, density?: number): string {
+  let s = ''
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const u = (x + 0.5) / n, v = (y + 0.5) / n
+      s += String(density === undefined
+        ? chipSample(u, v, cells, seed, grout, sizeVar).role
+        : chipSample(u, v, cells, seed, grout, sizeVar, density).role)
+    }
+  }
+  return s
 }
 
 function groundShare(p: any, n = 48): number {
@@ -97,10 +114,26 @@ describe('chips controls', () => {
     expect(find('chipSizeVar')).toMatchObject({ kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.7, group: 'Chips' })
   })
 
+  it('declares chipDensity — default 1, which IS the fully-packed behaviour', () => {
+    // min/max/step/label only describe; the DEFAULT is the behaviour, and it has
+    // to be the packed field every saved terrazzo was authored against. The 0.15
+    // floor is deliberate: the slider must never be able to render an empty tile.
+    expect(find('chipDensity')).toMatchObject({ kind: 'slider', label: 'Density', min: 0.15, max: 1, step: 0.01, default: 1, group: 'Chips' })
+    // Double-click reset reads the same default, so it restores today's look.
+    expect(textureDefaults().chipDensity).toBe(1)
+  })
+
+  it('puts Density right after Chips across in the panel', () => {
+    // The panel draws TEXTURE_CONTROLS in list order, so the list IS the layout:
+    // Chips across / Density / Grout width / Size variance.
+    const chipGroup = TEXTURE_CONTROLS.filter(c => c.group === 'Chips').map(c => c.key)
+    expect(chipGroup).toEqual(['chipCells', 'chipDensity', 'chipGrout', 'chipSizeVar'])
+  })
+
   it('reveals the Chips group only in chips mode', () => {
     const proc = textureDefaults()
     const chips = chipParams()
-    for (const k of ['chipCells', 'chipGrout', 'chipSizeVar']) {
+    for (const k of ['chipCells', 'chipDensity', 'chipGrout', 'chipSizeVar']) {
       expect(find(k).when!(proc), `${k} in procedural`).toBe(false)
       expect(find(k).when!(chips), `${k} in chips`).toBe(true)
     }
@@ -118,13 +151,14 @@ describe('chips controls', () => {
     expect(find('cells').when!(textureDefaults())).toBe(true)
   })
 
-  it('DELIBERATE GRANT: the three chip controls are agent-visible', () => {
+  it('DELIBERATE GRANT: the four chip controls are agent-visible', () => {
     // Opt-out model — a new control reaches the agent unless it is hidden. This
-    // test is the characterization: chipCells/chipGrout/chipSizeVar are tunable
-    // by the agent on purpose (see the terrazzo recipe in the tuner guidance).
+    // test is the characterization: chipCells/chipDensity/chipGrout/chipSizeVar
+    // are tunable by the agent on purpose (see the recipes in the tuner guidance).
     const settings = describeTexture({ params: chipParams() }).objects.find(o => o.type === 'settings')!
     const keys = (settings.current as any).controls.map((c: any) => c.key)
     expect(keys).toContain('chipCells')
+    expect(keys).toContain('chipDensity')
     expect(keys).toContain('chipGrout')
     expect(keys).toContain('chipSizeVar')
     expect(keys).toContain('jitter')
@@ -209,6 +243,141 @@ describe('chips input correlation', () => {
       return (n * n) / counts.size
     }
     expect(meanArea(20)).toBeLessThan(meanArea(6))
+  })
+})
+
+// --- density (the dropout lane) --------------------------------------------
+
+describe('chips density', () => {
+  /**
+   * CHARACTERIZATION, captured from the engine BEFORE Density existed: the role
+   * field of two configurations as one digit per pixel (0/1 = ink, 2 = ground).
+   * Density 1 must reproduce these BYTE FOR BYTE — every saved terrazzo was
+   * authored against this field, so a drift here is a silent redesign of other
+   * people's work, not a new feature.
+   *   A = 24×24, chipCells 12, seed 7, grout 0.05, sizeVar 0.7 (the shipped defaults)
+   *   B = 16×16, chipCells 7,  seed 3, grout 0,    sizeVar 1   (no grout → no ground at all)
+   */
+  const PACKED_A = '020000210001211100112210002010010001111120210211002210000000020111002012101102200022000011200000101000000011102200110001200100000211100020120111002100000211111100011121111100011011111100002111120000211212110020010011110110000021110020111111111120000001211120112112111110021111110110111111111112111110010011100100221112111210010011000110011100000011111000002120022000110012112000000100020001122011110001101122022021110011111101111111100002110111000101102121110121110112020011200111111111110000111021111111111121120000110020211111111111000022002120010011010021000001001102110011'
+  const PACKED_B = '1110000001110011111101100111000101100110011111000000011001111100000001100011111100000000000111110001100000000100111111101010000011111000001100001111100101111111111110111111111111110001000111111111000000011111111000000010011111100000111000111110000011110111'
+
+  /** The dropout rule, written out independently of the implementation: a cell
+   *  DRAWS a chip iff its density lane hashes strictly below `density`. */
+  const dropped = (cx: number, cy: number, seed: number, density: number) =>
+    !(chipHash(cx, cy, seed + CHIP_SALT_DENSITY) < density)
+
+  it('BACK-COMPAT: density 1 is the pre-change field, byte for byte', () => {
+    expect(fieldStr(12, 7, 0.05, 0.7, 24, 1)).toBe(PACKED_A)
+    expect(fieldStr(7, 3, 0, 1, 16, 1)).toBe(PACKED_B)
+    // …and a caller that never heard of Density gets the same field: the
+    // parameter's own default is 1, so the old 6-argument call is unchanged.
+    expect(fieldStr(12, 7, 0.05, 0.7, 24)).toBe(PACKED_A)
+    expect(fieldStr(7, 3, 0, 1, 16)).toBe(PACKED_B)
+    // The studio's default params are that same packed look.
+    expect(roleField(chipParams({ chipCells: 12, chipGrout: 0.05, chipSizeVar: 0.7 }), 24).join(''))
+      .toBe(PACKED_A)
+  })
+
+  it('lower density → strictly more ground on a fixed grid', () => {
+    const shares = [1, 0.8, 0.6, 0.4, 0.2].map(d => groundShare(chipParams({ chipDensity: d })))
+    for (let i = 1; i < shares.length; i++) {
+      expect(shares[i]!, `density step ${i}: ${shares[i - 1]} → ${shares[i]}`).toBeGreaterThan(shares[i - 1]!)
+    }
+    expect(shares[0]!, 'density 1 must not drop a single chip').toBe(groundShare(chipParams()))
+    expect(shares[shares.length - 1]!).toBeLessThan(1)   // still chips left at 0.2
+  })
+
+  it('a dropped cell is GROUND across its WHOLE area, even at grout 0', () => {
+    // Grout 0 means the packed field has no ground anywhere (see PACKED_B), so
+    // every ground pixel here is a dropout — and it must be the whole cell, not
+    // a rim: the rule is decided by the F1 OWNER, before grout is consulted.
+    const cells = 9, seed = 5, density = 0.45
+    let out = 0, kept = 0
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 48; x++) {
+        const s = chipSample((x + 0.5) / 48, (y + 0.5) / 48, cells, seed, 0, 0.7, density)
+        if (dropped(s.cellX, s.cellY, seed, density)) {
+          out++
+          expect(s.role, `dropped owner ${s.cellX},${s.cellY} still drew ink`).toBe(CHIP_INK_ROLES)
+        } else {
+          kept++
+          expect(s.role, `kept owner ${s.cellX},${s.cellY} fell to ground at grout 0`).toBeLessThan(CHIP_INK_ROLES)
+        }
+      }
+    }
+    expect(out, 'no cell was dropped — the sample proves nothing').toBeGreaterThan(200)
+    expect(kept, 'every cell was dropped — the sample proves nothing').toBeGreaterThan(200)
+  })
+
+  it('GROUND, not the runner-up chip: dropping never enlarges a neighbour', () => {
+    // The decided rule (chips SCATTERED on ground). The rejected alternative —
+    // fall through to F2 so surviving chips grow into the gaps — would keep the
+    // owner set unchanged while re-colouring the hole; this pins that a hole is
+    // ground AND that the surviving chips are exactly the shapes they had at
+    // density 1 (same owner, same role) rather than grown ones.
+    const cells = 11, seed = 4, density = 0.5
+    let holes = 0
+    for (let y = 0; y < 40; y++) {
+      for (let x = 0; x < 40; x++) {
+        const u = (x + 0.5) / 40, v = (y + 0.5) / 40
+        const full = chipSample(u, v, cells, seed, 0.05, 0.7, 1)
+        const thin = chipSample(u, v, cells, seed, 0.05, 0.7, density)
+        expect([thin.cellX, thin.cellY], 'owner must not move when a cell is dropped').toEqual([full.cellX, full.cellY])
+        if (dropped(full.cellX, full.cellY, seed, density)) { holes++; expect(thin.role).toBe(CHIP_INK_ROLES) }
+        else expect(thin.role, 'a surviving chip must keep its density-1 role').toBe(full.role)
+      }
+    }
+    expect(holes).toBeGreaterThan(100)
+  })
+
+  it('the tile still wraps at low density (dropped cells wrap too)', () => {
+    const RING = Array.from({ length: 41 }, (_, i) => i / 40)
+    for (const cells of [4, 7, 12, 24]) {
+      for (const t of RING) {
+        const l = chipSample(0, t, cells, 5, 0.06, 0.7, 0.3)
+        const r = chipSample(1, t, cells, 5, 0.06, 0.7, 0.3)
+        expect(l.role, `x-wrap role @ v=${t} cells=${cells}`).toBe(r.role)
+        const b = chipSample(t, 0, cells, 5, 0.06, 0.7, 0.3)
+        const u = chipSample(t, 1, cells, 5, 0.06, 0.7, 0.3)
+        expect(b.role, `y-wrap role @ u=${t} cells=${cells}`).toBe(u.role)
+      }
+    }
+    // …and the rendered colour wraps with it.
+    const p = chipParams({ chipCells: 9, jitter: 0.7, chipDensity: 0.35 })
+    for (const t of RING) {
+      expect(eqRGBA(patternColor(p, 0, t), patternColor(p, 1, t)), `x @ v=${t}`).toBe(true)
+      expect(eqRGBA(patternColor(p, t, 0), patternColor(p, t, 1)), `y @ u=${t}`).toBe(true)
+    }
+  })
+
+  it('deterministic: the same density renders the same field twice', () => {
+    const p = chipParams({ chipDensity: 0.4 })
+    expect(roleField(p)).toEqual(roleField(p))
+    expect(roleField(chipParams({ chipDensity: 0.41 }))).not.toEqual(roleField(p))
+  })
+
+  it('the slider floor never renders an empty tile', () => {
+    // Why the min is 0.15 and not 0: a control that can produce a blank tile is
+    // a control that reads as broken.
+    const min = Number(TEXTURE_CONTROLS.find(c => c.key === 'chipDensity')!.min)
+    for (const cells of [4, 12, 24]) {
+      for (const seed of [1, 7, 42]) {
+        const f = roleField(chipParams({ chipCells: cells, seed, chipDensity: min }), 48)
+        expect(f.some(r => r < CHIP_INK_ROLES), `blank tile at cells=${cells} seed=${seed}`).toBe(true)
+      }
+    }
+  })
+
+  it('density outside 0..1 degrades safely — ≥1 packed, ≤0 empty, garbage packed', () => {
+    // The agent and a hand-edited scene can both put anything in this param, so
+    // pin the ENDS as behaviour rather than trusting the clamp: the property that
+    // carries it is the comparison against a hash that is always a 0..1 fraction
+    // (invert that comparison and this goes red along with the back-compat pin).
+    const packed = fieldStr(12, 7, 0.05, 0.7, 24, 1)
+    expect(fieldStr(12, 7, 0.05, 0.7, 24, 4)).toBe(packed)          // above 1 = packed
+    expect(fieldStr(12, 7, 0.05, 0.7, 24, NaN)).toBe(packed)        // unset/garbage = packed
+    const empty = fieldStr(12, 7, 0.05, 0.7, 24, -1)                // below 0 = every cell dropped
+    expect(new Set(empty.split(''))).toEqual(new Set([String(CHIP_INK_ROLES)]))
   })
 })
 
@@ -481,9 +650,17 @@ describe('chips shader branch', () => {
     // u_chipSalt lanes on the JS side (chipSaltLanes), so a literal in the code
     // would mean someone hand-typed one. (Comments may quote them: chipHash's
     // docblock cites 0.317 to show the ulp never reaches the smallest salt.)
-    for (const s of [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE]) {
+    for (const s of [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE, CHIP_SALT_DENSITY]) {
       expect(fsCode, `salt ${s} hand-typed into the shader`).not.toContain(String(s))
     }
+  })
+
+  it('mirrors the CPU dropout rule: kept iff the density lane hashes below it', () => {
+    // The whole of Density on the GPU is these two lines. `>=` here is the exact
+    // negation of the CPU's `hash < density`, and it is read BEFORE grout, so a
+    // dropped cell is ground across its whole area rather than a grouted rim.
+    expect(chipsBranch).toContain('bool dropped = chipHash(cx1, cy1, u_chipSalt[5]) >= clamp(u_chipDensity, 0.0, 1.0);')
+    expect(chipsBranch).toContain('if (dropped || f2 - f1 < max(u_chipGrout, 0.0)) {')
   })
 
   it('uses the ASYMMETRIC per-lane hash, not the shared scalar cellHash', () => {
@@ -518,15 +695,16 @@ describe('chips shader branch', () => {
     expect(chipsBranch, 'lane 2 is the RADIUS spread').toContain(`float spread = float(${CHIP_R_MIN}) + chipHash(cx, cy, u_chipSalt[2])`)
     expect(chipsBranch, 'lane 3 is the ROLE pick').toContain(`floor(chipHash(cx1, cy1, u_chipSalt[3]) * float(${CHIP_INK_ROLES}))`)
     expect(chipsBranch, 'lane 4 is the TONE').toContain('float tone = chipHash(cx1, cy1, u_chipSalt[4]);')
+    expect(chipsBranch, 'lane 5 is the DENSITY dropout').toContain('bool dropped = chipHash(cx1, cy1, u_chipSalt[5])')
   })
 
   it('every chip uniform the shader declares is actually uploaded by render()', () => {
     const src = readFileSync(resolve(__dirname, '../../app/lib/texturefx/renderer.ts'), 'utf8')
-    for (const name of ['u_chipCells', 'u_chipGrout', 'u_chipSizeVar']) {
+    for (const name of ['u_chipCells', 'u_chipGrout', 'u_chipSizeVar', 'u_chipDensity']) {
       expect(TEXTURE_FS, `${name} not declared`).toContain(name)
       expect(src, `${name} declared but never set`).toContain(`u('${name}')`)
     }
-    expect(TEXTURE_FS).toContain('uniform float u_chipSalt[5];')
+    expect(TEXTURE_FS).toContain('uniform float u_chipSalt[6];')
     expect(src).toContain(`u('u_chipSalt[0]')`)
     // Colour jitter is the SHARED uniform, not a chips-only copy.
     expect(chipsBranch).toContain('u_jitter')
@@ -554,7 +732,7 @@ describe('chipSaltLanes (the float32 seed hazard)', () => {
     px += d; py += d; pzz += d
     return fr((px + py) * pzz)
   }
-  const SALTS = [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE]
+  const SALTS = [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE, CHIP_SALT_DENSITY]
 
   it('pre-hashing the salt is the identical function, lane for lane', () => {
     for (const seed of [1, 3, 7, 977, 123457, 999983]) {
@@ -584,11 +762,22 @@ describe('chipSaltLanes (the float32 seed hazard)', () => {
 // --- the tuner's chips vocabulary ------------------------------------------
 
 describe('texture tuner guidance', () => {
-  it('keeps the honesty clause and names the three chips looks', () => {
+  it('keeps the honesty clause and names the chips looks', () => {
     expect(TEXTURE_GUIDANCE).toContain('Never present an approximation as an exact match.')
-    for (const look of ['terrazzo', 'mosaic', 'pebbles']) {
+    for (const look of ['terrazzo', 'mosaic', 'pebbles', 'sparse speckle', 'scattered confetti']) {
       expect(TEXTURE_GUIDANCE.toLowerCase(), `no recipe for ${look}`).toContain(look)
     }
+  })
+
+  it('the sparse recipe reaches for a LOW density (the packed recipes stay at 1)', () => {
+    const sparse = TEXTURE_GUIDANCE.split('\n').find(l => /confetti/i.test(l))!
+    // The numbers the recipe hands the model must be inside the slider's range,
+    // and low enough to actually read as scattered.
+    const spec = TEXTURE_CONTROLS.find(c => c.key === 'chipDensity')!
+    const nums = (sparse.match(/chipDensity[^)]*?([0-9.]+)\s*-\s*([0-9.]+)/) ?? []).slice(1).map(Number)
+    expect(nums.length, `no chipDensity range in: ${sparse}`).toBe(2)
+    expect(nums[0]!).toBeGreaterThanOrEqual(Number(spec.min))
+    expect(nums[1]!).toBeLessThan(0.6)
   })
 
   it('names only control keys, roles and commands that actually exist', () => {
@@ -604,8 +793,8 @@ describe('texture tuner guidance', () => {
     const candidates = new Set(TEXTURE_GUIDANCE.match(/\b[a-z][a-z0-9]*[A-Z][a-zA-Z0-9]*\b/g) ?? [])
     expect(candidates.size, 'the field-name detector found nothing — check the regex').toBeGreaterThan(3)
     for (const c of candidates) expect(keys.has(c) || roles.has(c) || ops.has(c), c).toBe(true)
-    // The recipes lean on all three chip sliders…
-    for (const k of ['chipCells', 'chipGrout', 'chipSizeVar']) expect(candidates.has(k), k).toBe(true)
+    // The recipes lean on all four chip sliders…
+    for (const k of ['chipCells', 'chipDensity', 'chipGrout', 'chipSizeVar']) expect(candidates.has(k), k).toBe(true)
     // …plus jitter, which the detector can't see (one lowercase word).
     expect(TEXTURE_GUIDANCE).toContain('jitter')
   })

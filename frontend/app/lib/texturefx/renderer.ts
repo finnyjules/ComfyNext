@@ -10,7 +10,7 @@ import { LATTICES, MOTIFS, MODES, TILE_FAMILIES, SHAPE_FAMILIES, postSettingsFro
 import {
   truchetStates, multiscaleLevels,
   CHIP_NEIGHBORHOOD, CHIP_R_MIN, CHIP_R_MAX, CHIP_INK_ROLES, CHIP_TONE_RANGE,
-  CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE,
+  CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE, CHIP_SALT_DENSITY,
 } from '~/lib/texturefx/pattern'
 import { getRaster } from '~/lib/texturefx/raster'
 import { fillForRole, hexToRgb } from '~/lib/texturefx/fills'
@@ -62,12 +62,14 @@ uniform float u_strokeMode, u_strokeW;   // 0 off, 1 uniform, 2 per-role; width 
 uniform vec3 u_strokeColor;              // uniform-mode stroke
 uniform vec3 u_strokeRole[3];            // per-role stroke colors
 uniform float u_placement;
-// chips mode: wrapped cell-noise grid size, grout width, chip size variance.
+// chips mode: wrapped cell-noise grid size, grout width, chip size variance,
+// and the fraction of cells that draw a chip at all (1 = fully packed).
 // Colour jitter reuses u_jitter above (it shifts chip LIGHTNESS here — see chipTone()).
-uniform float u_chipCells, u_chipGrout, u_chipSizeVar;
-// Pre-hashed third hash lane per salt — 0 = X, 1 = Y, 2 = R, 3 = ROLE, 4 = TONE
-// (chipSaltLanes() below fills it; see chipHash() for why it arrives pre-hashed).
-uniform float u_chipSalt[5];
+uniform float u_chipCells, u_chipGrout, u_chipSizeVar, u_chipDensity;
+// Pre-hashed third hash lane per salt — 0 = X, 1 = Y, 2 = R, 3 = ROLE, 4 = TONE,
+// 5 = DENSITY (chipSaltLanes() below fills it; see chipHash() for why it arrives
+// pre-hashed). Lanes are APPENDED, never reordered — the indices are the contract.
+uniform float u_chipSalt[6];
 // u_stateTex (R8, cells×cells): multiscale → per-cell level (0=whole, 1=subdivide); structured placement → per-cell arc state (0/1).
 uniform sampler2D u_stateTex;
 uniform sampler2D u_rasterTex;
@@ -507,7 +509,7 @@ int shapeRole(vec2 uv, out vec2 cf, out float shade) {
 
 void main(){
   // chips mode (MODES index 4) -- irregular scattered cells (terrazzo / mosaic /
-  // pebbles). Mirrors chipSample() + chipTone() in pattern.ts: the same five
+  // pebbles). Mirrors chipSample() + chipTone() in pattern.ts: the same six
   // salts (interpolated from its exported constants, never retyped), the same
   // fixed ${CHIP_NEIGHBORHOOD * 2 + 1}x${CHIP_NEIGHBORHOOD * 2 + 1} window, and the same "F2 must come from a DIFFERENT
   // cell" rule (without it a chip grouts against its own wrapped image at low
@@ -547,7 +549,13 @@ void main(){
     // every other mode passes, and identical to them for the solid fills chips ships with.
     vec2 fc = fract(g);
     vec3 col;
-    if (f2 - f1 < max(u_chipGrout, 0.0)) {
+    // Density: the F1 owner keeps its chip iff its density lane hashes BELOW
+    // u_chipDensity -- the >= here is that rule's exact negation, matching the CPU.
+    // (No backticks in this file's GLSL: the shader is a JS template literal.)
+    // Read before grout, so a dropped cell is ground across its whole area --
+    // chips SCATTERED on ground, not chips grown into the gaps. See chipSample().
+    bool dropped = chipHash(cx1, cy1, u_chipSalt[5]) >= clamp(u_chipDensity, 0.0, 1.0);
+    if (dropped || f2 - f1 < max(u_chipGrout, 0.0)) {
       col = evalFill(${CHIP_INK_ROLES}, fc, v_uv);          // grout = the ground role
     } else {
       int role = int(min(float(${CHIP_INK_ROLES} - 1), floor(chipHash(cx1, cy1, u_chipSalt[3]) * float(${CHIP_INK_ROLES}))));
@@ -741,8 +749,9 @@ void main(){
 }`
 
 /**
- * The five chip hash lanes for a seed, in the order the `u_chipSalt` uniform
- * expects: X, Y, R, ROLE, TONE.
+ * The six chip hash lanes for a seed, in the order the `u_chipSalt` uniform
+ * expects: X, Y, R, ROLE, TONE, DENSITY. Append only — the shader reads these by
+ * index, so inserting a lane silently repaints every saved chips tile.
  *
  * Each entry is `fract((seed + salt) * 0.1031)` — the third lane of pattern.ts's
  * chipHash(), lifted out of the shader and evaluated in float64 here. The shader
@@ -763,7 +772,7 @@ export function chipSaltLanes(seed: number): number[] {
     const x = (seed + salt) * 0.1031
     return x - Math.floor(x)
   }
-  return [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE].map(lane)
+  return [CHIP_SALT_X, CHIP_SALT_Y, CHIP_SALT_R, CHIP_SALT_ROLE, CHIP_SALT_TONE, CHIP_SALT_DENSITY].map(lane)
 }
 
 class TextureFxRenderer {
@@ -942,6 +951,8 @@ class TextureFxRenderer {
     gl.uniform1f(u('u_chipCells'), Math.max(2, Math.round(Number(p.chipCells) || 12)))
     gl.uniform1f(u('u_chipGrout'), Number.isFinite(Number(p.chipGrout)) ? Number(p.chipGrout) : 0.05)
     gl.uniform1f(u('u_chipSizeVar'), Number.isFinite(Number(p.chipSizeVar)) ? Number(p.chipSizeVar) : 0.7)
+    // Unset on scenes saved before Density → 1, the fully-packed look (same fallback as patternColor).
+    gl.uniform1f(u('u_chipDensity'), Number.isFinite(Number(p.chipDensity)) ? Number(p.chipDensity) : 1)
     gl.uniform1fv(u('u_chipSalt[0]'), chipSaltLanes(Math.round(Number(p.seed) || 1)))
     gl.uniform1f(u('u_rotBias'), Number.isFinite(Number(p.rotBias)) ? Number(p.rotBias) : 0.5)
     gl.uniform1f(u('u_tw'), Number(p.truchetWeight) || 0.18)

@@ -73,11 +73,18 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
 
   // Chips controls — irregular scattered cells (terrazzo, mosaic, pebbles,
   // stained glass). 'Chips across' is the wrapped cell-noise grid (chips are
-  // roughly one per cell, so it reads as chip count / size); 'Grout width' is
+  // roughly one per cell, so it reads as chip count / size); 'Density' is the
+  // fraction of those cells that draw a chip at all (1 = fully packed, the
+  // original look; lower scatters them on bare ground); 'Grout width' is
   // how wide the ground shows between neighbouring chips; 'Chip size variance'
   // blends every chip identical → wildly mixed sizes. Colour jitter (above)
   // varies each chip's tone. See pattern.ts's chipSample() for the math.
   { key: 'chipCells', label: 'Chips across', kind: 'slider', min: 4, max: 24, step: 1, default: 12, group: 'Chips', when: isChips },
+  // Default 1 is load-bearing, not cosmetic: it reproduces the fully-packed field
+  // byte for byte, so every terrazzo saved before this control looks unchanged
+  // (and double-click reset returns to it). The floor is 0.15 rather than 0 so
+  // the slider can never render an empty tile.
+  { key: 'chipDensity', label: 'Density', kind: 'slider', min: 0.15, max: 1, step: 0.01, default: 1, group: 'Chips', when: isChips },
   { key: 'chipGrout', label: 'Grout width', kind: 'slider', min: 0, max: 0.25, step: 0.005, default: 0.05, group: 'Chips', when: isChips },
   { key: 'chipSizeVar', label: 'Chip size variance', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.7, group: 'Chips', when: isChips },
 

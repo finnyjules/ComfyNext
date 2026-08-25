@@ -57,6 +57,7 @@ const CHIP_LOOKS: { name: string; params: Partial<Params> }[] = [
   { name: 'terrazzo', params: { chipCells: 12, chipGrout: 0.045, chipSizeVar: 0.8, jitter: 0.65 } },
   { name: 'mosaic', params: { chipCells: 18, chipGrout: 0.09, chipSizeVar: 0.2, jitter: 0.2 } },
   { name: 'pebbles', params: { chipCells: 7, chipGrout: 0.13, chipSizeVar: 0.9, jitter: 0.5 } },
+  { name: 'sparse', params: { chipCells: 18, chipDensity: 0.35, chipGrout: 0, chipSizeVar: 0.6, jitter: 0.5 } },
   { name: 'no grout', params: { chipGrout: 0, jitter: 0 } },
   { name: 'big seed', params: { seed: 999983 } },   // float32 seed-precision check
 ]
