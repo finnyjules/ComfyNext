@@ -6,7 +6,7 @@ right studio," the path from a typed sentence to a configured studio has to be s
 
 ## The pipeline today, in five steps
 
-**1. Where you type.** Two real doors: the canvas prompt bar (one field above the
+**1. Where you type.** *(2026-08-25: the sketch fast-path below no longer hijacks studio-owned phrases — it defers to a local studio-ownership check + a missing-content check; see STATE.)* Two real doors: the canvas prompt bar (one field above the
 toolbar) and each studio's own "Describe the look" bar (Gradient, Shader, Shape,
 Texture, Vector Type, Compositor, Smart Layout all have one). Two other typed
 surfaces — node search and the wire-drag suggestions — can NOT reach the studios at

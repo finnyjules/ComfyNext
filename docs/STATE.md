@@ -31,6 +31,23 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
+### Sketch fast-path defers to studio ownership — LANDED 2026-08-25
+
+Live-reported: "a warm dreamy gradient background for a hero banner" ran the SKETCH
+4-up before the planner ever saw it — `looksLikeImageIdea` fast-pathed ANY non-question/
+non-edit-verb phrase on an empty canvas, bypassing the whole routing pipeline. Fix
+(94f4fb5a1 + 4e8660c53): the fast-path now defers when (a) a STUDIO owns the phrase —
+new `studioOwnsPhrase` in lib/agent/studioOwnership.ts, same scorer + capability
+vocabulary the corpus pins, per-token threshold 17 chosen from a measured 4.7-wide
+empty gap (studio floor 19.3 / image-idea ceiling 14.6), synchronous ~0.6ms — or
+(b) the phrase references EXISTING content (possessive/definite determiner + a
+project-artifact noun: "my logo", "the product shot" — the planner's
+propose-don't-block rule owns those; "a photo of my dog" still sketches, the noun
+class decides). Failure bias is deliberate and documented: false defer costs a ~1s
+planner wait + the "…or sketch it?" chip; false sketch costs a wrong paid render.
+Known accepted misses: long diluted studio phrases still sketch; compound-noun
+modifier collisions ("this video game") defer harmlessly. Both reviews Approved.
+
 ### Shader tuner vocabulary — effect macro, stage enables, derived guidance — LANDED 2026-08-25
 
 The shader agent could only wiggle sliders on the already-active effect with
