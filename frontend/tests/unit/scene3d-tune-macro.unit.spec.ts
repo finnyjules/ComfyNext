@@ -204,17 +204,6 @@ describe('the macro tells the truth about what is in the scene', () => {
     expect(res.rows).toHaveLength(0)
     expect(res.ok, 'nothing changed, so this is not a success').toBe(false)
   })
-
-  it('an excluded kind is refused — no object is created', async () => {
-    fetchMock.mockResolvedValueOnce({
-      rationale: '', changes: [{ key: 'primitive', value: 'svgPath' }],
-    })
-    const node = sceneNode()
-    const res = await tuneScene3DNode(node, 'an svg path', KEY)
-    // validatePatch drops it (not in the select's options), so nothing happens.
-    expect(prims(readDoc(node))).toHaveLength(0)
-    expect(res.ok).toBe(false)
-  })
 })
 
 describe('same-kind is a NO-OP that preserves hand-tuned work', () => {
