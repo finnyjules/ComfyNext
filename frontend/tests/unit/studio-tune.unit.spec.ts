@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const fetchMock = vi.fn()
 vi.mock('ofetch', () => ({ $fetch: (...args: unknown[]) => fetchMock(...args) }))
 
-import { STUDIO_TUNERS, studioTunerFor, tuneGradientNode, tuneShaderNode, tuneTextureNode } from '~/lib/agent/studioTune'
+import { STUDIO_TUNERS, studioTunerFor, tuneGradientNode, tuneShaderNode, tuneTextureNode, isNoOpTuneChange } from '~/lib/agent/studioTune'
 import { defaultConfig as defaultGradientConfig } from '~/lib/gradientfx/randomize'
 import { gradientAgentControls } from '~/lib/gradientfx/agentControls'
 import { resolvePost } from '~/lib/gradientfx/types'
@@ -174,6 +174,77 @@ describe('tuneTextureNode (command-surface)', () => {
 
     res.restore()
     expect(JSON.stringify(n.data.properties.sailor_textureStudio)).not.toContain('#ff8800')
+  })
+
+  // Live-bug regression: a proposal reading "lattice: square → square" — the model
+  // reasserted the control's CURRENT value (already 'square', the default) as if it
+  // were a change. No-op setParam commands must never surface as a proposal row.
+  it('drops a setParam row that reasserts the control\'s current value (no-op)', async () => {
+    const defaults = textureDefaults()
+    expect(defaults.lattice).toBe('square') // the control this bug was observed on
+    fetchMock.mockResolvedValueOnce({
+      text: JSON.stringify({ commands: [{ op: 'setParam', target: 'lattice', args: { value: 'square' } }], message: '' }),
+    })
+    const n = node('TextureStudio')
+    const res = await tuneTextureNode(n, 'make it a square lattice', KEY)
+    expect(res.rows).toHaveLength(0)
+    expect(res.rows.some(r => r.before === r.after)).toBe(false)
+    expect(res.ok).toBe(false) // nothing actually changed
+  })
+
+  it('still proposes a row for a REAL setParam change alongside a no-op one', async () => {
+    fetchMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        commands: [
+          { op: 'setParam', target: 'lattice', args: { value: 'square' } }, // no-op — dropped
+          { op: 'setFillColor', target: rolesFor(textureDefaults())[0]!, args: { color: '#112233' } }, // real change — kept
+        ],
+      }),
+    })
+    const n = node('TextureStudio')
+    const res = await tuneTextureNode(n, 'square lattice, dark role', KEY)
+    expect(res.ok).toBe(true)
+    expect(res.rows).toHaveLength(1)
+    expect(res.rows[0]!.after).toBe('#112233')
+  })
+
+  // The honesty clause: when the requested look isn't in the studio's vocabulary,
+  // the model must approximate AND say so — never present the approximation as an
+  // exact match. This asserts the guidance text actually reaches the model prompt.
+  it('sends an honesty-about-approximation clause in the plan prompt', async () => {
+    fetchMock.mockResolvedValueOnce({ text: JSON.stringify({ commands: [] }) })
+    const n = node('TextureStudio')
+    await tuneTextureNode(n, 'make it look like hammered copper', KEY)
+    const body = fetchMock.mock.calls[0]![1].body
+    expect(String(body.prompt)).toMatch(/approximat/i)
+    expect(String(body.prompt)).toMatch(/never present/i)
+  })
+})
+
+describe('isNoOpTuneChange (pure no-op equality)', () => {
+  it('is a no-op when the value is unchanged', () => {
+    expect(isNoOpTuneChange('square', 'square')).toBe(true)
+  })
+  it('is NOT a no-op when the value actually differs', () => {
+    expect(isNoOpTuneChange('square', 'hex')).toBe(false)
+  })
+  // Documented choice: TuneRow.before/after are always display STRINGS (see the
+  // `TuneRow` interface) — never raw numbers — so this never receives a JS number.
+  // What it does receive is differently-FORMATTED numeric strings for the same
+  // value (e.g. a slider's stringified default vs. the model's stringified patch
+  // value), which a naive `before === after` would wrongly treat as a real change.
+  it('treats numerically-equal strings as a no-op despite differing formatting', () => {
+    expect(isNoOpTuneChange('8', '8.0')).toBe(true)
+    expect(isNoOpTuneChange('0.50', '.5')).toBe(true)
+  })
+  it('normalizes surrounding whitespace before comparing', () => {
+    expect(isNoOpTuneChange(' square ', 'square')).toBe(true)
+  })
+  it('two blank values are equal (both "no value") — a no-op', () => {
+    expect(isNoOpTuneChange('', '')).toBe(true)
+  })
+  it('blank vs. a real value is a genuine change, not a no-op', () => {
+    expect(isNoOpTuneChange('', 'square')).toBe(false)
   })
 })
 

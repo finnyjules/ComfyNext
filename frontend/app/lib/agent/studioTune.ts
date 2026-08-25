@@ -58,6 +58,36 @@ const MEDIA_OPS = new Set(['generateImage', 'editImage', 'removeImageBackground'
 export interface TuneRow { label: string; before: string; after: string; rationale: string }
 export interface TuneResult { ok: boolean; rows: TuneRow[]; restore: () => void; notice?: string; error?: string }
 
+/** True when a proposed tune is a no-op — the model reasserted the value the
+ *  control already holds (live bug: a Texture proposal read "lattice: square →
+ *  square"). `TuneRow.before`/`after` are always display STRINGS (never raw
+ *  numbers — every summarize() stringifies before it gets here), so this never
+ *  sees a number-vs-string mismatch; what it DOES see is the same numeric value
+ *  formatted two different ways (a slider's stringified default vs. the model's
+ *  stringified patch, e.g. "8" vs "8.0"), which a bare `===` would wrongly call
+ *  a change. Compare trimmed strings first, then fall back to numeric equality
+ *  when both sides parse as finite numbers. This is the ONE seam every tuner's
+ *  row-builder funnels through (Compositor's own function, the command-surface
+ *  path shared by Texture/Smart Layout, and the param-patch path shared by
+ *  Gradient/Shader/Shape/Vector Type/Scene3D) — filtering here means every
+ *  studio's tune proposals benefit, on the canvas path and any future in-studio
+ *  consumer of the same TuneRow rows. */
+export function isNoOpTuneChange(before: string, after: string): boolean {
+  const b = before.trim()
+  const a = after.trim()
+  if (b === a) return true
+  if (b === '' || a === '') return false
+  const bn = Number(b)
+  const an = Number(a)
+  return Number.isFinite(bn) && Number.isFinite(an) && bn === an
+}
+
+/** Push a TuneRow unless it's a no-op — the shared filtering point all three
+ *  row-builders below call through. */
+function pushTuneRow(rows: TuneRow[], row: TuneRow): void {
+  if (!isNoOpTuneChange(row.before, row.after)) rows.push(row)
+}
+
 /** Read a Frame node's CompositorState from its persisted properties (deep-cloned
  *  so the live node isn't mutated until we write back). */
 function readState(node: any): CompositorState {
@@ -123,7 +153,7 @@ export async function tuneCompositorNode(node: any, request: string, apiKey: str
     const test = applyCompositorCommand(state, cmd)
     if (!test.ok) return
     const sum = summarizeCompositorChange(state, cmd) ?? { label: cmd.op, before: '', after: '' }
-    rows.push({ ...sum, rationale: changeRationales[i] ?? '' })
+    pushTuneRow(rows, { ...sum, rationale: changeRationales[i] ?? '' })
     state = test.template
     if (cmd.op === 'setLayerDepth' && cmd.target) {
       const to = String(cmd.args?.to ?? '')
@@ -170,6 +200,10 @@ interface CommandAdapter<S> {
   verify?(state: S): LayoutIssue[]
   /** Notice appended if the plan included a media op we can't run headlessly. */
   mediaNotice?: string
+  /** Optional extra instruction appended to the plan prompt (mirrors PatchAdapter's
+   *  `guidance` below) — e.g. Texture's honesty-about-approximation clause. Any
+   *  command-surface studio can set one. */
+  guidance?: string
 }
 
 async function runCommandSurface<S>(node: any, request: string, apiKey: string, tier: string, a: CommandAdapter<S>): Promise<TuneResult> {
@@ -177,11 +211,12 @@ async function runCommandSurface<S>(node: any, request: string, apiKey: string, 
   const restore = () => a.write(node, prior)
   let state = a.read(node)
   const snapshot = a.describe(state)
+  const prompt = buildAgentPrompt(snapshot, request) + (a.guidance ? `\n${a.guidance}` : '')
   let res: { text: string }
   try {
     res = await $fetch<{ text: string }>('/api/agent-plan', {
       method: 'POST',
-      body: { apiKey, tier, prompt: buildAgentPrompt(snapshot, request), schema: buildCommandSchema(snapshot.commands) },
+      body: { apiKey, tier, prompt, schema: buildCommandSchema(snapshot.commands) },
       timeout: 60_000,
     })
   } catch (e) {
@@ -196,7 +231,7 @@ async function runCommandSurface<S>(node: any, request: string, apiKey: string, 
     const test = a.apply(state, cmd)
     if (!test.ok) return
     const sum = a.summarize(state, cmd) ?? { label: cmd.op, before: '', after: '' }
-    rows.push({ ...sum, rationale: changeRationales[i] ?? '' })
+    pushTuneRow(rows, { ...sum, rationale: changeRationales[i] ?? '' })
     state = test.template
   })
   if (rows.length) a.write(node, state) // apply as preview — the studio node re-bakes
@@ -209,6 +244,12 @@ async function runCommandSurface<S>(node: any, request: string, apiKey: string, 
   }
   return { ok: rows.length > 0, rows, restore, notice: parts.length ? parts.join(' ') : undefined }
 }
+
+/** Honesty-about-approximation clause for command-surface studios: when the
+ *  requested look isn't in the vocabulary, approximate — don't refuse — but say
+ *  so plainly. Generic on purpose so another command-surface studio's adapter
+ *  can reuse it verbatim via its own `guidance`. */
+const APPROXIMATION_HONESTY_GUIDANCE = 'If the requested look is not achievable with the modes and controls available here, do not force an exact match: configure the closest approximation you can with the commands above, and say so in "message" — name the requested look and state plainly that this only approximates it. Never present an approximation as an exact match.'
 
 /** Texture Studio: state is a single `Params` bag under sailor_textureStudio
  *  (merged over defaults so pre-newer-key nodes still describe cleanly). No media
@@ -224,6 +265,7 @@ export async function tuneTextureNode(node: any, request: string, apiKey: string
     apply: applyTextureCommand,
     summarize: summarizeTextureChange,
     verify: verifyTexture,
+    guidance: APPROXIMATION_HONESTY_GUIDANCE,
   })
 }
 
@@ -314,7 +356,7 @@ async function runParamPatch(node: any, request: string, apiKey: string, a: Patc
   if (a.applyPreset && typeof patch.preset === 'string') {
     const swapped = a.applyPreset(patch.preset)
     if (swapped) {
-      rows.push({ label: byPath.get('preset')?.label ?? 'Style preset', before: String(config?.canvas?.layout ?? ''), after: patch.preset, rationale })
+      pushTuneRow(rows, { label: byPath.get('preset')?.label ?? 'Style preset', before: String(config?.canvas?.layout ?? ''), after: patch.preset, rationale })
       config = swapped
       params = a.params(config) // re-bind the flat view to the new config
     }
@@ -324,7 +366,7 @@ async function runParamPatch(node: any, request: string, apiKey: string, a: Patc
   for (const [key, value] of Object.entries(patch)) {
     const before = params[key]
     params[key] = value // write-through the proxy → mutates the live config
-    rows.push({ label: byPath.get(key)?.label ?? key, before: String(before ?? ''), after: String(value), rationale })
+    pushTuneRow(rows, { label: byPath.get(key)?.label ?? key, before: String(before ?? ''), after: String(value), rationale })
   }
   if (rows.length) a.write(node, config)
   return { ok: rows.length > 0, rows, restore, notice: rows.length ? undefined : (rationale || 'No adjustable change for that — try naming a colour, style or amount.') }
