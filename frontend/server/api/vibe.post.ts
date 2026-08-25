@@ -3,9 +3,25 @@
 // no SDK. Haiku + structured outputs keep it fast and ~half a cent per ask.
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
-import { VIBE_SCHEMA, buildVibePrompt } from '~/lib/vibePrompt'
-import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, requireString, resolveAnthropicKey } from '../lib/agentRequest'
+import { VIBE_SCHEMA, TAKES_SCHEMA, buildVibePrompt, parseTakesResponse } from '~/lib/vibePrompt'
+import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, optionalVariants, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { meterAssist } from '../utils/anthropicMeter'
+
+/** Pure request-body builder, exported for a plain-Node unit test (no h3/fetch
+ *  mocking needed) — pins the exact body Anthropic receives, both today's
+ *  single-patch shape (variants absent — back-compat is the contract) and the
+ *  variants branch (bigger schema, more tokens budget). Model is hardcoded
+ *  here directly (not via modelForTier): this Haiku model has no thinking or
+ *  latency-tier knob, and a unit test elsewhere pins that this file's request
+ *  body never grows one by copy-paste. */
+export function buildVibeRequestBody(prompt: string, variants?: number): Record<string, unknown> {
+  return {
+    model: 'claude-haiku-4-5',
+    max_tokens: variants ? 2048 : 1024,
+    output_config: { format: { type: 'json_schema', schema: variants ? TAKES_SCHEMA : VIBE_SCHEMA } },
+    messages: [{ role: 'user', content: prompt }],
+  }
+}
 
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'vibe', 60)
@@ -18,8 +34,10 @@ export default defineEventHandler(async (event) => {
   if (!Array.isArray(controls) || controls.length > 500) {
     throw createError({ statusCode: 400, message: 'controls (array, ≤500) is required' })
   }
+  // Absent → today's single-patch call, byte-identical request and response.
+  const variants = optionalVariants(body?.variants)
 
-  const prompt = buildVibePrompt(controls, phrase, effectLabel, guidance)
+  const prompt = buildVibePrompt(controls, phrase, effectLabel, guidance, variants)
 
   await meterAssist(event)
 
@@ -31,12 +49,7 @@ export default defineEventHandler(async (event) => {
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 1024,
-        output_config: { format: { type: 'json_schema', schema: VIBE_SCHEMA } },
-        messages: [{ role: 'user', content: prompt }],
-      }),
+      body: JSON.stringify(buildVibeRequestBody(prompt, variants)),
     })
 
     if (!res.ok) {
@@ -52,9 +65,15 @@ export default defineEventHandler(async (event) => {
     if (!text) throw createError({ statusCode: 502, message: 'Empty response from Claude' })
     try {
       const parsed = JSON.parse(text)
+      if (variants) {
+        const takes = parseTakesResponse(parsed)
+        if (!takes) throw createError({ statusCode: 502, message: 'Malformed response from Claude' })
+        return { takes }
+      }
       return { changes: parsed.changes ?? [], rationale: parsed.rationale ?? '' }
     }
-    catch {
+    catch (e: any) {
+      if (e?.statusCode) throw e
       throw createError({ statusCode: 502, message: 'Malformed response from Claude' })
     }
   }

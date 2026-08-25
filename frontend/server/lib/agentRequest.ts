@@ -64,3 +64,15 @@ export function optionalTier(v: unknown): string | undefined {
   }
   return v
 }
+
+/** /api/vibe's four-takes request field: how many differently-angled takes to
+ *  propose instead of one patch. Bounded 2–4 (TAKES_SCHEMA's own bound) and
+ *  rejected loudly outside that range, same philosophy as optionalTier — a
+ *  bad value should 400, not silently clamp into a different contract. */
+export function optionalVariants(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 2 || v > 4) {
+    throw badRequest('variants must be an integer between 2 and 4')
+  }
+  return v
+}
