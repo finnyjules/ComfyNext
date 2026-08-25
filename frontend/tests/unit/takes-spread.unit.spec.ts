@@ -5,11 +5,17 @@ import type { DescribedControl } from '~/lib/spacetype/controlDescriptor'
 import { validatePatch } from '~/lib/spacetype/controlDescriptor'
 import type { VibeTake } from '~/lib/vibePrompt'
 import {
+  MIN_PRIMARY_MOVE,
+  STATIC_INVISIBLE,
   TAKE_LOG_MAX,
+  THUMB_DIFF_SIZE,
   chooseSpreadKeys,
   logTakeEvent,
+  pixelDistance,
   readTakeLog,
   spreadAroundTake,
+  thumbDistance,
+  thumbSignature,
 } from '~/lib/agent/takes'
 
 const CONTROLS: DescribedControl[] = [
@@ -52,6 +58,95 @@ describe('spreadAroundTake — key choice', () => {
       label: 'one knob', rationale: '', changes: [{ key: 'angle', value: 90 }],
     })
     expect(keys).toEqual(['angle'])
+  })
+})
+
+describe('spreadAroundTake — the move is big enough to SEE', () => {
+  // The live failure: the weakest of the four slots moved ~6% of a control's
+  // range, which is invisible in a 52px tile. Every slot now clears
+  // MIN_PRIMARY_MOVE. These numbers are the fix; if a constant is tuned without
+  // the others, this fails.
+  const SOFT = CONTROLS[0]! // softness, 0..1 step 0.01 — fine enough not to snap away
+
+  function moveFractions(seed: string) {
+    const take: VibeTake = { label: 'mid', rationale: '', changes: [{ key: 'softness', value: 0.5 }] }
+    return spreadAroundTake(CONTROLS, BASE, take, seed)
+      .map(n => Math.abs((valuesOf(n).softness as number) - 0.5) / (SOFT.max! - SOFT.min!))
+  }
+
+  it('every one of the four moves at least MIN_PRIMARY_MOVE of the range', () => {
+    for (const seed of ['s1', 's2', 's3', 'another', 'x', '0', 'seed-1']) {
+      for (const f of moveFractions(seed)) expect(f).toBeGreaterThanOrEqual(MIN_PRIMARY_MOVE)
+    }
+  })
+
+  it('the old amplitude would have failed this — the weakest slot was ~6%', () => {
+    // Documents the regression the constants encode: 0.5 (old weakest pattern
+    // step) x 0.16 (old amplitude) x 0.75 (old lowest jitter) = 0.06.
+    expect(0.5 * 0.16 * 0.75).toBeLessThan(MIN_PRIMARY_MOVE)
+  })
+
+  it('a wider re-spread reaches further than the first attempt', () => {
+    const take: VibeTake = { label: 'mid', rationale: '', changes: [{ key: 'softness', value: 0.5 }] }
+    const near = spreadAroundTake(CONTROLS, BASE, take, 'seed-1')
+    const wide = spreadAroundTake(CONTROLS, BASE, take, 'seed-1', { amplitudeScale: 2 })
+    const reach = (out: VibeTake[]) =>
+      Math.max(...out.map(n => Math.abs((valuesOf(n).softness as number) - 0.5)))
+    expect(reach(wide)).toBeGreaterThan(reach(near))
+    // …and is still deterministic and in range.
+    expect(wide).toEqual(spreadAroundTake(CONTROLS, BASE, take, 'seed-1', { amplitudeScale: 2 }))
+    for (const n of wide) {
+      expect(valuesOf(n).softness as number).toBeGreaterThanOrEqual(0)
+      expect(valuesOf(n).softness as number).toBeLessThanOrEqual(1)
+    }
+  })
+})
+
+describe('chooseSpreadKeys — motion params cannot show in a still', () => {
+  const WITH_MOTION: DescribedControl[] = [
+    ...CONTROLS,
+    { path: 'flow.speed', label: 'Flow speed', kind: 'slider', min: 0, max: 2, step: 0.01, current: 0.2 },
+    { path: 'drift', label: 'Drift', kind: 'slider', min: 0, max: 10, step: 0.1, current: 1 },
+  ]
+  const MOTION_BASE = { ...BASE, 'flow.speed': 0.2, drift: 1 }
+
+  it('the heuristic names the usual motion words, on key OR label', () => {
+    for (const s of ['flow.speed', 'Drift', 'fps', 'clipDuration', 'wave phase']) {
+      expect(STATIC_INVISIBLE.test(s)).toBe(true)
+    }
+    for (const s of ['softness', 'Blur', 'hue', 'grain']) expect(STATIC_INVISIBLE.test(s)).toBe(false)
+  })
+
+  it('a still-visible key outranks a motion key that moved further', () => {
+    // The owner's actual case: "soft dreamy" = a little blur + a LOT of flow
+    // speed, so the biggest variation axis was one no thumbnail could show.
+    const take: VibeTake = {
+      label: 'soft dreamy', rationale: '',
+      changes: [
+        { key: 'flow.speed', value: 2 }, //  Δ/range = 0.90 — would have won
+        { key: 'softness', value: 0.3 }, // Δ/range = 0.10
+      ],
+    }
+    expect(chooseSpreadKeys(WITH_MOTION, MOTION_BASE, take)[0]).toBe('softness')
+  })
+
+  it('a motion-only take still spreads its motion keys rather than nothing', () => {
+    const take: VibeTake = {
+      label: 'faster', rationale: '', changes: [{ key: 'flow.speed', value: 2 }, { key: 'drift', value: 8 }],
+    }
+    expect(chooseSpreadKeys(WITH_MOTION, MOTION_BASE, take)).toEqual(['flow.speed', 'drift'])
+  })
+
+  it('the no-numeric fallback also prefers still-visible sliders', () => {
+    const motionFirst: DescribedControl[] = [
+      { path: 'flow.speed', label: 'Flow speed', kind: 'slider', min: 0, max: 2, step: 0.01, current: 0.2 },
+      { path: 'softness', label: 'Softness', kind: 'slider', min: 0, max: 1, step: 0.01, current: 0.2 },
+      { path: 'mode', label: 'Mode', kind: 'select', options: ['a', 'b'], current: 'a' },
+    ]
+    const t: VibeTake = { label: 'switch only', rationale: '', changes: [{ key: 'mode', value: 'b' }] }
+    const out = spreadAroundTake(motionFirst, { 'flow.speed': 0.2, softness: 0.2, mode: 'a' }, t, 'seed-1')
+    // Softness (the visible one) moves across the four; it is not the tail key.
+    expect(new Set(out.map(n => valuesOf(n).softness)).size).toBe(4)
   })
 })
 

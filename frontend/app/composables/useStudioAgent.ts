@@ -32,7 +32,11 @@ import { useVibeControl, type VibeTakesReply } from '~/composables/useVibeContro
 import { describeControls, validatePatch, type DescribedControl } from '~/lib/spacetype/controlDescriptor'
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
-import { chooseSpreadKeys, logTakeEvent, spreadAroundTake, type StudioTake } from '~/lib/agent/takes'
+import {
+  RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN,
+  chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
+  type StudioTake,
+} from '~/lib/agent/takes'
 import { VARIANTS_UNSUPPORTED } from '~/lib/vibePrompt'
 import { takeThumbFor, type TakeThumb } from '~/lib/agent/takeThumbs'
 
@@ -143,6 +147,11 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
    *  had does not survive a preview. */
   let takeOriginal: Record<string, ParamValue> | null = null
   let takeRound = 0
+  /** Set only while the strip is showing a parametric SPREAD (not model takes):
+   *  the take it spread around, its thumbnail, and the seed — everything the
+   *  render-aware re-spread below needs. Cleared for a model round, which has
+   *  nothing to be "too close to". */
+  let spreadRef: { take: StudioTake, thumb: TakeThumb, seed: string } | null = null
 
   const hasTakes = computed(() => takes.value.length > 0)
   /** "≈ variations of this" is honest only when the pick actually moved a dial:
@@ -171,16 +180,21 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeDescribed.value = []
     takeBase.value = {}
     takeOriginal = null
+    spreadRef = null
   }
 
   function logTake(action: 'keep' | 'dismiss' | 'switch', t: StudioTake | null) {
     if (!opts.takes) return
+    // How different this take LOOKED from the current design. Free to collect
+    // and the only way THUMB_DIFF_MIN ever stops being a guess.
+    const visualDiff = t ? thumbDistance(takeThumbs.value.get(t), takeCurrentThumb.value) : null
     logTakeEvent({
       studio: opts.takes.studio,
       prompt: lastPhrase.value,
       takeLabel: t?.label ?? 'yours',
       changes: t?.changes ?? [],
       action,
+      ...(visualDiff === null ? {} : { visualDiff: Number(visualDiff.toFixed(2)) }),
     })
   }
 
@@ -195,17 +209,68 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     if (!src) return
     const adapter = takeThumbFor(src.studio)
     const baseSnapshot = cloneConfig(src.config())
+    const draw = async (t: StudioTake) => {
+      const snapshot = cloneConfig(baseSnapshot)
+      const p = src.paramsOf(snapshot)
+      for (const ch of t.changes) p[ch.key] = ch.value
+      return adapter(snapshot, THUMB_SIZE)
+    }
     if (!takeCurrentThumb.value) {
       const yours = await adapter(cloneConfig(baseSnapshot), THUMB_SIZE)
       if (takes.value === list) takeCurrentThumb.value = yours
     }
     for (const t of list) {
-      const snapshot = cloneConfig(baseSnapshot)
-      const p = src.paramsOf(snapshot)
-      for (const ch of t.changes) p[ch.key] = ch.value
-      const thumb = await adapter(snapshot, THUMB_SIZE)
+      const thumb = await draw(t)
       if (takes.value !== list) return // superseded by a re-roll or a dismiss
       takeThumbs.value = new Map(takeThumbs.value).set(t, thumb)
+    }
+    if (spreadRef) await tightenAgainstPick(list, draw)
+  }
+
+  /**
+   * The honest half of "≈ variations": the four configs being provably
+   * different is not the promise — the four PICTURES being different is.
+   *
+   * With the tiles drawn, each is pixel-compared against the take it spread
+   * around. One that reads as the same picture gets ONE re-spread at
+   * RESPREAD_AMPLIFY the amplitude with a different rotation seed; if the wider
+   * one still reads the same, it is kept (it moved further, so it is the better
+   * of the two) with `(subtle)` appended — saying so beats four tiles that
+   * quietly claim to be alternatives.
+   *
+   * A pair that cannot be measured (a data-URL thumb, no canvas, a render that
+   * failed) is left alone — `null` means "can't tell", never "identical".
+   */
+  async function tightenAgainstPick(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
+    const ref = spreadRef
+    if (!ref) return
+    const refSig = thumbSignature(ref.thumb)
+    if (!refSig) return
+    let current = list
+    for (let i = 0; i < current.length; i++) {
+      const t = current[i]!
+      const d = pixelDistance(thumbSignature(takeThumbs.value.get(t)), refSig)
+      if (d === null || d >= THUMB_DIFF_MIN) continue
+      const wider = spreadAroundTake(
+        takeDescribed.value, takeBase.value, ref.take, `${ref.seed}~wider`,
+        { amplitudeScale: RESPREAD_AMPLIFY },
+      )[i]
+      if (!wider) continue
+      const thumb = await draw(wider)
+      if (takes.value !== current) return // superseded while we were drawing
+      const d2 = pixelDistance(thumbSignature(thumb), refSig)
+      const kept = (d2 !== null && d2 < THUMB_DIFF_MIN)
+        ? { ...wider, label: `${wider.label}${SUBTLE_SUFFIX}` }
+        : wider
+      const nextList = current.slice()
+      nextList[i] = kept
+      const nextThumbs = new Map(takeThumbs.value)
+      nextThumbs.delete(t)
+      nextThumbs.set(kept, thumb)
+      current = nextList
+      takes.value = nextList
+      takeThumbs.value = nextThumbs
+      if (selectedTake.value === t) selectedTake.value = kept
     }
   }
 
@@ -231,6 +296,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     )
     takeOriginal = {}
     takeCurrentThumb.value = null
+    spreadRef = null
     setTakes(reply.takes)
   }
 
@@ -295,9 +361,13 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   function variationsOfTake(t: StudioTake) {
     if (busy.value || !opts.takes) return
     if (!chooseSpreadKeys(takeDescribed.value, takeBase.value, t).length) return
-    const next = spreadAroundTake(takeDescribed.value, takeBase.value, t, `${lastPhrase.value}#${++takeRound}`)
+    const seed = `${lastPhrase.value}#${++takeRound}`
+    const next = spreadAroundTake(takeDescribed.value, takeBase.value, t, seed)
     if (!next.length) return
     restoreTakeOriginal()
+    // Captured BEFORE setTakes clears the thumb map — this is what the four new
+    // tiles have to look different FROM.
+    spreadRef = { take: t, thumb: takeThumbs.value.get(t) ?? null, seed }
     setTakes(next)
   }
 

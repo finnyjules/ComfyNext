@@ -11,7 +11,12 @@
  *     re-rolled twice gives the same four neighbours (house rule: hash of the
  *     inputs, never Math.random).
  *
- *  2. The pick log — every keep / dismiss / selection-switch, appended to a
+ *  2. Visual distinctness — `thumbSignature`/`pixelDistance`. Configs being
+ *     provably different is not the promise; the four PICTURES being different
+ *     is. These let the wiring check the rendered tiles and widen a spread that
+ *     came out looking the same.
+ *
+ *  3. The pick log — every keep / dismiss / selection-switch, appended to a
  *     bounded localStorage ring. Nothing reads it yet on purpose; it is the
  *     training data the future personal-taste work needs, and it can only be
  *     collected from day one. SSR-safe (no window ⇒ silent no-op).
@@ -59,15 +64,60 @@ function snapClamp(c: DescribedControl, n: number): number {
 const isSlider = (c: DescribedControl | undefined): c is DescribedControl =>
   !!c && c.kind === 'slider' && Number.isFinite(c.min) && Number.isFinite(c.max) && (c.step ?? 0) > 0
 
-/** How far out one "step" of the spread reaches, as a fraction of the control's
- *  full range. Small enough that a neighbour still reads as the same idea. */
-const AMPLITUDE = 0.16
+// ── how far a neighbour actually moves ──────────────────────────────────────
+//
+// Live report (2026-08-25, owner): the four "≈ variations" tiles looked
+// virtually identical. Two numbers were the cause — the offset pattern's half
+// steps (±0.5) multiplied by a 0.75 low jitter meant the WEAKEST of the four
+// slots moved only ~6% of a control's range, which on most of these controls is
+// invisible at any size, never mind 52px.
+//
+// So the floor is now explicit rather than emergent: every slot's offset is at
+// least MIN_PRIMARY_MOVE of the range before clamping, and the three constants
+// below are chosen to satisfy it — 0.75 (weakest pattern step) × 0.18
+// (amplitude) × 0.9 (lowest jitter) = 0.1215. A test asserts the floor against
+// the constants, so tuning one of them without the others fails loudly.
+/** The smallest fraction of a control's range any variation may move it. */
+export const MIN_PRIMARY_MOVE = 0.12
+const AMPLITUDE = 0.18
+/** Two big steps and two smaller ones, so the four read as a spread rather than
+ *  two pairs — but no step is small enough to be invisible. */
+const PATTERN = [-1.5, 1.5, -0.75, 0.75]
+const JITTER_MIN = 0.9
+const JITTER_SPAN = 0.2
+
+/**
+ * Controls whose value does NOT change a still frame — speeds, drifts, phases,
+ * durations. A thumbnail is a still, so spreading one of these produces four
+ * tiles that are pixel-identical however far apart the numbers are.
+ *
+ * A name heuristic, deliberately and honestly: there is no "affects the still"
+ * flag on `ControlSpec`, and adding one across five studios' vocabularies is a
+ * much larger change than this warrants. It is only ever used to DEPRIORITIZE —
+ * never to leave a take with nothing to spread — so a false positive costs a
+ * worse ordering, not a broken button. The render-aware pass in the wiring
+ * (`thumbDistance` below) is what actually GUARANTEES the tiles differ; this
+ * only makes it rarely have to intervene.
+ */
+export const STATIC_INVISIBLE = /speed|drift|fps|duration|phase/i
+
+/** False for a control whose value cannot show up in a still frame. */
+function movesTheStill(c: DescribedControl): boolean {
+  return !(STATIC_INVISIBLE.test(c.path) || STATIC_INVISIBLE.test(c.label))
+}
 
 /**
  * The keys this take moved most, relative to each control's own range —
  * comparing a 0..1 softness against a 0..360 hue any other way is meaningless.
  * Sliders only (a colour or an enum has no "±"), capped at three, and never a
  * key the take did not actually change.
+ *
+ * Keys that cannot show in a still (see `STATIC_INVISIBLE`) sort BELOW every key
+ * that can, whatever their delta. The live failure that motivated this: a "soft
+ * dreamy" gradient take moved blur AND flow speed, flow speed scored highest, so
+ * the strongest of the three variation axes was one no thumbnail could ever
+ * show. They are only deprioritized, never dropped — a take that moved nothing
+ * but motion still spreads motion, which beats refusing to spread at all.
  */
 export function chooseSpreadKeys(
   controls: DescribedControl[],
@@ -75,7 +125,7 @@ export function chooseSpreadKeys(
   take: StudioTake,
 ): string[] {
   const byPath = new Map(controls.map(c => [c.path, c]))
-  const scored: { key: string, score: number }[] = []
+  const scored: { key: string, score: number, still: boolean }[] = []
   for (const ch of take.changes) {
     const c = byPath.get(ch.key)
     if (!isSlider(c)) continue
@@ -86,30 +136,31 @@ export function chooseSpreadKeys(
     if (!(range > 0)) continue
     const score = Math.abs(to - from) / range
     if (score <= 0) continue
-    scored.push({ key: ch.key, score })
+    scored.push({ key: ch.key, score, still: movesTheStill(c) })
   }
-  scored.sort((a, b) => b.score - a.score || a.key.localeCompare(b.key))
+  scored.sort((a, b) =>
+    Number(b.still) - Number(a.still) || b.score - a.score || a.key.localeCompare(b.key))
   return scored.slice(0, 3).map(s => s.key)
 }
 
 /**
  * Four distinct values around `v`, all inside the control's range and on its
- * step. The offset pattern is ±1 / ±½ amplitude, rotated by the seed; an offset
+ * step. The offset pattern is ±1.5 / ±0.75 amplitude, rotated by the seed (see
+ * MIN_PRIMARY_MOVE for why those numbers and not smaller ones); an offset
  * that would leave the range is mirrored to the other side, and anything that
  * still collides (a take pinned at max, a coarse step) is walked outward by
  * whole steps until it lands somewhere unused. `v` itself counts as used, so a
  * neighbour can never be the take restated.
  */
-function fourAround(c: DescribedControl, v: number, seed: string | number, key: string): number[] {
+function fourAround(c: DescribedControl, v: number, seed: string | number, key: string, scale = 1): number[] {
   const range = c.max! - c.min!
-  const jitter = 0.75 + 0.5 * hash01(seed, 'amp', key)
-  const amp = Math.max(c.step!, AMPLITUDE * range) * jitter
-  const pattern = [-1, 1, -0.5, 0.5]
+  const jitter = JITTER_MIN + JITTER_SPAN * hash01(seed, 'amp', key)
+  const amp = Math.max(c.step!, AMPLITUDE * range) * jitter * scale
   const rot = Math.floor(hash01(seed, 'rot', key) * 4) % 4
   const used = new Set<number>([snapClamp(c, v)])
   const out: number[] = []
   for (let i = 0; i < 4; i++) {
-    const off = pattern[(i + rot) % 4]! * amp
+    const off = PATTERN[(i + rot) % 4]! * amp
     const inRange = (n: number) => n >= c.min! && n <= c.max!
     let n = snapClamp(c, inRange(v + off) ? v + off : v - off)
     if (used.has(n)) {
@@ -159,6 +210,9 @@ export function spreadAroundTake(
   base: Record<string, ParamValue>,
   take: StudioTake,
   seed: string | number = 0,
+  /** `amplitudeScale` widens every offset — the wiring re-spreads a slot with it
+   *  when the first attempt rendered too close to the take to tell apart. */
+  opts: { amplitudeScale?: number } = {},
 ): StudioTake[] {
   const byPath = new Map(controls.map(c => [c.path, c]))
   // The take, as the studio would actually apply it (unknown keys dropped,
@@ -172,18 +226,22 @@ export function spreadAroundTake(
   if (!keys.length) {
     // Fallback: the take moved nothing numeric (an enum switch, a colour). Move
     // the sliders the studio offered instead, so the button still does something
-    // truthful rather than rendering four copies of one tile.
-    keys = controls.filter(isSlider).slice(0, 3).map(c => c.path)
+    // truthful rather than rendering four copies of one tile — still-visible
+    // ones first, for the same reason chooseSpreadKeys prefers them.
+    const sliders = controls.filter(isSlider)
+    keys = [...sliders.filter(movesTheStill), ...sliders.filter(c => !movesTheStill(c))]
+      .slice(0, 3).map(c => c.path)
   }
   if (!keys.length) return []
 
+  const scale = opts.amplitudeScale ?? 1
   const spreads = new Map<string, number[]>()
   const starts = new Map<string, number>()
   for (const k of keys) {
     const c = byPath.get(k)!
     const start = snapClamp(c, Number(takeValues[k] ?? base[k] ?? c.current))
     starts.set(k, start)
-    spreads.set(k, fourAround(c, start, seed, k))
+    spreads.set(k, fourAround(c, start, seed, k, scale))
   }
 
   const out: StudioTake[] = []
@@ -207,6 +265,82 @@ export function spreadAroundTake(
   return out
 }
 
+// ─── did the variation actually LOOK different? ──────────────────────────────
+//
+// The numbers moving is not the point; the picture changing is. The distinctness
+// tests before this were all numeric, which is exactly the failure the house
+// "parity tests agree on the wrong answer" lesson describes — four provably
+// different configs that render as four identical tiles still passed. So the
+// wiring compares PIXELS after the thumbnails land, and these are the primitives
+// it uses. Nothing here knows a studio; a thumbnail is just a canvas.
+
+/** Both thumbnails are shrunk to this before comparing. Small enough to be free
+ *  (1024 pixels), big enough that a change of shape or layout still registers. */
+export const THUMB_DIFF_SIZE = 32
+
+/**
+ * Mean absolute per-channel difference below which two tiles are "the same
+ * picture", on the 0..255 scale `pixelDistance` returns.
+ *
+ * A first estimate, and openly so — it is why `visualDiff` is written into every
+ * pick-log event: the real value should come from reading a few hundred logged
+ * scores, not from this guess.
+ */
+export const THUMB_DIFF_MIN = 6
+
+/** How much wider the ONE re-spread attempt reaches. */
+export const RESPREAD_AMPLIFY = 2
+
+/** Appended to a variation that stayed too close even after the wider re-spread.
+ *  Honest rather than hidden: the tile IS nearly the same picture. */
+export const SUBTLE_SUFFIX = ' (subtle)'
+
+/** A thumbnail as the strip accepts it. Only a canvas can be compared — an
+ *  adapter that hands back a data URL is simply not measured (no decode, no
+ *  async), and the caller treats an unmeasurable pair as "can't tell". */
+export type ComparableThumb = HTMLCanvasElement | string | null | undefined
+
+/** Shrink a thumbnail to THUMB_DIFF_SIZE² and return its raw RGBA bytes, or
+ *  `null` if it cannot be read (no DOM, a data-URL thumb, a tainted or
+ *  zero-sized canvas). Never throws. */
+export function thumbSignature(t: ComparableThumb, size = THUMB_DIFF_SIZE): Uint8ClampedArray | null {
+  if (!t || typeof t === 'string') return null
+  if (typeof document === 'undefined') return null
+  try {
+    const off = document.createElement('canvas')
+    off.width = size
+    off.height = size
+    const ctx = off.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D | null
+    if (!ctx) return null
+    ctx.drawImage(t, 0, 0, size, size)
+    return ctx.getImageData(0, 0, size, size).data
+  } catch { return null }
+}
+
+/**
+ * Mean absolute difference per channel between two RGBA buffers, 0..255.
+ * `null` when the two cannot be compared at all (missing, or different sizes) —
+ * deliberately not 0, which would read as "identical" and trigger a re-spread of
+ * something nobody actually measured.
+ *
+ * Alpha counts: Shape and Vector Type draw on transparency, where a silhouette
+ * change moves alpha and nothing else.
+ */
+export function pixelDistance(
+  a: Uint8ClampedArray | null,
+  b: Uint8ClampedArray | null,
+): number | null {
+  if (!a || !b || !a.length || a.length !== b.length) return null
+  let sum = 0
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i]! - b[i]!)
+  return sum / a.length
+}
+
+/** The two above, together: how different these two tiles look, or `null`. */
+export function thumbDistance(a: ComparableThumb, b: ComparableThumb): number | null {
+  return pixelDistance(thumbSignature(a), thumbSignature(b))
+}
+
 // ─── the pick log ────────────────────────────────────────────────────────────
 
 export type TakeAction = 'keep' | 'dismiss' | 'switch'
@@ -220,6 +354,11 @@ export interface TakeEvent {
   changes: { key: string, value: ParamValue }[]
   action: TakeAction
   ts: number
+  /** How different this take's thumbnail looked from "yours", on
+   *  `pixelDistance`'s 0..255 scale — absent when it could not be measured.
+   *  Free observability: THUMB_DIFF_MIN is a guess today, and these are the
+   *  numbers that should replace it. */
+  visualDiff?: number
 }
 
 export const TAKE_LOG_KEY = 'sailor.takeLog.v1'
