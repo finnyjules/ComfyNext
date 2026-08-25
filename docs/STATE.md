@@ -31,6 +31,26 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
+### Gem routing + the primitive macro — the "3d iridescent diamond" arc — LANDED 2026-08-25
+
+Live-reported: the prompt routed to SHAPE STUDIO (flat 2D vector logos) and rendered a
+star ring. Three commits + a fix round: (1) the gem LANE SPLIT — Scene3D owns
+3D/material/render phrasing ('3d gem', 'iridescent diamond', 'crystal render'...),
+Shape keeps flat/logo/mark only and no longer claims any '3d' intent; order-asserting
+corpus cases (top-N ranking, not membership — the bug was a RANKING bug that
+membership assertions would have passed). (2) One planner-hint sentence: material
+looks a studio owns are not direct image generation even phrased as a scene.
+(3) The `primitive` MACRO — third macro after Gradient preset / Shader effect — so
+the tuner can CREATE a gem on a fresh empty node via the studio's own
+addOrTargetPrimitive seam: adds-never-converts, same-kind no-op preserving tuning,
+"(none)" honesty on empty scenes, `text` excluded (MACRO_PRIMITIVE_KINDS ⊂
+PLACEABLE — "can the studio place one" vs "can the agent finish one"). Machinery
+this needed: makeConfigParams relative-prefix param (default unchanged, all callers
+untouched) + recontrol receiving the raw patch so material.type can gate opal* keys
+arriving in the SAME patch. Follow-up recorded: the non-macro path still drops
+gated keys (material.type change without the macro). Chips also gained the Density
+control (three review rounds — see the engine's new standing review question in the
+ledger). OWED: live retry of the reported prompt.
 ### Sketch fast-path defers to studio ownership — LANDED 2026-08-25
 
 Live-reported: "a warm dreamy gradient background for a hero banner" ran the SKETCH
