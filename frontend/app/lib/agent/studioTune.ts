@@ -476,7 +476,19 @@ async function shaderCatalogEffects(): Promise<ShaderEffectDef[] | null> {
 const shaderAdapter: PatchAdapter = {
   read: async (n: any) => {
     const saved = n?.data?.properties?.sailor_shaderStudio
-    const config: ShaderStudioConfig = saved && typeof saved === 'object' ? hydrateShaderConfig(saved) : defaultShaderConfig()
+    // CLONE, then hydrate. `hydrateConfig`'s deepMerge returns ARRAYS BY
+    // REFERENCE, so a hydrated config shares `effects` with the live node — and
+    // both `ensureEffectMasks` below and every write-through param patch would
+    // mutate the persisted blob in place. Merely READING the vocabulary (an empty
+    // tune, a failed one, the Collections bind menu) must leave the saved config
+    // byte-identical; this repo has a 409 stale-write guard, so an unrequested
+    // persisted diff is not benign. Cloning HERE rather than fixing deepMerge is
+    // the narrower fix: deepMerge is also on the surface's loadConfig and the node
+    // bake path, and changing array identity for those is a behaviour change this
+    // work has no way to verify (ShaderStudioSurface.vue has foreign WIP).
+    const config: ShaderStudioConfig = saved && typeof saved === 'object'
+      ? cloneShaderConfig(hydrateShaderConfig(saved))
+      : defaultShaderConfig()
     // Materialize resting masks BEFORE describing, so every mask key the
     // vocabulary offers lands on a real object rather than fabricating a
     // half-built one through the dotted-path writer (see ensureEffectMasks).

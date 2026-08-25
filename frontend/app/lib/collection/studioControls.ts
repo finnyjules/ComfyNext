@@ -65,13 +65,17 @@ async function gradientControls(node: any): Promise<StudioControlDesc[]> {
 /** Shader Studio: same config the canvas tuner reads, plus the active effect's
  *  float uniforms (resolved async from the shader catalog). */
 async function shaderControls(node: any): Promise<StudioControlDesc[]> {
-  const [{ hydrateConfig, defaultConfig, ensureEffectMasks }, { shaderAgentControls }, { getEffect }] = await Promise.all([
+  const [{ hydrateConfig, cloneConfig, defaultConfig, ensureEffectMasks }, { shaderAgentControls }, { getEffect }] = await Promise.all([
     import('~/lib/shaderstudio/types'),
     import('~/lib/shaderstudio/agentControls'),
     import('~/lib/shaderfx/catalog'),
   ])
   const saved = node?.data?.properties?.sailor_shaderStudio
-  const config = saved && typeof saved === 'object' ? hydrateConfig(saved) : defaultConfig()
+  // Clone before touching: hydrateConfig's deepMerge shares ARRAYS with the saved
+  // blob, so ensureEffectMasks would write masks straight onto the live node —
+  // opening the bind menu is a READ and must not dirty the node. Same reasoning
+  // (and the same narrow fix) as studioTune's shader adapter.
+  const config = saved && typeof saved === 'object' ? cloneConfig(hydrateConfig(saved)) : defaultConfig()
   ensureEffectMasks(config)
   const effectDef = config.effects[0]?.id ? await getEffect(config.effects[0].id) : null
   // No `catalog` — deliberately WITHOUT the `effect` macro. Unlike every other key

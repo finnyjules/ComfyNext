@@ -95,6 +95,58 @@ describe('the `effect` macro swaps the effect and seeds its defaults', () => {
     expect(n.data.properties.sailor_shaderStudio.effect).toBeUndefined()
   })
 
+  // The macro is a SWAP, not a reset. The worked examples prime the model to send
+  // "effect" on almost every turn, so a redundant echo of the effect that is
+  // ALREADY selected is the common case, not an edge case — and it used to wipe
+  // the user's hand-tuned uniforms back to defaults with no row to show for it
+  // (before === after, so pushTuneRow filtered the macro row as a no-op).
+  it('a redundant `effect` naming the CURRENT effect preserves the hand-tuned params', async () => {
+    fetchMock.mockResolvedValueOnce({
+      rationale: 'more contrast',
+      changes: [
+        { key: 'effect', value: 'halftone' },
+        { key: 'adjust.enabled', value: true },
+        { key: 'adjust.contrast', value: 0.4 },
+      ],
+    })
+    const n: any = {
+      id: 'n1',
+      data: { nodeType: 'ShaderStudio', properties: { sailor_shaderStudio: {
+        version: 3,
+        effects: [{ layerId: 'L0', id: 'halftone', params: { u_size: 0.08, u_angle: 15, u_softness: 0.4 }, enabled: true, customChars: '', blend: 'normal', opacity: 1 }],
+      } } },
+    }
+    const res = await tuneShaderNode(n, 'more contrast', KEY)
+    const saved = n.data.properties.sailor_shaderStudio
+    expect(saved.effects[0].params).toEqual({ u_size: 0.08, u_angle: 15, u_softness: 0.4 })
+    expect(saved.adjust.enabled).toBe(true)
+    expect(saved.adjust.contrast).toBe(0.4)
+    // …and the no-op swap contributes no row.
+    expect(res.rows.some(r => r.after === 'halftone')).toBe(false)
+  })
+
+  it('a redundant `effect` still lets that effect’s uniforms be tuned in the same patch', async () => {
+    fetchMock.mockResolvedValueOnce({
+      changes: [{ key: 'effect', value: 'gaussian_blur' }, { key: 'effects.0.params.u_radius', value: 0.08 }],
+      rationale: '',
+    })
+    const n = shaderNode() // already gaussian_blur, u_radius 0.05
+    await tuneShaderNode(n, 'blurrier', KEY)
+    expect(n.data.properties.sailor_shaderStudio.effects[0].params.u_radius).toBe(0.08)
+  })
+
+  it('reading the vocabulary does not dirty the saved config', async () => {
+    // An empty/failed tune — or merely opening the Collections bind menu — must
+    // leave the persisted blob byte-identical. This repo has a 409 stale-write
+    // guard: an unrequested persisted diff is not benign.
+    fetchMock.mockResolvedValueOnce({ changes: [], rationale: '' })
+    const n = shaderNode()
+    const before = JSON.stringify(n.data.properties.sailor_shaderStudio)
+    const res = await tuneShaderNode(n, 'nothing doing', KEY)
+    expect(res.ok).toBe(false)
+    expect(JSON.stringify(n.data.properties.sailor_shaderStudio)).toBe(before)
+  })
+
   it('leaves the effect alone for an unknown id, and still applies the scalars', async () => {
     fetchMock.mockResolvedValueOnce({ changes: [{ key: 'effect', value: 'not_a_real_effect' }, { key: 'adjust.enabled', value: true }], rationale: '' })
     const n = shaderNode()

@@ -61,7 +61,7 @@ export function shaderEffectMacro(catalog: EffectDef[] | null | undefined, curre
     options: catalog.map(e => e.id),
     default: currentId || catalog[0]!.id,
     group: 'Effect',
-    hint: 'The stylize effect itself. Set this FIRST when the ask needs a different look; the effect’s own params reset to that effect’s defaults, and any effects.N.params.* keys in the same patch then apply on top.',
+    hint: 'The stylize effect itself. Set this FIRST when the ask needs a different look; the effect’s own params reset to that effect’s defaults, and any effects.0.params.* keys in the same patch then apply on top.',
   }
 }
 
@@ -156,11 +156,20 @@ export function shaderAgentControls(
 // GUIDANCE — the domain cheat sheet injected into the /api/vibe prompt.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The same clause Texture uses, word for word (studioTune.ts's
- *  APPROXIMATION_HONESTY_GUIDANCE) — duplicated rather than imported because
- *  agentControls modules must not depend on the tuner that consumes them. A test
- *  pins the two copies equal. */
-export const SHADER_HONESTY_CLAUSE = 'If the requested look is not achievable with the modes and controls available here, do not force an exact match: configure the closest approximation you can with the commands above, and say so in "message" — name the requested look and state plainly that this only approximates it. Never present an approximation as an exact match.'
+/**
+ * Texture's honesty clause, ADAPTED to this surface. Texture is a COMMAND
+ * surface — its clause says "with the commands above" and "say so in `message`",
+ * which are its own protocol's words. Shader is a param-patch surface: it is
+ * offered CONTROLS and answers with `rationale`. Repeating Texture's nouns here
+ * would point the model at a protocol it is not using, so the two share their
+ * substance (approximate rather than refuse; never pass an approximation off as
+ * exact) and differ in the nouns. A test pins the shared core in both rather
+ * than byte-equality, which would have forced one of them to lie.
+ *
+ * Duplicated rather than imported because agentControls modules must not depend
+ * on the tuner that consumes them.
+ */
+export const SHADER_HONESTY_CLAUSE = 'If the requested look is not achievable with the effects and controls available here, do not force an exact match: configure the closest approximation you can with the controls above, and say so in "rationale" — name the requested look and state plainly that this only approximates it. Never present an approximation as an exact match.'
 
 /**
  * Hand-written look-word → effect-id clusters. DATA, not prose, so the detector
@@ -177,8 +186,13 @@ export const SHADER_LOOK_CLUSTERS: { words: string; ids: string[] }[] = [
   { words: 'psychedelic / kaleidoscopic / trippy / infinite / recursive', ids: ['kaleidoscope', 'droste', 'mirror', 'recursive_grid', 'warp_tunnel'] },
   { words: 'dreamy / soft focus / blurry / hazy / bokeh / miniature', ids: ['gaussian_blur', 'defocus_bokeh', 'tilt_shift', 'zoom_blur'] },
   { words: 'glowy / bloom / neon / radiant / dreamlight', ids: ['bloom', 'glow', 'edge_glow', 'light_beams'] },
-  { words: 'iridescent / holographic / chrome / prismatic / oil-slick', ids: ['holographic', 'spectrum_map', 'crystal_prism'] },
-  { words: 'cinematic lens / anamorphic / lo-fi camera / wide angle', ids: ['chromatic_aberration', 'lens_distortion', 'fisheye', 'vignette'] },
+  // "prismatic"/"chrome" deliberately dropped from this cluster: crystal_prism
+  // only reads as either through its `u_mode`/`u_facetStyle` ENUMS, which are
+  // structural and not offered — promising those words would promise a knob the
+  // patch cannot reach. Its default look is the refraction one, so it stays under
+  // "glass" below. Likewise "anamorphic": no effect in the catalog does it.
+  { words: 'iridescent / holographic / oil-slick / foiled', ids: ['holographic', 'spectrum_map'] },
+  { words: 'cinematic lens / lo-fi camera / wide angle / fringing', ids: ['chromatic_aberration', 'lens_distortion', 'fisheye', 'vignette'] },
   { words: 'graphic / poster / high contrast / stencil / flat', ids: ['posterize', 'threshold', 'duotone', 'outline', 'mondrian'] },
   { words: 'recolour / warmer / cooler / graded / mapped palette', ids: ['post_adjust', 'color_temperature', 'hue_shift', 'gradient_map'] },
   { words: 'glass / frosted / fluted / refracted', ids: ['blinds', 'crystal_prism', 'distort'] },
@@ -225,6 +239,22 @@ export function shaderEffectIndex(catalog: EffectDef[]): string {
   return blocks.join('\n')
 }
 
+/**
+ * Effects carrying an `enum` param. Those are the MODE dropdowns the vocabulary
+ * withholds (they are structural — a mode change alters what the other uniforms
+ * mean), so an effect on this list can only be had in whatever mode the config
+ * already holds, which for a freshly picked one is the manifest default.
+ *
+ * Derived, not hand-listed, so it cannot drift: the moment an effect gains or
+ * loses an enum, the sentence the model reads changes with it. This is what
+ * lets the look-word clusters stay honest — words that only work in a non-default
+ * mode ("prismatic" for crystal_prism) are kept OUT of the clusters, and the
+ * model is told the limitation exists rather than left to discover it.
+ */
+export function effectsWithUnsettableModes(catalog: EffectDef[]): string[] {
+  return catalog.filter(e => e.params.some(p => p.type === 'enum')).map(e => e.id)
+}
+
 function renderClusters(): string {
   return SHADER_LOOK_CLUSTERS.map(c => `- ${c.words} → ${c.ids.join(', ')}`).join('\n')
 }
@@ -260,16 +290,17 @@ export function buildShaderGuidance(catalog: EffectDef[] | null | undefined): st
 - post.blur.* — lens blur with a focus point. "shallow depth of field", "soft background".
 - post.chromatic.* — RGB fringing. "lens fringing", "cheap lens", part of most glitch looks.
 - post.bloom.* — glow bleed off the brights. "glowy", "hazy light", "dreamy".
-- effects.N.mask.* — confine the EFFECT (not the post stages) to a region: shape radius | band | linear, plus centre/size/feather. "only in the middle", "just the top half", "a band across it".`
+- effects.0.mask.* — confine the EFFECT (not the post stages) to a region: shape radius | band | linear, plus centre/size/feather. "only in the middle", "just the top half", "a band across it".`
   const rules = `HOW TO ANSWER:
-- PICK THE EFFECT FIRST when the ask names a look the current effect cannot give ("effect": "<id>"). Switching resets that layer's params to the new effect's defaults; any effects.N.params.* keys you send in the SAME patch are then applied on top, so send both together.
-- Only send effects.N.params.* uniforms that belong to the effect you are picking. Uniforms of the OLD effect are dropped.
+- PICK THE EFFECT FIRST when the ask names a look the current effect cannot give ("effect": "<id>"). Switching resets that layer's params to the new effect's defaults; any effects.0.params.* keys you send in the SAME patch are then applied on top, so send both together.
+- Only send effects.0.params.* uniforms that belong to the effect you are picking. Uniforms of the OLD effect are dropped.
 - When merely ADJUSTING the current look ("more contrast", "less blur", "warmer"), do NOT set "effect" — tune the specific knobs.
 - Prefer 2-4 meaningful changes over one, and over twenty.`
   const parts = [head]
   if (catalog?.length) {
     parts.push(`EFFECTS YOU MAY PICK (id · name, grouped by family — set "effect" to an id):\n${shaderEffectIndex(catalog)}`)
     parts.push(`LOOK WORDS → EFFECT IDS (recognise synonyms, not just these exact words):\n${renderClusters()}`)
+    parts.push(`MODES YOU CANNOT SET: these effects have a mode/style/pattern dropdown that is NOT in your controls — ${effectsWithUnsettableModes(catalog).join(', ')}. You get whichever mode the config already holds (its default on a fresh pick), and you can still tune their other params. If the ask depends on a specific mode of one of these, treat it as an approximation and say so.`)
   } else {
     parts.push(`EFFECT LIST UNAVAILABLE this turn (the effect catalog could not be loaded), so the "effect" control is not offered: you CANNOT change which effect is applied. Tune the stages below on whatever effect is already selected, and say so if the ask needed a different effect.`)
   }

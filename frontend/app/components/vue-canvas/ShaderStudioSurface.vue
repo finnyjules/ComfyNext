@@ -365,6 +365,10 @@ function renderThumb(def: EffectDef): string {
 function ensureThumb(def: EffectDef | null | undefined) { if (!def || thumbCache[def.id]) return; const t = renderThumb(def); if (t) { thumbCache[def.id] = t; thumbs.value = { ...thumbCache } } }
 function openPicker() { pickerSearch.value = ''; pickerFilter.value = 'all'; pickerOpen.value = true; for (const def of catalog.value?.effects ?? []) ensureThumb(def) }
 function pickEffect(id: string) {
+  // TWIN of `switchStudioEffect` in ~/lib/shaderstudio/types.ts (the agent's
+  // effect macro goes through that one). The reset-field set below is pinned
+  // equal to its EFFECT_SWITCH_RESET_FIELDS by tests/unit/shader-agent-vocab —
+  // a new StudioEffect field that a switch must clear has to be added in BOTH.
   // Preserve layerId/blend/opacity/enabled (and motion-track addressing, which
   // targets this effect by array index); only the id/params/customChars reset.
   config.value.effects[activeEffect.value] = { ...config.value.effects[activeEffect.value]!, id, params: {}, customChars: '' }

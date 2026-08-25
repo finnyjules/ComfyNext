@@ -52,12 +52,23 @@ export function ensureEffectMasks(cfg: ShaderStudioConfig): ShaderStudioConfig {
 }
 
 /**
+ * The fields an effect SWITCH resets. Everything else on the layer survives,
+ * because motion tracks address a layer by array index and the stack row is the
+ * same row. Exported so the equivalence pin (tests/unit/shader-agent-vocab)
+ * can compare this set against the TWIN implementation in
+ * ShaderStudioSurface.vue's `pickEffect`, which resets exactly these three by
+ * hand. Adding a field to StudioEffect that a switch must clear means adding it
+ * here AND there — the pin fails until both agree.
+ */
+export const EFFECT_SWITCH_RESET_FIELDS = ['id', 'params', 'customChars'] as const
+
+/**
  * Swap the effect in slot `index`, seeding the new effect's DEFAULT params.
  *
- * The shared form of ShaderStudioSurface's `pickEffect`: same preservation
- * contract (layerId / blend / opacity / enabled / mask survive, because motion
- * tracks address a layer by array index and the stack row is the same row), and
- * the same reset of `id` / `params` / `customChars`.
+ * The shared form of ShaderStudioSurface's `pickEffect` (its TWIN — see
+ * EFFECT_SWITCH_RESET_FIELDS): same preservation contract (layerId / blend /
+ * opacity / enabled / mask survive), same reset of `id` / `params` /
+ * `customChars`.
  *
  * The one difference is deliberate: `pickEffect` leaves `params` EMPTY and lets
  * `resolveValues(def, {})` fill the defaults at render/inspect time, which is
@@ -66,10 +77,18 @@ export function ensureEffectMasks(cfg: ShaderStudioConfig): ShaderStudioConfig {
  * those overrides on a complete bag, and the proposal rows have to show a real
  * "before". So the seeding runs through that SAME `resolveValues(def, {})`,
  * making the stored bag byte-identical to what the surface would have rendered.
+ *
+ * SAME-ID IS A NO-OP, deliberately. A switch to the effect that is already
+ * selected is not a switch, and resetting on it destroys work: the agent's macro
+ * makes a redundant `{"effect": "<current id>"}` the COMMON case (the guidance's
+ * worked examples all carry the key), and the swap row would be filtered as a
+ * no-op — so the user's hand-tuned uniforms would vanish with nothing in the
+ * proposal to show it happened. The picker has the same hazard when you re-pick
+ * the active effect; guarding in this shared seam fixes it for every caller.
  */
 export function switchStudioEffect(cfg: ShaderStudioConfig, index: number, def: EffectDef): ShaderStudioConfig {
   const prev = cfg.effects[index]
-  if (!prev) return cfg
+  if (!prev || prev.id === def.id) return cfg
   cfg.effects[index] = { ...prev, id: def.id, params: resolveValues(def, {}), customChars: '' }
   return cfg
 }

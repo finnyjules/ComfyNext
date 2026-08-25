@@ -9,11 +9,13 @@ import { describe, expect, it, vi } from 'vitest'
 // seam) is not resolvable in the unit environment, so stub it as that spec does.
 vi.mock('ofetch', () => ({ $fetch: () => { throw new Error('no network in unit tests') } }))
 
+import { readFileSync } from 'node:fs'
 import catalogJson from '../../../shader_effects/manifest.json'
 import type { EffectDef } from '~/lib/shaderfx/types'
-import { defaultConfig, ensureEffectMasks, switchStudioEffect } from '~/lib/shaderstudio/types'
+import { defaultConfig, EFFECT_SWITCH_RESET_FIELDS, ensureEffectMasks, switchStudioEffect } from '~/lib/shaderstudio/types'
 import {
   buildShaderGuidance,
+  effectsWithUnsettableModes,
   shaderAgentControls,
   shaderEffectIndex,
   shaderEffectMacro,
@@ -132,6 +134,53 @@ describe('the `effect` macro', () => {
   })
 })
 
+describe('switchStudioEffect stays equivalent to the surface’s pickEffect', () => {
+  // The two are PARALLEL implementations: the spec wanted one seam, but
+  // ShaderStudioSurface.vue had foreign WIP when this landed, so the .vue keeps
+  // its own hand-written copy. This pin is what stops them drifting — the next
+  // field added to StudioEffect that a switch must clear has to appear in BOTH,
+  // or this fails. (Both sites carry a comment naming the other.)
+  const vue = readFileSync(new URL('../../app/components/vue-canvas/ShaderStudioSurface.vue', import.meta.url), 'utf8')
+
+  /** The fields `pickEffect` assigns after its spread, read out of the source. */
+  function pickEffectResetFields(src: string): string[] {
+    const at = src.indexOf('function pickEffect')
+    expect(at, 'pickEffect not found — the twin was renamed; update this pin').toBeGreaterThan(-1)
+    const body = src.slice(at, src.indexOf('\n}', at))
+    const line = body.split('\n').find(l => l.includes('= {') && l.includes('...'))
+    expect(line, 'pickEffect no longer assigns a spread object literal').toBeTruthy()
+    // Everything after the spread expression's trailing comma, minus the closing brace.
+    const tail = line!.slice(line!.indexOf('...')).replace(/\}\s*$/, '')
+    return tail.split(',').slice(1)
+      .map(seg => /^\s*([A-Za-z_$][\w$]*)/.exec(seg)?.[1])
+      .filter((f): f is string => !!f)
+  }
+
+  it('resets exactly the same field set on both sides', () => {
+    const fromVue = pickEffectResetFields(vue)
+    expect(fromVue.length, 'extracted no fields — the pin is not actually reading the twin').toBeGreaterThan(0)
+    expect([...fromVue].sort()).toEqual([...EFFECT_SWITCH_RESET_FIELDS].sort())
+  })
+
+  it('preserves every OTHER field of the layer, on the lib side', () => {
+    const cfg = cfgWith('gaussian_blur')
+    const before = { ...cfg.effects[0]! }
+    switchStudioEffect(cfg, 0, byId.get('halftone')!)
+    const after = cfg.effects[0]!
+    for (const k of Object.keys(before) as (keyof typeof before)[]) {
+      if ((EFFECT_SWITCH_RESET_FIELDS as readonly string[]).includes(k)) continue
+      expect(after[k], `${k} must survive an effect switch`).toEqual(before[k])
+    }
+  })
+
+  it('is a NO-OP for the effect that is already selected (never a silent reset)', () => {
+    const cfg = cfgWith('halftone')
+    cfg.effects[0]!.params = { u_size: 0.08, u_angle: 15, u_softness: 0.4 }
+    switchStudioEffect(cfg, 0, byId.get('halftone')!)
+    expect(cfg.effects[0]!.params).toEqual({ u_size: 0.08, u_angle: 15, u_softness: 0.4 })
+  })
+})
+
 describe('derived effect index (auto-syncs with the catalog)', () => {
   const index = shaderEffectIndex(CATALOG)
   const listed = index.split('\n').filter(l => l.startsWith('- ')).map(l => l.slice(2).split(' · ')[0]!)
@@ -184,11 +233,46 @@ describe('worked examples are valid patches, not plausible-looking ones', () => 
 describe('guidance', () => {
   const full = buildShaderGuidance(CATALOG)
 
-  it('carries the same honesty clause Texture uses, word for word', () => {
-    expect(SHADER_HONESTY_CLAUSE).toBe(APPROXIMATION_HONESTY_GUIDANCE)
+  // NOT byte-equality with Texture's: Texture is a COMMAND surface ("the commands
+  // above", answer in `message`), Shader is a param-patch surface (controls,
+  // answer in `rationale`). Pinning them identical would force one of them to
+  // name a protocol it is not using. What must hold is the SUBSTANCE.
+  const HONESTY_CORE = [
+    'do not force an exact match: configure the closest approximation you can',
+    'name the requested look and state plainly that this only approximates it',
+    'Never present an approximation as an exact match.',
+  ]
+  it('carries Texture’s honesty clause in substance, in this surface’s own nouns', () => {
+    for (const core of HONESTY_CORE) {
+      expect(SHADER_HONESTY_CLAUSE, `shader clause lost: ${core}`).toContain(core)
+      expect(APPROXIMATION_HONESTY_GUIDANCE, `texture clause lost: ${core}`).toContain(core)
+    }
+    // …and it speaks to THIS protocol, not the command surface's.
+    expect(SHADER_HONESTY_CLAUSE).toContain('"rationale"')
+    expect(SHADER_HONESTY_CLAUSE).not.toContain('commands above')
     expect(full).toContain(SHADER_HONESTY_CLAUSE)
-    expect(full).toMatch(/approximat/i)
-    expect(full).toMatch(/never present/i)
+  })
+
+  it('names the effects whose MODES the agent cannot set, derived from the catalog', () => {
+    const withEnums = effectsWithUnsettableModes(CATALOG)
+    expect(withEnums.length).toBeGreaterThan(0)
+    expect(withEnums.sort()).toEqual(CATALOG.filter(e => e.params.some(p => p.type === 'enum')).map(e => e.id).sort())
+    expect(full).toContain('MODES YOU CANNOT SET')
+    for (const id of withEnums) expect(full, `${id} not named in the modes caveat`).toContain(id)
+  })
+
+  it('does not promise look-words that need an unsettable mode', () => {
+    // crystal_prism only reads as "prismatic"/"chrome" in a non-default u_mode;
+    // nothing in the catalog does "anamorphic" at all.
+    const clusterWords = SHADER_LOOK_CLUSTERS.map(c => c.words).join(' ').toLowerCase()
+    for (const word of ['prismatic', 'chrome', 'anamorphic']) {
+      expect(clusterWords, `"${word}" promises a look the patch cannot reach`).not.toContain(word)
+    }
+  })
+
+  it('addresses the layer the tuner actually offers (effects.0, not effects.N)', () => {
+    expect(full).not.toMatch(/effects\.N\./)
+    expect(full).toContain('effects.0.params.*')
   })
 
   it('teaches the ordering contract (effect first, then that effect’s params)', () => {
