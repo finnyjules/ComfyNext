@@ -48,3 +48,24 @@
 
 - [ ] Dev server :3002 via Browser pane. In Gradient + one more of the wired four (Shader / Shape / Vector Type) at minimum — **Pattern is NOT wired; it follows with its own task, see the spec amendment**: type a look → strip appears with 4 labeled takes + yours-first; hover swaps preview live and restores; keep commits; yours-click restores; ≈ variations spreads around pick; ↻ re-rolls; esc dismisses clean; console clean; screenshot each stage. Verify single-node canvas tune (prompt bar) still behaves exactly as before (no strip there).
 - [ ] Docs: STATE.md entry + strategy doc note; dashboard — MERGE with the other session's live version (it republished twice: WebFetch the live artifact FIRST, apply masthead/Act-1 edits on top of THEIR content, republish); memory (four-takes-landed + pick-log pointer); ledger. Append verification record to this plan.
+
+---
+
+## Verification Record (2026-08-25, Task 5 — live, real pointer; model FAKED at window.fetch with a canned 4-take payload, everything downstream real)
+
+**Gradient (/dev/gradient-studio-lab), full loop:** submit "warmer, more dreamy" → ONE
+/api/vibe call → strip renders: yours + golden warm / soft dreamy / both, loud /
+restrained, each tile a real, visibly distinct gradient render. HOVER "golden warm"
+→ Angle control live-follows to 120 (the take's value); unhover → restores to 90.
+Select "soft dreamy" → Keep + ≈ variations enable. ≈ variations → four parametric
+neighbors with honest captions ("Blur −, Flow speed +"…) and ZERO additional model
+calls. Select one → Keep → committed, strip closed. Pick log (sailor.takeLog.v1):
+switch "soft dreamy" → switch "Blur +, Flow speed +" → keep — the taste data flows.
+
+**Shader (/dev/shader-studio-lab):** submit → one call → strip with all five tiles.
+
+**Not yet seen live:** Shape/VectorType strips (unit-wired identically through the
+same shell; no reason to differ), Texture (not wired — own follow-up task), a REAL
+model's four takes (needs the operator key — the canned payload exercised the full
+client path but take QUALITY is unmeasured; the eval-harness pattern applies when
+Julien next runs with his key), thumbnail cost under real load (Task 4 concern 3).

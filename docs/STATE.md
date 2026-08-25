@@ -31,6 +31,27 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
+### Four takes — the agent proposes four versions before committing — LANDED 2026-08-25 (Milestone A)
+
+Designed live with Julien via the visual-companion mockups (system C: canvas-shaped,
+in-studio first; staged diverge→converge; filmstrip with "yours" pinned first; two
+explicit buttons). Four studios wired — Gradient, Shader, Shape, Vector Type — via
+ONE choke-point (useStudioAgent owns the take session; StudioModalShell mounts
+TakeStrip once; zero surface-template edits). /api/vibe gained `variants` (strict
+2–4-take schema; absent = byte-identical legacy; own 400s tagged VARIANTS_UNSUPPORTED
+so real API errors surface instead of silently degrading+double-charging). Hover
+applies non-destructively (byte-equality restore), keep rides the existing accept
+writer, ≈ variations is a LOCAL seeded parametric spread (no second model call),
+every keep/dismiss/switch logged to a bounded ring (sailor.takeLog.v1) — the future
+taste-learning data. Thumbnails ride each studio's own renderer (shared-GL-canvas
+copy invariant). Reviews caught: re-asking silently committing the previewed take;
+the any-400 degrade hiding real errors; a close-path leak; aria-selected on
+role=button. Live-verified end to end in Gradient (+ Shader strip) with the model
+faked at fetch. **Pattern/Texture is NOT wired** — its describe bar is a structural
+command surface (fills), and riding the vibe seam would have silently killed fill
+editing; follow-up specced (buildTakesCommandSchema over agent-plan's client schema).
+Owed: real-model take quality (key-gated), Scene3D (milestone B with the canvas
+strip). Spec/plan: docs/superpowers/specs|plans/2026-08-25-four-takes*.
 ### Gem routing + the primitive macro — the "3d iridescent diamond" arc — LANDED 2026-08-25
 
 Live-reported: the prompt routed to SHAPE STUDIO (flat 2D vector logos) and rendered a
