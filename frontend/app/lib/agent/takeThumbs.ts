@@ -121,10 +121,13 @@ async function textureThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeT
 
 /**
  * Shader — wraps `shaderFx.render(passes, base, w, h)` through the SAME
- * `composePasses` pipeline `ShaderStudioSurface.vue`'s effect-picker gallery
- * (`renderThumb`, one tile per effect) and its `renderBlob` bake path both go
- * through, and the same `hydrateConfig(migrateShaderConfig(...))` normalizer
- * `ShaderStudioNode.vue`'s card preview applies to a saved config.
+ * `composePasses` pipeline `ShaderStudioSurface.vue`'s own live preview
+ * (`renderFrame`, :226-249) and its export bake (`renderBlob`, :501-512) both
+ * build their pass list with — NOT its effect-picker gallery's `renderThumb`
+ * (:358-365), which hand-builds a single-pass array for one effect at a time
+ * and never calls `composePasses`. Normalized with the same
+ * `hydrateConfig(migrateShaderConfig(...))` `ShaderStudioNode.vue`'s card
+ * preview applies to a saved config.
  */
 async function shaderThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
   const cfg: ShaderStudioConfig = hydrateShaderConfig(migrateShaderConfig(config))
@@ -160,9 +163,12 @@ async function shapeThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThu
 /**
  * Vector Type — wraps `drawVectorTypeToCanvas(canvas, font, cfg, t, opts)`,
  * the same call `VectorTypeNode.vue`'s card preview AND its `bakeOutput()`
- * headless bake both make, at `vtStillTime(cfg)` (the preset's settled rest
- * frame — an entrance preset's true frame 0 is deliberately empty, so baking
- * literal t=0 would render a blank tile).
+ * headless bake both make — but at `vtStillTime(cfg)`, the time ONLY
+ * `bakeOutput()` uses (the preset's settled rest frame; an entrance preset's
+ * true frame 0 is deliberately empty, so baking literal t=0 would render a
+ * blank tile). The card preview instead drives `t` off a live rAF clock,
+ * which a static thumbnail has no equivalent of — `bakeOutput()`'s still
+ * frame is the one this adapter matches.
  */
 async function vectorTypeThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
   const cfg = mergeVectorTypeConfig(config)
