@@ -493,3 +493,86 @@ describe('buildCatalog assembles the right palette', () => {
     }
   })
 })
+
+// 8. The live A/B eval corpus — the 10 first-prompt-on-an-empty-canvas requests
+//    run against both planner models in
+//    docs/superpowers/evals/2026-08-24-plan-model-ab.md. That eval measured what
+//    the LLM *chose*; this block pins the layer underneath it — what discovery
+//    even OFFERS. A routing miss here is a miss the model can never recover from.
+//
+//    Skipped from the eval's ten: "give it that 35mm film look". It names a
+//    treatment with no subject and asks for nothing to be created, so there is no
+//    node to route to — both models correctly asked a clarifying question rather
+//    than planning. It is a conversation case, not a routing case.
+describe('planner A/B eval corpus routes correctly', () => {
+  const cases: { phrase: string; expect: string; n?: number; why?: string }[] = [
+    { phrase: 'a warm dreamy gradient background for a hero banner', expect: 'GradientStudio' },
+    { phrase: 'kinetic typography that says LAUNCH', expect: 'VectorType' },
+    { phrase: 'make me a seamless terrazzo pattern', expect: 'TextureStudio' },
+    // The eval's clearest failure: BOTH models routed this to VectorType (flat
+    // vector outlines) because 3D Studio — which does chrome/glass 3D type
+    // natively — had no vocabulary for its own flagship LOOKS.
+    { phrase: 'a glassy chrome 3D version of the word BLOOM', expect: 'Scene3DStudio' },
+    { phrase: 'an underwater caustics effect on my logo', expect: 'ShaderStudio' },
+    // Multi-interpretation mood/brief prompts: several studios are a fair read,
+    // so the bar is only that the intended one stays DISCOVERABLE (top-6).
+    { phrase: 'something calm for a meditation app splash', expect: 'GradientStudio', n: 6 },
+  ]
+  for (const c of cases) {
+    it(`"${c.phrase}" → ${c.expect} in top-${c.n ?? 3}`, () => {
+      expect(topN(c.phrase, c.n ?? 3)).toContain(c.expect)
+    })
+  }
+
+  // The remaining three eval prompts — "confetti burst around the product shot",
+  // "moody berlin techno flyer background", "a 1970s italian film poster vibe" —
+  // are whole composed ARTEFACTS described as a vibe, not a tool request. Both
+  // models planned GenerateImageNode for them, and that is the INTENDED
+  // fallthrough, not a routing gap: no studio makes a finished 1970s poster.
+  //
+  // They are asserted on the real discovery path rather than on raw keyword rank
+  // because that is how the shipped planner reaches image generation for a
+  // verbless description — GenerateImageNode carries no vocabulary for "berlin
+  // techno" or "confetti", so the PIN (alwaysInclude) is what guarantees it is on
+  // the menu. If the pin ever regresses, these prompts silently lose their only
+  // correct answer.
+  it('verbless "whole artefact" prompts keep image generation on the menu', () => {
+    const capLite = AGENT_CAPABILITIES.map(c => ({ name: c.nodeType, displayName: c.title, description: c.summary, category: c.kind, inputs: c.inputs, outputs: c.outputs }))
+    const rawLite = RAW.map(r => ({ ...r, inputs: [{ name: 'image', type: 'IMAGE' }], outputs: [{ name: 'IMAGE', type: 'IMAGE' }] }))
+    const nodeTypes = [...studioNodeTypes(), ...capLite, ...rawLite]
+    const noAnchor = { portType: '*', direction: 'output' as const }
+    const cat = (intent: string) => buildCatalog(nodeTypes, {}, noAnchor, { intent, keywords, boosts, maxNodes: 60, maxIntent: 24, alwaysInclude: ['GenerateImageNode'] }).map(e => e.type)
+    for (const p of ['confetti burst around the product shot', 'moody berlin techno flyer background', 'a 1970s italian film poster vibe']) {
+      expect(cat(p), p).toContain('GenerateImageNode')
+    }
+  })
+})
+
+// 8b. 3D Studio's LOOK lane — the family the eval's BLOOM prompt belongs to
+//     (glass/chrome/metal/opalescent materials on extruded 3D type or a solid).
+//     The eval only sampled one phrasing; these pin the family, and the second
+//     half pins the lane BORDERS the look vocabulary must not cross:
+//     VectorType/SpaceType keep flat + kinetic type, Generate3DNode keeps
+//     image-to-3D, Shape Studio keeps faceted gems.
+describe('3D Studio owns the glass/chrome 3D LOOK without stealing neighbours', () => {
+  const owns = ['chrome 3d text', 'glassy 3d logo', 'metallic 3d word', 'shiny chrome lettering in 3d', 'glossy 3d render of a word', 'iridescent 3d shape']
+  for (const phrase of owns) {
+    it(`"${phrase}" → Scene3DStudio in top-3`, () => {
+      expect(topN(phrase, 3)).toContain('Scene3DStudio')
+    })
+  }
+  const borders: { phrase: string; expect: string }[] = [
+    { phrase: 'kinetic typography', expect: 'SpaceType' },           // animated type stays SpaceType's
+    { phrase: 'variable font animation', expect: 'VectorType' },     // flat vector outlines stay VectorType's
+    { phrase: 'image to 3d', expect: 'Generate3DNode' },             // image→mesh stays Generate3DNode's
+    { phrase: 'make a 3d model', expect: 'Generate3DNode' },
+    { phrase: '3d gem', expect: 'ShapeStudio' },                     // faceted gems stay Shape Studio's
+    { phrase: 'faceted gem', expect: 'ShapeStudio' },
+    { phrase: 'make a text effect for the word SALE', expect: 'TextEffectNode' },
+  ]
+  for (const { phrase, expect: exp } of borders) {
+    it(`"${phrase}" is still #1 → ${exp}`, () => {
+      expect(topN(phrase, 1)[0]).toBe(exp)
+    })
+  }
+})
