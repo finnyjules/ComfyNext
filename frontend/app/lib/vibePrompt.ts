@@ -102,9 +102,14 @@ export const TAKES_UNSALVAGEABLE = 'takes_unsalvageable'
 
 const MAX_LABEL_CHARS = 24
 
-/** Truncates an over-length label to exactly MAX_LABEL_CHARS, ending "…". */
+/** Truncates an over-length label to MAX_LABEL_CHARS, ending "…". Splits on
+ *  CODE POINTS (`[...label]`), not UTF-16 code units (`label.slice`) — an
+ *  emoji or other astral character sitting right at the cut is two code
+ *  units wide, and a plain `.slice` can land between them, leaving a lone
+ *  unpaired surrogate in the label the client renders. */
 function truncateLabel(label: string): string {
-  return label.length > MAX_LABEL_CHARS ? `${label.slice(0, MAX_LABEL_CHARS - 1)}…` : label
+  const codepoints = [...label]
+  return codepoints.length > MAX_LABEL_CHARS ? `${codepoints.slice(0, MAX_LABEL_CHARS - 1).join('')}…` : label
 }
 
 /** An unusable label (empty, whitespace, or never a string) is rebuilt from

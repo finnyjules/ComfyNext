@@ -209,6 +209,26 @@ describe('parseTakesResponse: salvage tolerance (live owner report #2)', () => {
     expect(takes[0]!.label.startsWith('a'.repeat(23))).toBe(true)
   })
 
+  it('truncates by CODE POINT, not UTF-16 code unit — an emoji sitting at the cut survives whole', () => {
+    // Astral emoji = one code point, two UTF-16 units. Placed so the naive
+    // `.slice(0, 23)` cut lands INSIDE the pair: 22 "a"s fill units 0-21, the
+    // emoji's high surrogate sits at unit 22 — exactly where a UTF-16 slice
+    // would stop, leaving a lone high surrogate. A code-point-aware slice
+    // takes the whole emoji as its 23rd character instead.
+    const label = `${'a'.repeat(22)}🎨bbbb` // 27 code points, well over the 24 cap
+    const { takes } = parseTakesResponse({
+      takes: [
+        { label, changes: [{ key: 'depth', value: 0.5 }], rationale: 'r' },
+        { label: 'fine', changes: [{ key: 'depth', value: 0.6 }], rationale: 'r' },
+      ],
+    })
+    const truncated = takes[0]!.label
+    expect(truncated).toContain('🎨') // whole emoji, never a lone surrogate
+    expect([...truncated]).toHaveLength(24) // 23 code points + the trailing "…"
+    expect(truncated.endsWith('…')).toBe(true)
+    expect(truncated).toBe(`${'a'.repeat(22)}🎨…`)
+  })
+
   it('an empty/whitespace label is synthesized from the take\'s own rationale, not rejected', () => {
     const { takes } = parseTakesResponse({
       takes: [
