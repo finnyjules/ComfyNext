@@ -18,7 +18,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (**schema-drawn** from GRADIENT_CONTROLS) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
-| Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask, + mode-gated params) | ✅ descriptor (+ mask) | 806 + 63 effects |
+| Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask, + mode-gated params) | ✅ descriptor (+ mask, + **effect macro + ungated stages + derived guidance**) | 806 + 62 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven, + **chips/Worley** mode) | ✅ commands (+ approximation honesty) | ~2,300 |
 | Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ + **layer stack** (rail, per-layer scoping, placement) | ✅ descriptor (active layer only) | ~1,900 (lib/geoshape + studio.ts) |
 | Shot Director | ✅ | ✅ keyframes | ✅ | ❌ | 988 |
@@ -30,6 +30,29 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Shader tuner vocabulary — effect macro, stage enables, derived guidance — LANDED 2026-08-25
+
+The shader agent could only wiggle sliders on the already-active effect with
+already-enabled stages — "make it glitchy VHS" was structurally impossible. Now: an
+`effect` MACRO (Gradient preset-macro pattern; swaps via `switchStudioEffect` with
+default-param seeding; macro applies FIRST so same-patch scalar overrides validate
+against the NEW effect via re-describe), stage enables + params offered ALWAYS
+(deliberate 11-key grant, named in d3310fc5f), and guidance that is mostly DERIVED:
+a catalog-synced index of all 62 effects (id · name · category, pinned to the same
+manifest.json the backend serves — cannot drift) + an auto-derived "MODES YOU CANNOT
+SET" line naming the 11 enum-carrying effects, plus hand-written look-word clusters
+(every id detector-tested), the approximation-honesty clause (3-clause shared core
+with Texture's), and 3 worked examples. 6.8K chars against a test-pinned 8K ceiling;
+headless/backend-down degrades EXPLICITLY ("EFFECT LIST UNAVAILABLE"), never silently.
+Review rounds caught: a redundant same-id `effect` silently wiping hand-tuned params
+(worked examples primed the model to always send it — same-id guard in the shared
+seam); agent READ paths mutating the persisted node (deepMerge returns arrays by
+reference; ensureEffectMasks wrote through — now clone-before-hydrate); the
+switch logic being a parallel twin of the surface's pickEffect (now pinned field-set-
+equal by a source-scan test + twin comments). OPEN: the picker's OWN re-pick reset
+(pre-existing UI bug, task chip filed); the live paid /api/vibe run (key-gated).
+Spec: `docs/superpowers/specs/2026-08-25-shader-tuner-vocabulary-design.md`.
 
 ### Texture Studio chips mode — terrazzo lands, Act 2 family 1 opens — LANDED 2026-08-25
 

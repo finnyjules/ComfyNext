@@ -63,8 +63,9 @@ The spine is real: sentence → studio → on canvas → configured, end to end,
 1. **Enforce configure-after-place** (small): the fast lane should refuse to land a
    tunable studio without its tuneNode, or auto-fire the vibe pass. Kills the
    "studio on defaults" failure.
-2. **Close the tuner gaps** (small-medium): guidance prose for Shader (its 63
-   effects are the flagship material); tuners for Expressive/Space Type first (it
+2. **Close the tuner gaps** (small-medium): ~~guidance prose for Shader~~ DONE
+   2026-08-25 (effect macro + ungated stages + catalog-derived guidance, commits
+   d3310fc5f..2c73d8ff7); remaining: tuners for Expressive/Space Type first (it
    routes strongly for kinetic-type asks and then can't be configured).
 3. **Semantic fallback for routing** (medium): one cheap model call (or embeddings)
    when keyword recall scores ~0, so novel phrasings still find studios. The corpus
