@@ -52,11 +52,15 @@ Other studios, the single-tune path, and local `≈ variations` are unchanged.
    farthest apart. Deterministic, ours, never invented.
 6. **The strip is unchanged UX.** Each take is a whole materialized config
    (macro-style: whole-config restore, keep through the existing writer).
-7. **The honesty machinery becomes telemetry here.** Base-swap substitutes and
-   the `(partial)` / `(differs)` / `(similar)` tile suffixes are *not shown* in
-   this flow — the eye-pick is the quality gate, and a tile the model chose after
-   looking at it does not need a badge apologising for itself. They still run and
-   still write to the take log and the console.
+7. **The honesty machinery is SKIPPED here, and the distances logged instead.**
+   Base-swap substitutes, the promise checks, the see-first review and the
+   `(partial)` / `(differs)` / `(similar)` tile suffixes do not run in this flow
+   at all — a composed take has no patch to validate, no promise to break and no
+   substitution to make, and it was chosen by looking at it, which is a stronger
+   check than any of them. What *is* kept is the measurement: the strip's closest
+   pair is computed and logged as telemetry, and nothing is labelled. (The
+   earlier draft of this section claimed the machinery "still runs"; it does
+   not, and saying so was overclaiming.)
 8. **Degrades, each to the next-simplest honest thing.** Recipe call fails → the
    old blind-generation path, with its old machinery entirely unchanged (the two
    paths do not entangle). Eye-pick fails → our pixel-distinctness picks the four
@@ -66,9 +70,15 @@ Other studios, the single-tune path, and local `≈ variations` are unchanged.
 
 - Two model calls (one text, one vision), both metered and rate-limited like the
   other assist routes.
-- Candidates must render before the pick, so first paint is later than today.
-  Measure it. If it exceeds ~8s in the lab, paint the distinctness top-four
-  immediately and let the eye-pick reorder in place.
+- First paint waits for the RECIPE call plus our renders, and no longer for the
+  pick: the strip goes up on our own distinctness ranking the moment the
+  candidates exist, and the eye-pick reorders it in place when it lands. Measured
+  in the lab, our half is **95–106 ms** for seven candidates; the honest total is
+  that plus one model call, where before this contingency it would have been plus
+  two sequential ones. The contingency is implemented rather than deferred
+  because the real per-call latency cannot be measured here — there is no API key
+  on this machine — and a design that only works if both calls are fast is not a
+  design.
 - Every await behind the superseded guards the strip already uses.
 - The descriptors are the one place a human judgement enters the data; they are
   derived from measured pixels and guarded against drift, not written from

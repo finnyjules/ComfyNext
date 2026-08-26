@@ -125,7 +125,7 @@ export interface StudioTakeSource {
    *  to the direct patch path when composing fails. */
   compose?: {
     summarize: (config: unknown) => { base: string, palette: string[] }
-    materialize: (recipe: GradientRecipe, own: unknown) => unknown | null
+    materialize: (recipe: GradientRecipe, own: unknown, seed: string) => unknown | null
   }
   /** How to re-aim this studio's picture when a take's promised DIRECTION did
    *  not come out. Omit it and a direction miss is labelled instead of fixed —
@@ -383,7 +383,10 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
    */
   function restoreTakeOriginal() {
     const src = opts.takes
-    if (src?.macro && src.setConfig && takeOriginalConfig !== null) {
+    // Gated on the SNAPSHOT, not on `macro`: a composed take replaces the whole
+    // config without any macro being involved, and a studio that only ever
+    // composes would otherwise lose its restore entirely.
+    if (src?.setConfig && takeOriginalConfig !== null) {
       src.setConfig(cloneConfig(takeOriginalConfig))
       // The view goes back BEFORE anything else reads it — `setConfig` clamps a
       // selection that a fewer-layer preset made invalid, and leaving it clamped
@@ -436,6 +439,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       ...(t && takeDropped.value.get(t)?.length ? { droppedKeys: takeDropped.value.get(t)! } : {}),
       ...(t && takePromiseResults.value.get(t)?.length ? { promiseResults: takePromiseResults.value.get(t)! } : {}),
       ...(t && takeVerdicts.value.get(t) ? { reviewVerdict: takeVerdicts.value.get(t)! } : {}),
+      // A composed take has no `changes` to record, so without this it would log
+      // nothing about itself — and the pick log is the whole taste-data thesis.
+      ...(t?.recipe ? { recipe: t.recipe } : {}),
     })
   }
 
@@ -744,14 +750,19 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
    * false when the composing call fails, and the caller falls back to the old
    * blind path entirely unchanged — the two do not entangle.
    */
-  async function composeAndPick(phrase: string): Promise<boolean> {
+  async function composeAndPick(phrase: string, avoid: string[] = []): Promise<boolean> {
     const src = opts.takes
     const compose = src?.compose
     if (!src || !compose) return false
 
     let recipes: GradientRecipe[]
     try {
-      recipes = await requestRecipes(phrase, compose.summarize(src.config()))
+      recipes = await requestRecipes(
+        avoid.length
+          ? `${phrase} — and make these DIFFERENT from what was already shown: ${avoid.join(', ')}`
+          : phrase,
+        compose.summarize(src.config()),
+      )
     } catch {
       console.info('[takes] compose call failed — falling back to the direct path')
       return false
@@ -763,63 +774,96 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     const built: { recipe: GradientRecipe, config: unknown, thumb: TakeThumb }[] = []
     const baseSnapshot = cloneConfig(src.config())
     for (const recipe of recipes) {
-      const config = compose.materialize(recipe, baseSnapshot)
+      // A STABLE seed per recipe: `buildGradientPreset` re-rolls its noise and
+      // its orientation on every call, so without this the same recipe would
+      // materialize differently for the candidate render, the hover and the
+      // keep — and the descriptor's direction facts would be true of one roll
+      // only. Same phrase and name ⇒ same picture, always.
+      const config = compose.materialize(recipe, baseSnapshot, `${phrase}#${recipe.name}`)
       if (!config) continue
       const thumb = await adapter(cloneConfig(config), THUMB_SIZE, src.aspect?.())
       built.push({ recipe, config, thumb })
     }
     if (built.length < 2) { console.info('[takes] too few candidates rendered — falling back'); return false }
 
-    // ── the eye-pick, then OUR fill for whatever it could not answer ─────────
-    // The "yours" tile is rendered ONCE and used twice: as the reference image
-    // the eye-pick compares against, and as the anchor tile in the strip. The
-    // live run caught it missing from the strip — the compose path never went
-    // through `renderTakeThumbs`, which is where it used to be drawn.
     const yoursThumb = await adapter(cloneConfig(baseSnapshot), THUMB_SIZE, src.aspect?.())
     const current = asReviewImage(yoursThumb)
     const shots = built.map(b => asReviewImage(b.thumb))
-    let picks: EyePick[] = []
-    if (current && shots.every(s => s)) {
-      picks = await requestEyePick(
-        phrase,
-        built.map((b, i) => ({ name: b.recipe.name, thumbnail: shots[i]! })),
-        current,
+    const sigs = built.map(b => thumbSignature(b.thumb))
+    const spread = (a: number, b: number) => pixelDistance(sigs[a] ?? null, sigs[b] ?? null)
+    let shownList: StudioTake[] | null = null
+
+    /**
+     * Put four on screen. Called twice: once immediately on OUR distinctness
+     * ranking, once more when the eye-pick lands.
+     *
+     * Painting first is the answer to this flow's real latency: the candidates
+     * are already rendered and already good, our ranking costs microseconds, and
+     * the eye-pick is a second network round trip the user would otherwise spend
+     * looking at an empty strip. So first paint stops depending on that call at
+     * all, and the pick reorders in place when it arrives.
+     */
+    const showPicks = (picks: EyePick[], source: 'ours' | 'the eye') => {
+      const filled = fillPicks(picks, built.length, spread)
+      const chosen = filled.map((p) => {
+        const b = built[p.index]!
+        return {
+          // Code POINTS, not UTF-16 units — slicing mid-surrogate leaves a lone
+          // half in the label, the exact bug `truncateLabel` exists for upstream.
+          label: [...(p.label ?? b.recipe.name)].slice(0, 24).join(''),
+          changes: [],
+          recipe: { base: b.recipe.base, palette: b.recipe.palette, mood: b.recipe.mood },
+          rationale: p.reason ?? `${b.recipe.base} base, ${b.recipe.palette.join(' → ')}${b.recipe.mood.length ? `, ${b.recipe.mood.join(' and ')}` : ''}`,
+          config: b.config,
+        } as StudioTake
+      })
+
+      takeDescribed.value = describeControls(takeControls(), opts.params)
+      takeBase.value = Object.fromEntries(takeDescribed.value.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]))
+      takeOriginal = {}
+      takeOriginalConfig = cloneConfig(src.config())
+      takeOriginalView = src.captureView?.() ?? null
+      takeCurrentThumb.value = yoursThumb
+      spreadRef = null
+      takes.value = chosen
+      shownList = chosen
+      takeThumbs.value = new Map(chosen.map((t, i) => [t, built[filled[i]!.index]!.thumb]))
+      selectedTake.value = null
+
+      // TELEMETRY, not a gate — and the distinction is the point. The badge
+      // machinery that used to police the strip is deliberately NOT run in this
+      // flow: these four were chosen by LOOKING at them, which is a stronger
+      // check than any of it, and a tile the model picked after seeing it does
+      // not need a badge apologising for itself. The measurement is free though,
+      // so the distances are logged and nothing is labelled.
+      const pairs: number[] = []
+      for (let a = 0; a < filled.length; a++) {
+        for (let b = a + 1; b < filled.length; b++) {
+          const d = spread(filled[a]!.index, filled[b]!.index)
+          if (d !== null) pairs.push(d)
+        }
+      }
+      console.info(
+        `[takes] composed ${built.length}, showing ${filled.length} chosen by ${source}`
+        + (pairs.length ? ` · closest pair ${Math.min(...pairs).toFixed(1)}` : '')
+        + ` · ${filled.map(p => `${built[p.index]!.recipe.name}${p.reason ? ` (${p.reason})` : ' (ours)'}`).join(' · ')}`,
       )
     }
-    if (!picks.length) console.info('[takes] eye-pick unavailable — choosing the four most different ourselves')
 
-    const sigs = built.map(b => thumbSignature(b.thumb))
-    const filled = fillPicks(picks, built.length, (a, b) => pixelDistance(sigs[a] ?? null, sigs[b] ?? null))
-    console.info(
-      `[takes] composed ${built.length} candidates, showing ${filled.length}: `
-      + filled.map(p => `${built[p.index]!.recipe.name}${p.reason ? ` (${p.reason})` : ' (ours)'}`).join(' · '),
+    showPicks([], 'ours') // on screen NOW, before the second call
+
+    if (!current || shots.some(s => !s)) return true
+    const picks = await requestEyePick(
+      phrase,
+      built.map((b, i) => ({ name: b.recipe.name, thumbnail: shots[i]! })),
+      current,
     )
-
-    // ── the strip, as takes carrying WHOLE configs ───────────────────────────
-    const chosen = filled.map((p) => {
-      const b = built[p.index]!
-      return {
-        label: (p.label ?? b.recipe.name).slice(0, 24),
-        changes: [],
-        rationale: p.reason ?? `${b.recipe.base} base, ${b.recipe.palette.join(' → ')}${b.recipe.mood.length ? `, ${b.recipe.mood.join(' and ')}` : ''}`,
-        config: b.config,
-      } as StudioTake
-    })
-
-    takeDescribed.value = describeControls(takeControls(), opts.params)
-    takeBase.value = Object.fromEntries(takeDescribed.value.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]))
-    takeOriginal = {}
-    takeOriginalConfig = cloneConfig(src.config())
-    takeOriginalView = src.captureView?.() ?? null
-    takeCurrentThumb.value = yoursThumb
-    spreadRef = null
-    takes.value = chosen
-    takeThumbs.value = new Map(chosen.map((t, i) => [t, built[filled[i]!.index]!.thumb]))
-    selectedTake.value = null
-    // The thumbnails already exist — nothing to stream, and no second review:
-    // these four were chosen BY looking. The honesty machinery that used to be
-    // the quality gate still runs for its telemetry, but the eye-pick is the gate
-    // now, so the tiles carry no badges in this flow.
+    if (takes.value !== shownList) return true // the user moved on; leave it be
+    if (!picks.length) {
+      console.info('[takes] eye-pick unavailable — keeping the four we chose')
+      return true
+    }
+    showPicks(picks, 'the eye')
     return true
   }
 
@@ -1187,7 +1231,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       reply.described.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]),
     )
     takeOriginal = {}
-    takeOriginalConfig = opts.takes?.macro ? cloneConfig(opts.takes.config()) : null
+    takeOriginalConfig = (opts.takes?.macro || opts.takes?.compose) ? cloneConfig(opts.takes.config()) : null
     takeOriginalView = opts.takes?.captureView?.() ?? null
     takeCurrentThumb.value = null
     takeDropped.value = finalized.dropped
@@ -1224,6 +1268,12 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     restoreTakeOriginal()
     clearOriginal()
     const macro = opts.takes?.macro
+    // A COMPOSED take is nothing but its config: there are no leaf changes to
+    // route through `recompute`, so installing it IS the commit. Without this,
+    // keep restored the original, found an empty proposal, and handed the user
+    // back the design they were trying to replace — the flow's terminal action
+    // throwing away the whole point of it.
+    if (t.config && opts.takes?.setConfig) opts.takes.setConfig(cloneConfig(t.config))
     // The macro half has no older equivalent to route through — swapping the
     // base config IS its apply path, and it must land before the overrides so
     // they are measured against the config they will live in.
@@ -1280,6 +1330,18 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   async function moreDirections() {
     if (busy.value || !opts.takes || !lastPhrase.value) return
     restoreTakeOriginal()
+    // A composed strip re-rolls by composing again — falling back to the direct
+    // path here would quietly hand the user a strip built the old way, from a
+    // button that says the same thing.
+    if (opts.takes.compose) {
+      const avoid = takes.value.map(t => t.label)
+      selectedTake.value = null
+      busy.value = true; error.value = ''
+      try {
+        if (await composeAndPick(lastPhrase.value, avoid)) return
+        console.info('[takes] compose re-roll failed — falling back to the direct path')
+      } finally { busy.value = false }
+    }
     // Drop the selection with the preview it was showing: if the re-roll fails
     // the old strip stays up, and a tile still ringed as "selected" over an
     // unapplied config would be lying about what the studio is showing.

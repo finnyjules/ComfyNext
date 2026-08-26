@@ -80,7 +80,8 @@ export function salvageEyePicks(raw: unknown, candidateCount: number, want = 4):
     seen.add(i)
     out.push({
       index: i,
-      ...(typeof label === 'string' && label.trim() ? { label: label.trim().slice(0, 24) } : {}),
+      // Code points, not UTF-16 units — see `truncateLabel` in vibePrompt.ts.
+      ...(typeof label === 'string' && label.trim() ? { label: [...label.trim()].slice(0, 24).join('') } : {}),
       ...(typeof reason === 'string' && reason.trim() ? { reason: reason.trim() } : {}),
     })
   }

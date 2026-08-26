@@ -144,7 +144,7 @@ const gradientAgent = useStudioAgent({
     // preset machinery the macro path uses.
     compose: {
       summarize: c => summarizeConfig(c as GradientConfig),
-      materialize: (recipe, own) => materializeRecipe(recipe, own as GradientConfig, cloneConfig),
+      materialize: (recipe, own, seed) => materializeRecipe(recipe, own as GradientConfig, cloneConfig, seed),
     },
     // The ONE repair a broken promise may make here. Gradient is the only one of
     // the four studios that offers a key which aims the whole picture: flow.angle

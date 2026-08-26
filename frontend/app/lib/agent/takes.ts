@@ -38,6 +38,10 @@ export interface StudioTake {
    *  contract the `preset` macro has, and it reuses the same whole-config
    *  restore. Absent, the take is a patch as it always was. */
   config?: unknown
+  /** The recipe this take was composed from, when it was composed rather than
+   *  patched. It is the only record of WHAT the take is — a composed take's
+   *  `changes` are empty by construction. */
+  recipe?: { base: string, palette: string[], mood: string[] }
   /** What this take CLAIMS its picture will show — checked against the real
    *  thumbnail once it renders. Absent when the model was unsure, and absent on
    *  a parametric neighbour (a spread promises nothing of its own). */
@@ -770,6 +774,10 @@ export interface TakeEvent {
    *  or replace, and why. Taste data of a different kind: it records the model's
    *  second thoughts alongside the person's first ones. */
   reviewVerdict?: { verdict: string, label?: string, reason?: string }
+  /** For a COMPOSED take, what it was composed from. The taste signal here is
+   *  richer than a param patch: which base look, which palette, which moods a
+   *  person kept — in the same words the model chose them in. */
+  recipe?: { base: string, palette: string[], mood: string[] }
 }
 
 export const TAKE_LOG_KEY = 'sailor.takeLog.v1'

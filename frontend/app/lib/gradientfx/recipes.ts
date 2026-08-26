@@ -155,7 +155,8 @@ export function salvageRecipes(raw: unknown, max = 8): GradientRecipe[] {
       .filter((m): m is string => typeof m === 'string' && MOOD_NAMES.includes(m.trim().toLowerCase()))
       .map(m => m.trim().toLowerCase())
       .slice(0, MAX_MOODS)
-    const label = typeof name === 'string' && name.trim() ? name.trim().slice(0, 24) : baseName
+    // Code points, not UTF-16 units — see `truncateLabel` in vibePrompt.ts.
+    const label = typeof name === 'string' && name.trim() ? [...name.trim()].slice(0, 24).join('') : baseName
     out.push({ base: baseName, palette: stops, mood: moods, name: label })
   }
   return out
