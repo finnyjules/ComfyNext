@@ -205,30 +205,6 @@ describe('parseVariants: the rejection is NAMED, not just a 400', () => {
 // A model returning 5 takes, 1 take, or a 25-char label killed the whole
 // request. These specs pin the SALVAGE posture instead: keep what's usable,
 // only give up when nothing survives.
-describe('TAKES_SCHEMA — the promise', () => {
-  const take = (TAKES_SCHEMA as any).properties.takes.items
-
-  it('offers colors / direction / tone, and nothing else', () => {
-    const promise = take.properties.promise
-    expect(promise).toBeTruthy()
-    expect(Object.keys(promise.properties).sort()).toEqual(['colors', 'direction', 'tone'])
-    expect(promise.additionalProperties).toBe(false)
-  })
-
-  it('is OPTIONAL — a take that is unsure just omits it', () => {
-    expect(take.required).not.toContain('promise')
-  })
-
-  it('constrains direction and tone by enum, and says the colour count in prose', () => {
-    const promise = take.properties.promise
-    expect(promise.properties.direction.enum).toEqual(['vertical', 'horizontal', 'radial', 'none'])
-    expect(promise.properties.tone.enum).toEqual(['dark', 'light'])
-    // Counts CANNOT be minItems/maxItems here (structured outputs) — they live
-    // in the description, the same pattern `takes` itself uses.
-    expect(promise.properties.colors.description).toMatch(/1|one/i)
-    expect(promise.properties.colors.description).toMatch(/3|three/i)
-  })
-})
 
 describe('parseTakesResponse: server-side count/shape validation', () => {
   const good = (n: number) => ({
@@ -280,6 +256,23 @@ describe('TAKES_SCHEMA — the promise', () => {
     // in the description, the same pattern `takes` itself uses.
     expect(promise.properties.colors.description).toMatch(/1|one/i)
     expect(promise.properties.colors.description).toMatch(/3|three/i)
+  })
+
+  it('carries no array-count keyword anywhere under the promise subtree', () => {
+    // Same class the whole structured-output guard exists for, checked at the
+    // subtree this feature added: `minItems`/`maxItems` on `colors` would look
+    // obviously right and 400 on the first live call.
+    const seen: string[] = []
+    const walk = (node: unknown, path: string) => {
+      if (Array.isArray(node)) return node.forEach((n, i) => walk(n, `${path}[${i}]`))
+      if (!node || typeof node !== 'object') return
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        if (k === 'minItems' || k === 'maxItems') seen.push(`${path}.${k}`)
+        walk(v, `${path}.${k}`)
+      }
+    }
+    walk(take.properties.promise, 'promise')
+    expect(seen).toEqual([])
   })
 })
 

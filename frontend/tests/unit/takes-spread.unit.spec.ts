@@ -208,6 +208,17 @@ describe('spreadAroundTake — output shape', () => {
     expect(new Set(out.map(sig)).size).toBe(4)
   })
 
+  it('a neighbour makes no promise of its own', () => {
+    // Structural, and load-bearing twice over: a spread is parametric maths, not
+    // a model claim, so it has nothing to promise — and the promise checker runs
+    // after the spread's own re-tightening pass, which is only safe while the
+    // takes it rewrites carry no promise to verify.
+    const promised: any = { ...TAKE, promise: { colors: ['orange'], direction: 'vertical' } }
+    for (const n of spreadAroundTake(CONTROLS, BASE, promised, 'seed-1') as any[]) {
+      expect(n.promise).toBeUndefined()
+    }
+  })
+
   it('each neighbour still differs from the take it spreads around', () => {
     const out = spreadAroundTake(CONTROLS, BASE, TAKE, 'seed-1')
     for (const n of out) expect(sig(n)).not.toBe(sig(TAKE))

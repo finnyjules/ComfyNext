@@ -426,6 +426,9 @@ export const DIRECTION_MIN_ENERGY = 1.5
 export const DIRECTION_RATIO = 1.6
 /** Centre-vs-edge mean difference above which a picture reads as radial. */
 export const RADIAL_MIN = 8
+/** Fraction of the frame that must be OPAQUE before a direction can be read at
+ *  all. Below it there is too little picture to say anything about. */
+export const DIRECTION_MIN_COVERAGE = 0.05
 /** Half-width of the luminance band where a picture is neither dark nor light,
  *  and so fails NEITHER claim. */
 export const TONE_DEAD_ZONE = 0.08
@@ -528,6 +531,12 @@ export interface DirectionMeasure {
   vertical: number
   horizontal: number
   centreEdge: number
+  /** Fraction of comparable samples that were opaque enough to count. */
+  coverage: number
+  /** True when neither axis nor the centre carries enough signal to read —
+   *  distinct from `direction: 'none'`, which a BUSY undirected picture also
+   *  produces. No signal is not the same as signal that disagrees. */
+  flat: boolean
 }
 
 /**
@@ -535,29 +544,44 @@ export interface DirectionMeasure {
  * row-to-row vs column-to-column mean change measured live on the real studio;
  * `radial` from centre-vs-edge; `none` when no axis dominates AND the picture is
  * not radial, which is the honest answer for something busy but undirected.
+ *
+ * TRANSPARENCY GATE. Shape and Vector Type draw on an empty background, and a
+ * transparent pixel decodes as (0,0,0,0) — pure black. Without this gate the
+ * measurement is of the SILHOUETTE, not the picture: a white bar down the middle
+ * of an empty frame reads "horizontal" (the two bar edges are the only change
+ * across a row), a correct vertical ramp with empty side margins reads
+ * horizontal for the same reason, and any centred motif reads "radial" because
+ * its middle is opaque and its border is not. Each of those would fail a take's
+ * own correct promise and write a miss that never happened into the taste log.
+ * So a sample pair counts only when BOTH ends are opaque, and the centre/edge
+ * comparison only sums opaque pixels.
  */
 export function measureDirection(sig: Uint8ClampedArray, size = THUMB_DIFF_SIZE): DirectionMeasure {
   const at = (x: number, y: number) => (y * size + x) * 4
-  let vert = 0, horiz = 0, n = 0
+  const opaque = (i: number) => sig[i + 3]! >= ALPHA_FLOOR
+  let vert = 0, vertN = 0, horiz = 0, horizN = 0, pairs = 0
   for (let y = 0; y < size - 1; y++) {
     for (let x = 0; x < size - 1; x++) {
       const a = at(x, y), down = at(x, y + 1), right = at(x + 1, y)
-      for (let k = 0; k < 3; k++) {
-        vert += Math.abs(sig[a + k]! - sig[down + k]!)
-        horiz += Math.abs(sig[a + k]! - sig[right + k]!)
-      }
-      n += 3
+      pairs++
+      if (!opaque(a)) continue
+      if (opaque(down)) { for (let k = 0; k < 3; k++) vert += Math.abs(sig[a + k]! - sig[down + k]!); vertN += 3 }
+      if (opaque(right)) { for (let k = 0; k < 3; k++) horiz += Math.abs(sig[a + k]! - sig[right + k]!); horizN += 3 }
     }
   }
-  const vertical = n ? vert / n : 0
-  const horizontal = n ? horiz / n : 0
+  const vertical = vertN ? vert / vertN : 0
+  const horizontal = horizN ? horiz / horizN : 0
+  const coverage = pairs ? Math.min(vertN, horizN) / (pairs * 3) : 0
 
-  // Centre disc vs outer ring, on the same buffer.
+  // Centre disc vs outer ring, opaque samples only.
   const c = (size - 1) / 2, maxR = Math.hypot(c, c)
-  let inSum = [0, 0, 0], inN = 0, outSum = [0, 0, 0], outN = 0
+  const inSum = [0, 0, 0], outSum = [0, 0, 0]
+  let inN = 0, outN = 0
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const i = at(x, y), d = Math.hypot(x - c, y - c) / maxR
+      const i = at(x, y)
+      if (!opaque(i)) continue
+      const d = Math.hypot(x - c, y - c) / maxR
       if (d < 0.35) { for (let k = 0; k < 3; k++) inSum[k]! += sig[i + k]!; inN++ }
       else if (d > 0.75) { for (let k = 0; k < 3; k++) outSum[k]! += sig[i + k]!; outN++ }
     }
@@ -570,15 +594,18 @@ export function measureDirection(sig: Uint8ClampedArray, size = THUMB_DIFF_SIZE)
 
   const isVertical = vertical >= DIRECTION_MIN_ENERGY && vertical >= horizontal * DIRECTION_RATIO
   const isHorizontal = horizontal >= DIRECTION_MIN_ENERGY && horizontal >= vertical * DIRECTION_RATIO
+  const isRadial = centreEdge >= RADIAL_MIN
   const direction: PromiseDirection = isVertical
     ? 'vertical'
     : isHorizontal
       ? 'horizontal'
-      : centreEdge >= RADIAL_MIN ? 'radial' : 'none'
-  return { direction, vertical, horizontal, centreEdge }
+      : isRadial ? 'radial' : 'none'
+  const flat = !isVertical && !isHorizontal && !isRadial
+    && Math.max(vertical, horizontal) < DIRECTION_MIN_ENERGY
+  return { direction, vertical, horizontal, centreEdge, coverage, flat }
 }
 
-export interface ToneMeasure { tone: 'dark' | 'light' | 'mid', luminance: number }
+export interface ToneMeasure { tone: 'dark' | 'light' | 'mid', luminance: number, total: number }
 
 /** Mean perceived luminance, 0..1, with a middle band that belongs to neither
  *  claim — a mid-grey picture is not evidence against "dark" OR "light". */
@@ -589,9 +616,13 @@ export function measureTone(sig: Uint8ClampedArray): ToneMeasure {
     sum += (0.299 * sig[i]! + 0.587 * sig[i + 1]! + 0.114 * sig[i + 2]!) / 255
     n++
   }
+  // `total: 0` means nothing was opaque enough to read. Defaulting the
+  // luminance to 0.5 and reporting "mid" would fabricate a PASSING result for a
+  // picture nobody could see — the same dishonesty as failing on no evidence,
+  // pointing the other way.
   const luminance = n ? sum / n : 0.5
   const tone = luminance < 0.5 - TONE_DEAD_ZONE ? 'dark' : luminance > 0.5 + TONE_DEAD_ZONE ? 'light' : 'mid'
-  return { tone, luminance }
+  return { tone, luminance, total: n }
 }
 
 export type PromiseClaim = 'colors' | 'direction' | 'tone'
@@ -628,21 +659,30 @@ export function checkPromise(sig: Uint8ClampedArray | null, promise: TakePromise
 
   if (promise.direction) {
     const m = measureDirection(sig, size)
-    out.push({
-      claim: 'direction',
-      ok: m.direction === promise.direction,
-      measured: `${m.direction} (v ${m.vertical.toFixed(1)} / h ${m.horizontal.toFixed(1)} / centre ${m.centreEdge.toFixed(1)})`,
-    })
+    // Two ways to have no evidence, both of which skip rather than fail:
+    // too little opaque picture to read, and a picture flat enough that no
+    // direction is discernible either way (a solid shape on transparency). A
+    // "none" claim is still confirmed by flatness — that IS what it claims.
+    const readable = m.coverage >= DIRECTION_MIN_COVERAGE && (!m.flat || promise.direction === 'none')
+    if (readable) {
+      out.push({
+        claim: 'direction',
+        ok: m.direction === promise.direction,
+        measured: `${m.direction} (v ${m.vertical.toFixed(1)} / h ${m.horizontal.toFixed(1)} / centre ${m.centreEdge.toFixed(1)})`,
+      })
+    }
   }
 
   if (promise.tone) {
     const m = measureTone(sig)
     // The dead zone belongs to both claims: `mid` never fails either.
-    out.push({
-      claim: 'tone',
-      ok: m.tone === 'mid' || m.tone === promise.tone,
-      measured: `${m.tone} (${m.luminance.toFixed(2)})`,
-    })
+    if (m.total > 0) {
+      out.push({
+        claim: 'tone',
+        ok: m.tone === 'mid' || m.tone === promise.tone,
+        measured: `${m.tone} (${m.luminance.toFixed(2)})`,
+      })
+    }
   }
 
   return out

@@ -96,6 +96,65 @@ describe('measureDirection', () => {
   })
 })
 
+// ── transparency: Shape and Vector Type draw on it ──────────────────────────
+//
+// Reviewer's three probes. Transparent pixels decode as (0,0,0,0), so without an
+// alpha gate the direction pass measures the SILHOUETTE instead of the picture —
+// a correct render then fails its own promise and poisons the taste log with a
+// miss that never happened.
+
+/** A white bar down the middle of an otherwise empty frame. */
+const verticalBarOnTransparency = () => build((x) => (
+  Math.abs(x - (N - 1) / 2) < N * 0.15 ? [245, 245, 245, 255] : [0, 0, 0, 0]
+))
+/** A real top-to-bottom ramp, inset with empty margins left and right. */
+const rampWithMargins = () => build((x, y) => {
+  if (x < N * 0.2 || x > N * 0.8) return [0, 0, 0, 0]
+  const t = y / (N - 1)
+  return [255 * (1 - t) + 60 * t, 150 * (1 - t) + 10 * t, 40 * (1 - t) + 120 * t, 255]
+})
+/** A single opaque blob in the middle — content, not a radial gradient. */
+const centredMotif = () => build((x, y) => (
+  Math.hypot(x - (N - 1) / 2, y - (N - 1) / 2) < N * 0.22 ? [200, 60, 60, 255] : [0, 0, 0, 0]
+))
+
+describe('measureDirection on transparency', () => {
+  it('a vertical bar on an empty frame is never called horizontal', () => {
+    const m = measureDirection(verticalBarOnTransparency())
+    expect(m.direction).not.toBe('horizontal')
+  })
+
+  it('…and a "vertical" promise over it is skipped, never failed', () => {
+    // A flat fill has no colour direction to read either way. Confirming "none"
+    // is fair; refuting "vertical" is not — the shape may well be vertical, and
+    // this metric cannot see shape.
+    const res = checkPromise(verticalBarOnTransparency(), { direction: 'vertical' })
+    expect(res.filter(r => r.claim === 'direction' && !r.ok)).toEqual([])
+  })
+
+  it('a vertical ramp with empty side margins still reads vertical', () => {
+    const m = measureDirection(rampWithMargins())
+    expect(m.direction).toBe('vertical')
+    expect(checkPromise(rampWithMargins(), { direction: 'vertical' })[0]!.ok).toBe(true)
+  })
+
+  it('a centred motif is not a radial gradient', () => {
+    const m = measureDirection(centredMotif())
+    expect(m.direction).not.toBe('radial')
+    expect(m.centreEdge).toBeLessThan(RADIAL_MIN)
+  })
+
+  it('an empty picture yields no direction result at all', () => {
+    expect(checkPromise(flat(0, 0, 0, 0), { direction: 'vertical' })).toEqual([])
+  })
+
+  it('a busy but undirected picture DOES refute a direction claim', () => {
+    // The distinction that keeps the skip honest: no signal is not the same as
+    // signal that disagrees.
+    expect(checkPromise(speckle(), { direction: 'vertical' })[0]!.ok).toBe(false)
+  })
+})
+
 describe('measureTone', () => {
   it('calls a dark picture dark and a light one light', () => {
     expect(measureTone(flat(20, 20, 30)).tone).toBe('dark')
@@ -104,6 +163,13 @@ describe('measureTone', () => {
 
   it('reports a mid picture as mid', () => {
     expect(measureTone(flat(128, 128, 128)).tone).toBe('mid')
+  })
+
+  it('measures nothing at all when nothing is opaque', () => {
+    // Defaulting to 0.5 would fabricate a passing "mid (0.50)" result for a
+    // picture nobody could see.
+    expect(measureTone(flat(0, 0, 0, 0)).total).toBe(0)
+    expect(checkPromise(flat(0, 0, 0, 0), { tone: 'dark' })).toEqual([])
   })
 
   it('the dead zone is real — a mid picture fails NEITHER claim', () => {

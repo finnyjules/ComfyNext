@@ -482,7 +482,14 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   async function verifyPromises(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
     const src = opts.takes
     if (!src) return
-    let current = list
+    // Resync rather than trust the argument. `tightenAgainstPick` runs first and
+    // may have replaced whole slots, so `list` can already be a stale array —
+    // and writing through a stale one would resurrect the tiles it replaced.
+    // Unreachable today only because a parametric spread carries no promise
+    // (pinned by a spec); depending on that from here would be depending on a
+    // property of a different function.
+    if (takes.value !== list) return
+    let current = takes.value
 
     const commit = (i: number, next: StudioTake, thumb: TakeThumb) => {
       const old = current[i]!
