@@ -91,15 +91,23 @@ function freshCanvas(w: number, h = w): HTMLCanvasElement {
  * Defensive about its input because `aspectRatio` reads a persisted string: a
  * zero, a NaN or an absurd ratio yields a usable canvas rather than a crash.
  */
-/** A document's width/height ratio, guaranteed finite and positive whatever the
- *  two numbers are. The surfaces whose canvas size is NODE state (Shape, Vector
- *  Type) hand their ratio over through this — one tested helper rather than an
- *  inline `w / h` per surface, which is exactly where a 0 or a NaN slips in
- *  unseen and turns a whole strip into error tiles. */
+/**
+ * A document's width/height ratio, guaranteed finite and positive whatever the
+ * two numbers are. The surfaces whose canvas size is NODE state (Shape, Vector
+ * Type) hand their ratio over through this — one tested helper rather than an
+ * inline `w / h` per surface, which is exactly where a 0 or a NaN slips in
+ * unseen and turns a whole strip into error tiles.
+ *
+ * If EITHER dimension is unusable the answer is 1, a square. Substituting a
+ * fallback per COMPONENT is the trap: it turns `(0, 720)` into a 1:720 ratio and
+ * a three-pixel sliver of a tile, which looks like a deliberate shape rather
+ * than the missing information it is. A dimension we do not have is no evidence
+ * about the document, and a square is this codebase's standing answer to no
+ * evidence — the same posture the promise checkers take.
+ */
 export function docAspect(w: number, h: number): number {
-  const width = Number.isFinite(w) && w > 0 ? w : 1
-  const height = Number.isFinite(h) && h > 0 ? h : 1
-  return width / height
+  const usable = (n: number) => Number.isFinite(n) && n > 0
+  return usable(w) && usable(h) ? w / h : 1
 }
 
 /**

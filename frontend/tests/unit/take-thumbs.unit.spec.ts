@@ -248,12 +248,32 @@ describe('docAspect — what the surfaces hand over', () => {
     expect(docAspect(1280, 720)).toBeCloseTo(16 / 9, 5)
   })
 
-  it('never yields something thumbDims has to rescue', () => {
-    for (const [w, h] of [[0, 0], [1024, 0], [0, 1024], [-5, 10], [Number.NaN, 100], [100, Number.NaN]]) {
-      const a = docAspect(w as number, h as number)
-      expect(Number.isFinite(a)).toBe(true)
-      expect(a).toBeGreaterThan(0)
+  it('falls back to SQUARE when either dimension is unusable', () => {
+    // Per-COMPONENT fallback is wrong: substituting 1 for a missing width turns
+    // (0, 720) into a 1:720 sliver of a tile. A dimension we do not have is no
+    // evidence about the document's shape, and the neutral answer to no evidence
+    // is a square — the same posture the checkers take.
+    for (const [w, h] of [[0, 0], [1024, 0], [0, 1024], [-5, 10], [Number.NaN, 100], [100, Number.NaN], [Number.POSITIVE_INFINITY, 100]]) {
+      expect(docAspect(w as number, h as number), `${w}x${h}`).toBe(1)
     }
+  })
+
+  it('never yields a ratio the tile would be a sliver at', () => {
+    // Anything a real studio can produce stays well inside a sane band; the
+    // bound is here so an extreme value gets NOTICED rather than silently
+    // rendering a 3px tile.
+    for (const [w, h] of [[0, 720], [1024, 0], [1280, 720], [1080, 1920], [1024, 1024], [2560, 1080]]) {
+      const a = docAspect(w as number, h as number)
+      expect(a, `${w}x${h}`).toBeGreaterThanOrEqual(1 / 8)
+      expect(a, `${w}x${h}`).toBeLessThanOrEqual(8)
+    }
+  })
+
+  it('passes a genuinely extreme BUT VALID document through, for thumbDims to clamp', () => {
+    // Not this function's job to second-guess a real 40:1 banner — `thumbDims`
+    // owns the drawable floor. Stated so the division of labour is on the record.
+    expect(docAspect(4000, 100)).toBe(40)
+    expect(thumbDims(docAspect(4000, 100), 160).h).toBeGreaterThanOrEqual(1)
   })
 
   it('is what BOTH studios with node-side dimensions actually call', async () => {
