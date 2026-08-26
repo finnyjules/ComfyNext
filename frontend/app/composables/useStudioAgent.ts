@@ -755,13 +755,33 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     const compose = src?.compose
     if (!src || !compose) return false
 
+    // ── THE BASELINE IS TAKEN HERE, BEFORE THE FIRST AWAIT ──────────────────
+    //
+    // Not merely "once per call" — once BEFORE anything can be awaited. `ask`
+    // empties the strip first, so nothing is interactive during its awaits; a
+    // re-roll does not: the OLD strip stays on screen and hoverable right
+    // through the recipe call and the candidate renders. A hover landing in that
+    // window makes the live config a candidate, and reading the baseline after
+    // the await would adopt that candidate as the user's design — restored onto
+    // forever after, and saved by the deep watcher. The same reading poisons
+    // `baseSnapshot`, so the anchor tile and every "yours" recipe would be built
+    // on a tile the user merely passed the mouse over.
+    //
+    // `moreDirections` calls `restoreTakeOriginal()` synchronously before this,
+    // so entry-time state is the true original. A hover arriving during the
+    // awaits is then handled by `showPicks`'s pre-swap restore, which now has
+    // the right baseline to restore TO.
+    const entryConfig = cloneConfig(src.config())
+    const entryView = src.captureView?.() ?? null
+    const entrySummary = compose.summarize(entryConfig)
+
     let recipes: GradientRecipe[]
     try {
       recipes = await requestRecipes(
         avoid.length
           ? `${phrase} — and make these DIFFERENT from what was already shown: ${avoid.join(', ')}`
           : phrase,
-        compose.summarize(src.config()),
+        entrySummary,
       )
     } catch {
       console.info('[takes] compose call failed — falling back to the direct path')
@@ -772,7 +792,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     // ── build and render every candidate. Local, free, and entirely ours. ────
     const adapter = takeThumbFor(src.studio)
     const built: { recipe: GradientRecipe, config: unknown, thumb: TakeThumb }[] = []
-    const baseSnapshot = cloneConfig(src.config())
+    // The user's design as it was when they asked — NOT as it is now, which may
+    // be whatever they are hovering.
+    const baseSnapshot = entryConfig
     for (const recipe of recipes) {
       // A STABLE seed per recipe: `buildGradientPreset` re-rolls its noise and
       // its orientation on every call, so without this the same recipe would
@@ -805,8 +827,8 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeDescribed.value = describeControls(takeControls(), opts.params)
     takeBase.value = Object.fromEntries(takeDescribed.value.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]))
     takeOriginal = {}
-    takeOriginalConfig = cloneConfig(src.config())
-    takeOriginalView = src.captureView?.() ?? null
+    takeOriginalConfig = cloneConfig(entryConfig)
+    takeOriginalView = entryView
     takeCurrentThumb.value = yoursThumb
     spreadRef = null
 

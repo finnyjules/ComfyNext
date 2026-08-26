@@ -374,3 +374,89 @@ describe('paint first, let the eye reorder', () => {
     info.mockRestore()
   })
 })
+
+
+describe('re-rolling keeps the OLD strip live — and it must not poison the new one', () => {
+  /** A recipe list including one built on the user's own base, so a test can
+   *  check what "yours" was resolved against. */
+  const WITH_OWN = [
+    ...RECIPES.slice(0, 4),
+    { base: 'yours', palette: ['#ff9a4d', '#4b2a7a'], mood: ['dreamy'], name: 'yours, warmer' },
+  ]
+
+  it('a hover during the re-roll’s recipe call does not become the baseline', async () => {
+    // `ask` is safe because it empties the strip first; `moreDirections` is not
+    // — the old tiles stay hoverable right through the recipe call and the
+    // candidate renders. A hover landing in that window used to be captured as
+    // "the user's design", and then restored onto forever after.
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    let recipeCalls = 0
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-recipes')) {
+        if (++recipeCalls === 2) await held   // hold only the RE-ROLL's call
+        return { recipes: WITH_OWN }
+      }
+      if (String(url).includes('/api/vibe-pick')) return { picks: [{ index: 1 }, { index: 2 }, { index: 3 }, { index: 5 }] }
+      throw new Error('direct path must not be used')
+    })
+    const { agent, state } = makeComposeAgent()
+    await agent.ask('a dreamy sunset')
+    await flush()
+    const mine = JSON.stringify(state.config)
+
+    const reroll = agent.moreDirections()
+    await flush(6)
+    // The old strip is still on screen and still interactive.
+    expect(agent.takes.value.length).toBeGreaterThan(0)
+    agent.previewTake(agent.takes.value[0])
+    expect(JSON.stringify(state.config)).not.toBe(mine)
+
+    release()
+    await reroll
+    await flush()
+
+    agent.previewTake(null)
+    expect(JSON.stringify(state.config)).toBe(mine)
+    agent.dismissTakes()
+    expect(JSON.stringify(state.config)).toBe(mine)
+  })
+
+  it('and the anchor tile and any "yours" recipe are built from the TRUE base', async () => {
+    // `baseSnapshot` is read for both. Poisoned, the strip offers the user
+    // variations of a tile they merely hovered, and calls one of them "yours".
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    let recipeCalls = 0
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-recipes')) {
+        if (++recipeCalls === 2) await held
+        return { recipes: WITH_OWN }
+      }
+      // Numbered from 1, as the prompt presents them; 5 is the "yours" recipe.
+      if (String(url).includes('/api/vibe-pick')) return { picks: [{ index: 5 }, { index: 1 }, { index: 2 }, { index: 3 }] }
+      throw new Error('direct path must not be used')
+    })
+    const { agent, state } = makeComposeAgent()
+    await agent.ask('a dreamy sunset')
+    await flush()
+    const trueMark = state.config.mark
+
+    const reroll = agent.moreDirections()
+    await flush(6)
+    // A tile whose config is NOT the user's own — hovering the "yours" recipe
+    // would leave the config unchanged and prove nothing.
+    const foreign = (agent.takes.value as any[]).find(t => t.config.mark !== trueMark)!
+    agent.previewTake(foreign)
+    expect(state.config.mark, 'the hover must actually be live, or this proves nothing')
+      .not.toBe(trueMark)
+    release()
+    await reroll                               // …while the new strip is built
+    await flush()
+
+    const own = (agent.takes.value as any[]).find(t => t.recipe?.base === 'yours')
+    expect(own, 'the "yours" recipe should be on the strip').toBeTruthy()
+    expect(own.config.mark).toBe(trueMark)
+    expect(own.config.note).toBe('from yours')
+  })
+})
