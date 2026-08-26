@@ -55,7 +55,7 @@ vi.mock('~/lib/agent/takeThumbs', () => ({
 
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
-import { PARTIAL_SUFFIX, SIMILAR_SUFFIX, readTakeLog } from '~/lib/agent/takes'
+import { PARTIAL_SUFFIX, SIMILAR_SUFFIX, TAKE_DISTINCT_MIN, THUMB_DIFF_MIN, readTakeLog } from '~/lib/agent/takes'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 
 let drawn: Fake | null = null
@@ -482,5 +482,183 @@ describe('separating a take that made a promise', () => {
     const angle = Number(t.changes.find((c: any) => c.key === 'angle')!.value)
     const stillVertical = Math.abs(((angle % 180) + 180) % 180 - 90) < 45
     expect(stillVertical || t.label.includes('(')).toBe(true)
+  })
+})
+
+
+// ── the bar for MODEL takes is higher than the bar for spreads ──────────────
+describe('TAKE_DISTINCT_MIN', () => {
+  it('is a separate, higher bar than the spread threshold', () => {
+    expect(TAKE_DISTINCT_MIN).toBeGreaterThan(THUMB_DIFF_MIN)
+  })
+
+  it('sits below every strip we have measured and called good', () => {
+    // Logged live worst-pairs from good strips: 29.79, 40.65, 55.70.
+    expect(TAKE_DISTINCT_MIN).toBeLessThan(29.79)
+  })
+})
+
+/** A macro toy whose PICTURE depends on things no slider can reach, so the
+ *  dial-nudge attempt provably cannot separate a duplicate and the base-swap
+ *  fallback is what has to. */
+function makeBaseSwapAgent() {
+  const PRESETS: Record<string, () => any> = {
+    sunset: () => ({ angle: 0, hue: 'orange', tint: 10 }),
+    ink: () => ({ angle: 90, hue: 'blue', tint: 0 }),
+  }
+  const state = { config: { angle: 0, hue: 'orange', tint: 0 } as any }
+  const controls = (): ControlSpec[] => [
+    { key: 'preset', label: 'Preset', kind: 'select', options: Object.keys(PRESETS), default: 'sunset' } as ControlSpec,
+    // The only slider, and the picture does not depend on it — so nudging dials
+    // can never separate these two.
+    { key: 'tint', label: 'Tint', kind: 'slider', min: 0, max: 100, step: 1, default: 0 } as ControlSpec,
+  ]
+  const agent = useStudioAgent({
+    controls,
+    params: makeConfigParams(() => state.config),
+    label: () => 'Base-swap toy',
+    takes: {
+      studio: 'gradient',
+      config: () => state.config,
+      paramsOf: (c: unknown) => makeConfigParams(() => c),
+      controls,
+      setConfig: (c: unknown) => { state.config = c },
+      macro: { key: 'preset', apply: (n: string) => PRESETS[n]?.() ?? null, recontrol: () => controls() },
+    },
+  } as any)
+  return { agent, state }
+}
+
+describe('when nudging dials cannot separate two takes', () => {
+  const twins = () => ({ takes: [
+    { label: 'warm pastel dusk', changes: [{ key: 'preset', value: 'sunset' }], rationale: 'a' },
+    { label: 'moody soft dusk', changes: [{ key: 'preset', value: 'sunset' }, { key: 'tint', value: 40 }], rationale: 'b' },
+  ] })
+
+  it('offers a genuinely different BASE instead of wasting the slot', async () => {
+    fetchMock.mockResolvedValue(twins())
+    const { agent } = makeBaseSwapAgent()
+    await agent.ask('two directions')
+    await flush()
+
+    const presets = agent.takes.value.map((t: any) => t.changes.find((c: any) => c.key === 'preset')?.value)
+    expect(new Set(presets).size).toBe(2) // not two of the same base any more
+    expect(presets).toContain('ink')
+  })
+
+  it('the replacement is visibly OURS, never the duplicate wearing a new value', async () => {
+    fetchMock.mockResolvedValue(twins())
+    const { agent } = makeBaseSwapAgent()
+    await agent.ask('two directions')
+    await flush()
+
+    const swapped = agent.takes.value.find((t: any) => t.changes.some((c: any) => c.value === 'ink'))!
+    expect(swapped.label).toBe('ink')
+    expect(swapped.label).not.toContain('dusk')
+    expect(swapped.rationale.toLowerCase()).toMatch(/same|match/)
+    // A promise described the look it USED to be; carrying it over would lie.
+    expect(swapped.promise).toBeUndefined()
+  })
+
+  it('drops a promise the base swap invalidates', async () => {
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'warm pastel dusk', changes: [{ key: 'preset', value: 'sunset' }], rationale: 'a' },
+      { label: 'moody soft dusk', changes: [{ key: 'preset', value: 'sunset' }, { key: 'tint', value: 40 }],
+        rationale: 'b', promise: { colors: ['orange'] } },
+    ] })
+    const { agent } = makeBaseSwapAgent()
+    await agent.ask('two directions')
+    await flush()
+    for (const t of agent.takes.value as any[]) {
+      if (t.changes.some((c: any) => c.value === 'ink')) expect(t.promise).toBeUndefined()
+    }
+  })
+
+  it('a studio with no base to swap still just says "(similar)"', async () => {
+    // Shader / Shape / Vector Type: nothing to offer instead, so honesty is all
+    // that is left.
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'one', changes: [{ key: 'angle', value: 90 }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'angle', value: 90 }, { key: 'hue', value: 'orange' }], rationale: 'b' },
+      { label: 'three', changes: [{ key: 'angle', value: 0 }, { key: 'hue', value: 'blue' }], rationale: 'c' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('two the same')
+    await flush()
+    for (const t of agent.takes.value as any[]) {
+      expect(t.changes.some((c: any) => c.key === 'preset')).toBe(false)
+    }
+  })
+})
+
+describe('the strip says what it could not apply', () => {
+  it('logs one line for the whole strip, not just per take', async () => {
+    // So a single paste from a screenshot diagnoses a vocabulary gap.
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'one', changes: [{ key: 'angle', value: 90 }, { key: 'nope', value: 1 }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'angle', value: 0 }, { key: 'alsoNope', value: 2 }], rationale: 'b' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('anything')
+
+    const said = info.mock.calls.flat().map(String).join(' ')
+    expect(said).toContain('one')
+    expect(said).toContain('nope')
+    expect(said).toContain('two')
+    expect(said).toContain('alsoNope')
+    info.mockRestore()
+  })
+
+  it('stays quiet when every take applied cleanly', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    fetchMock.mockResolvedValue(reply(undefined, [{ key: 'angle', value: 90 }]))
+    const { agent } = makeAgent()
+    await agent.ask('anything')
+    expect(info).not.toHaveBeenCalled()
+    info.mockRestore()
+  })
+})
+
+
+describe('a duplicate that is ALREADY labelled is still a duplicate', () => {
+  it('separates two (partial) twins instead of skipping them', async () => {
+    // The owner's screenshot, exactly: both takes lost more than half their ask,
+    // both came back "(partial)", and their surviving fragments were the same
+    // preset — so they rendered identically. The separation pass skipped them
+    // BECAUSE they were already labelled, which is backwards: a take whose ask
+    // was gutted is the one most likely to have converged with its neighbour.
+    // Only a take that has already conceded "(similar)" has nothing left to try.
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'warm pastel dusk', changes: [
+        { key: 'preset', value: 'sunset' }, { key: 'nope', value: 1 }, { key: 'alsoNope', value: 2 },
+      ], rationale: 'a' },
+      { label: 'moody soft dusk', changes: [
+        { key: 'preset', value: 'sunset' }, { key: 'thirdNope', value: 3 }, { key: 'fourthNope', value: 4 },
+      ], rationale: 'b' },
+    ] })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { agent } = makeBaseSwapAgent()
+    await agent.ask('two dusks')
+    await flush()
+
+    const presets = agent.takes.value.map((t: any) => t.changes.find((c: any) => c.key === 'preset')?.value)
+    expect(new Set(presets).size).toBe(2)
+    warn.mockRestore()
+  })
+
+  it('but leaves a take that already conceded "(similar)" alone', async () => {
+    // Nothing more to try there — re-entering would loop on a pair no amount of
+    // moving can separate.
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'one', changes: [{ key: 'angle', value: 90 }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'angle', value: 90 }, { key: 'hue', value: 'orange' }], rationale: 'b' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('two the same')
+    await flush()
+    // One of the pair concedes; the strip settles rather than churning.
+    const conceded = agent.takes.value.filter((t: any) => t.label.includes(SIMILAR_SUFFIX.trim()))
+    expect(conceded.length).toBeLessThanOrEqual(1)
   })
 })

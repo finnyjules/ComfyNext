@@ -33,8 +33,9 @@ import { describeControls, validatePatch, type DescribedControl } from '~/lib/sp
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import {
-  DIFFERS_SUFFIX, PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SIMILAR_SUFFIX, SUBTLE_SUFFIX, THUMB_DIFF_MIN,
-  hasHonestySuffix, withSuffix,
+  DIFFERS_SUFFIX, PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SIMILAR_SUFFIX, SUBTLE_SUFFIX,
+  TAKE_DISTINCT_MIN, THUMB_DIFF_MIN,
+  hasHonestySuffix, seededIndex, withSuffix,
   checkPromise, chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
   type PromiseCheck, type StudioTake,
 } from '~/lib/agent/takes'
@@ -496,9 +497,15 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       // The most crowded slot that has not had its attempt yet.
       let worst: { i: number, d: number } | null = null
       for (let i = 0; i < current.length; i++) {
-        if (tried.has(i) || hasHonestySuffix(current[i]!.label)) continue
+        // Only a take that has already CONCEDED is out of moves. A `(partial)`
+        // or `(differs)` take is still a candidate — in fact it is the likeliest
+        // duplicate of all, because a take whose ask was gutted has thin
+        // surviving fragments that easily converge with its neighbour's. Skipping
+        // every labelled take is what let two "(partial)" twins render as one
+        // picture with nothing said.
+        if (tried.has(i) || current[i]!.label.includes(SIMILAR_SUFFIX.trim())) continue
         const d = loneliness(i, sigOf(i))
-        if (d === null || d >= THUMB_DIFF_MIN) continue
+        if (d === null || d >= TAKE_DISTINCT_MIN) continue
         if (!worst || d < worst.d) worst = { i, d }
       }
       if (!worst) break
@@ -544,7 +551,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         const thumb = await draw(moved)
         if (takes.value !== current) return
         const d = loneliness(i, thumbSignature(thumb))
-        if (d === null || d < THUMB_DIFF_MIN) continue
+        if (d === null || d < TAKE_DISTINCT_MIN) continue
         // …and it must still keep the promise the previous pass just verified.
         // Separation moves the very dials a direction claim depends on, so a
         // candidate that lands off-promise is refused rather than committed
@@ -560,11 +567,81 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         kept = true
         break
       }
+      // Nudging dials could not do it. On a studio with a whole-look macro there
+      // is one more honest move: offer a DIFFERENT BASE. "Four different
+      // directions" that delivers the same picture twice has wasted a slot, and
+      // a genuinely different base look is the fulfilment the ask deserved.
+      if (!kept) kept = await offerDifferentBase(i, take, draw, (next) => { current = next })
+
       if (!kept) {
         console.warn(`[takes] "${take.label}" renders too close to another take (${worst.d.toFixed(1)} apart) and could not be separated`)
         replaceTake(i, { ...take, label: withSuffix(take.label, SIMILAR_SUFFIX) }, takeThumbs.value.get(take) ?? null, (next) => { current = next })
       }
     }
+  }
+
+  /**
+   * Replace a stuck duplicate with a base look no take is using.
+   *
+   * Only for a studio with a macro, because only there does "a different base"
+   * mean anything. Everything about the replacement is deliberately OURS and
+   * says so: it carries the preset's own name as its label and a plain sentence
+   * explaining why it is on screen, never the duplicate's label wearing a new
+   * value — passing our substitution off as the model's reading would be the
+   * same species of dishonesty this whole feature exists to prevent.
+   *
+   * Its promise is dropped, necessarily: a claim about how the OLD look would
+   * render says nothing true about a different base.
+   *
+   * Deterministic: the unused presets are walked from a seeded offset, so the
+   * same crowded strip yields the same substitution every time.
+   */
+  async function offerDifferentBase(
+    i: number,
+    take: StudioTake,
+    draw: (t: StudioTake) => Promise<TakeThumb>,
+    onList: (list: StudioTake[]) => void,
+  ): Promise<boolean> {
+    const macro = opts.takes?.macro
+    if (!macro) return false
+    const offered = takeDescribed.value.find(d => d.path === macro.key)?.options ?? []
+    if (!offered.length) return false
+    const inUse = new Set(
+      takes.value.map(t => t.changes.find(c => c.key === macro.key)?.value).filter(v => typeof v === 'string'),
+    )
+    const spare = offered.filter(name => !inUse.has(name))
+    if (!spare.length) return false
+
+    const list = takes.value
+    const start = seededIndex(`${lastPhrase.value}#base${i}`, spare.length)
+    for (let k = 0; k < spare.length; k++) {
+      const name = spare[(start + k) % spare.length]!
+      const candidate: StudioTake = {
+        label: name,
+        changes: [{ key: macro.key, value: name }],
+        rationale: `A different base look — offered because two takes came out the same.`,
+        // promise deliberately absent
+      }
+      const thumb = await draw(candidate)
+      if (takes.value !== list) return false // superseded while we were drawing
+      const sig = thumbSignature(thumb)
+      if (!sig) continue
+      let lonely = true
+      takes.value.forEach((other, j) => {
+        if (j === i) return
+        const d = pixelDistance(sig, thumbSignature(takeThumbs.value.get(other)))
+        if (d !== null && d < TAKE_DISTINCT_MIN) lonely = false
+      })
+      if (!lonely) continue
+      console.info(`[takes] "${take.label}" matched another take, so a different base is offered instead: ${name}`)
+      replaceTake(i, candidate, thumb, onList)
+      // A fresh take carries none of the old one's baggage.
+      const nextDropped = new Map(takeDropped.value)
+      nextDropped.delete(candidate)
+      takeDropped.value = nextDropped
+      return true
+    }
+    return false
   }
 
   /** Swap one slot's take, carrying its thumbnail and its side-tables with it. */
@@ -838,6 +915,13 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       console.warn(
         `[takes] ${lost.length} requested key(s) could not be applied and were dropped:`,
         [...new Set(lost)].join(', '),
+      )
+      // …and one STRIP-level line beside it, so a single console paste from a
+      // screenshot is enough to diagnose a vocabulary gap: which take lost what,
+      // rather than a merged set with no idea who asked for which key.
+      console.info(
+        '[takes] dropped by take: '
+        + out.map(t => `"${t.label}" ${(dropped.get(t) ?? []).length} (${(dropped.get(t) ?? []).join(', ') || 'none'})`).join(' · '),
       )
     }
     return { takes: out, dropped }

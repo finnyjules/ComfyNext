@@ -53,6 +53,14 @@ function hash01(...parts: (string | number)[]): number {
   return h / 0x1_0000_0000
 }
 
+/** A deterministic index into a list of `length`, from any seed. Same seed, same
+ *  pick — the house rule (hash of the inputs, never Math.random) applied to a
+ *  choice that is not numeric. */
+export function seededIndex(seed: string | number, length: number): number {
+  if (length <= 0) return 0
+  return Math.floor(hash01(seed, 'pick') * length) % length
+}
+
 // ─── numeric helpers (kept in step with validatePatch's slider maths) ────────
 function stepDecimals(step: number): number {
   const s = String(step)
@@ -317,6 +325,24 @@ export const THUMB_DIFF_SIZE = 32
  * of both — on a sample of one gradient.
  */
 export const THUMB_DIFF_MIN = 6
+
+/**
+ * The bar two MODEL takes must clear to count as different pictures — a much
+ * higher bar than `THUMB_DIFF_MIN`, and deliberately its own number.
+ *
+ * `THUMB_DIFF_MIN` (6) answers "are these the same to the eye?", which is the
+ * right question for a parametric spread: four neighbours of one idea are
+ * SUPPOSED to look related, and only near-identity is a failure. Model takes
+ * claim to be genuinely different readings, so "not literally the same" is far
+ * too weak a promise to hold them to.
+ *
+ * Calibrated from the strips measured live and judged good — worst pairs of
+ * 29.79, 40.65 and 55.70 — against a reported bad strip whose duplicate pair sat
+ * somewhere between 6 and roughly 20. 20 is under the weakest good strip with
+ * about a third of margin, and over three times the "same to the eye" floor.
+ * Spreads keep `THUMB_DIFF_MIN`; only take-vs-take uses this.
+ */
+export const TAKE_DISTINCT_MIN = 20
 
 /** How much wider the ONE re-spread attempt reaches. */
 export const RESPREAD_AMPLIFY = 2
