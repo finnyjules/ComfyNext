@@ -45,7 +45,10 @@ import { BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
  *
  * Retuning these is a taste call, not a correctness one; the guard spec asserts
  * the shader is built from whatever they are, and that they keep the properties
- * the fix relies on.
+ * the fix relies on. The gain crossfade's smoothstep(0.3, 0.7, d) band below is
+ * the same kind of taste-tuned width: wide enough that no crease shows at the
+ * terminator, narrow enough that Highlights and Shadows still read as two
+ * separate controls.
  */
 /** How far, as a fraction of the colour ramp, Depth may slide the lookup. */
 export const REFRACT_REACH = 0.25
