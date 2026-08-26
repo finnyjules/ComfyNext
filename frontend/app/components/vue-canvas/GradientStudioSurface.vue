@@ -33,6 +33,7 @@ import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { GRADIENT_GUIDANCE, gradientAgentControls, gradientGuidance } from '~/lib/gradientfx/agentControls'
 import { buildGradientPreset } from '~/lib/gradientfx/presets'
+import { materializeRecipe, summarizeConfig } from '~/lib/gradientfx/recipes'
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
@@ -137,6 +138,14 @@ const gradientAgent = useStudioAgent({
     // one-layer preset permanently moves the user's selection to layer 0.
     captureView: () => activeLayer.value,
     restoreView: (v) => { activeLayer.value = Math.min(Number(v) || 0, config.value.layers.length - 1) },
+    // ── compose and pick ──────────────────────────────────────────────────
+    // The model composes from our menu of looks and moods and never names a
+    // control key; this turns each recipe into a real config through the same
+    // preset machinery the macro path uses.
+    compose: {
+      summarize: c => summarizeConfig(c as GradientConfig),
+      materialize: (recipe, own) => materializeRecipe(recipe, own as GradientConfig, cloneConfig),
+    },
     // The ONE repair a broken promise may make here. Gradient is the only one of
     // the four studios that offers a key which aims the whole picture: flow.angle
     // for a field layout, layer.ramp.angle for a ramp one. Both are written and

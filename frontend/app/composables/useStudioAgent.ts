@@ -41,6 +41,8 @@ import {
 } from '~/lib/agent/takes'
 import { VARIANTS_UNSUPPORTED, type PromiseDirection } from '~/lib/vibePrompt'
 import type { TakeReviewEntry, TakeVerdict } from '~/lib/vibeReview'
+import type { GradientRecipe } from '~/lib/gradientfx/recipes'
+import { fillPicks, type EyePick } from '~/lib/gradientfx/eyePick'
 import { takeThumbFor, type TakeThumb } from '~/lib/agent/takeThumbs'
 
 /** How many readings to ask for. The API accepts 2–4 and rejects anything else
@@ -118,6 +120,13 @@ export interface StudioTakeSource {
   captureView?: () => unknown
   restoreView?: (view: unknown) => void
   macro?: StudioTakeMacro
+  /** Compose-and-pick, for a studio that has a menu of looks to compose FROM.
+   *  Present, the "different directions" ask goes through it and only falls back
+   *  to the direct patch path when composing fails. */
+  compose?: {
+    summarize: (config: unknown) => { base: string, palette: string[] }
+    materialize: (recipe: GradientRecipe, own: unknown) => unknown | null
+  }
   /** How to re-aim this studio's picture when a take's promised DIRECTION did
    *  not come out. Omit it and a direction miss is labelled instead of fixed —
    *  which is the right answer for a studio with no key that aims anything. */
@@ -160,7 +169,7 @@ function isVariantsUnsupported(e: unknown): boolean {
  *  visual self-review pass); opts.apiKey is the Anthropic key for that pass. Both
  *  optional — omit them and the agent is tune-only (no review). */
 export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null | Promise<string | null>; apiKey?: () => string; tier?: string; guidance?: () => string; takes?: StudioTakeSource }) {
-  const { requestPatch, requestTakes, requestTakeReview } = useVibeControl()
+  const { requestPatch, requestTakes, requestTakeReview, requestRecipes, requestEyePick } = useVibeControl()
   const busy = ref(false)
   const error = ref('')
   const notice = ref('')
@@ -335,6 +344,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   function applyTakeWith(t: StudioTake, params: Params, swapBase: (value: string) => Params | null): void {
     const macro = opts.takes?.macro
     let write = params
+    // A COMPOSED take is a whole config, exactly like a macro swap — and it
+    // rides the same restore, because the same thing was replaced.
+    if (t.config && opts.takes?.setConfig) opts.takes.setConfig(cloneConfig(t.config))
     for (const ch of t.changes) {
       if (macro && ch.key === macro.key) {
         const next = swapBase(String(ch.value))
@@ -443,6 +455,8 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       // copy of the user's — otherwise a preset tile shows the old base look
       // with a couple of colours moved, which is precisely the lie that was
       // shipped.
+      // A composed take IS its config — there is nothing to patch onto a copy.
+      if (t.config) return adapter(cloneConfig(t.config), THUMB_SIZE, src.aspect?.())
       let snapshot = cloneConfig(baseSnapshot)
       applyTakeWith(t, src.paramsOf(snapshot), (value) => {
         const swapped = materializeMacro(value)
@@ -712,6 +726,102 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     onList(nextList)
   }
 
+
+
+  /**
+   * Compose-and-pick: the flow that stops asking the model to drive our machinery.
+   *
+   * The old path handed it sixty control keys and asked for four parameter
+   * patches — a translation job it is bad at, and every failure of the last week
+   * was a symptom of that. Here it does the two things it IS good at, and neither
+   * of them is translation:
+   *
+   *   1. compose recipes from menus we wrote (which look, which colours, which
+   *      moods) — it never names a control key;
+   *   2. look at the candidates OUR code built and rendered, and pick four.
+   *
+   * Everything between and after those two is deterministic and ours. Returns
+   * false when the composing call fails, and the caller falls back to the old
+   * blind path entirely unchanged — the two do not entangle.
+   */
+  async function composeAndPick(phrase: string): Promise<boolean> {
+    const src = opts.takes
+    const compose = src?.compose
+    if (!src || !compose) return false
+
+    let recipes: GradientRecipe[]
+    try {
+      recipes = await requestRecipes(phrase, compose.summarize(src.config()))
+    } catch {
+      console.info('[takes] compose call failed — falling back to the direct path')
+      return false
+    }
+    if (recipes.length < 2) { console.info('[takes] too few usable recipes — falling back'); return false }
+
+    // ── build and render every candidate. Local, free, and entirely ours. ────
+    const adapter = takeThumbFor(src.studio)
+    const built: { recipe: GradientRecipe, config: unknown, thumb: TakeThumb }[] = []
+    const baseSnapshot = cloneConfig(src.config())
+    for (const recipe of recipes) {
+      const config = compose.materialize(recipe, baseSnapshot)
+      if (!config) continue
+      const thumb = await adapter(cloneConfig(config), THUMB_SIZE, src.aspect?.())
+      built.push({ recipe, config, thumb })
+    }
+    if (built.length < 2) { console.info('[takes] too few candidates rendered — falling back'); return false }
+
+    // ── the eye-pick, then OUR fill for whatever it could not answer ─────────
+    // The "yours" tile is rendered ONCE and used twice: as the reference image
+    // the eye-pick compares against, and as the anchor tile in the strip. The
+    // live run caught it missing from the strip — the compose path never went
+    // through `renderTakeThumbs`, which is where it used to be drawn.
+    const yoursThumb = await adapter(cloneConfig(baseSnapshot), THUMB_SIZE, src.aspect?.())
+    const current = asReviewImage(yoursThumb)
+    const shots = built.map(b => asReviewImage(b.thumb))
+    let picks: EyePick[] = []
+    if (current && shots.every(s => s)) {
+      picks = await requestEyePick(
+        phrase,
+        built.map((b, i) => ({ name: b.recipe.name, thumbnail: shots[i]! })),
+        current,
+      )
+    }
+    if (!picks.length) console.info('[takes] eye-pick unavailable — choosing the four most different ourselves')
+
+    const sigs = built.map(b => thumbSignature(b.thumb))
+    const filled = fillPicks(picks, built.length, (a, b) => pixelDistance(sigs[a] ?? null, sigs[b] ?? null))
+    console.info(
+      `[takes] composed ${built.length} candidates, showing ${filled.length}: `
+      + filled.map(p => `${built[p.index]!.recipe.name}${p.reason ? ` (${p.reason})` : ' (ours)'}`).join(' · '),
+    )
+
+    // ── the strip, as takes carrying WHOLE configs ───────────────────────────
+    const chosen = filled.map((p) => {
+      const b = built[p.index]!
+      return {
+        label: (p.label ?? b.recipe.name).slice(0, 24),
+        changes: [],
+        rationale: p.reason ?? `${b.recipe.base} base, ${b.recipe.palette.join(' → ')}${b.recipe.mood.length ? `, ${b.recipe.mood.join(' and ')}` : ''}`,
+        config: b.config,
+      } as StudioTake
+    })
+
+    takeDescribed.value = describeControls(takeControls(), opts.params)
+    takeBase.value = Object.fromEntries(takeDescribed.value.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]))
+    takeOriginal = {}
+    takeOriginalConfig = cloneConfig(src.config())
+    takeOriginalView = src.captureView?.() ?? null
+    takeCurrentThumb.value = yoursThumb
+    spreadRef = null
+    takes.value = chosen
+    takeThumbs.value = new Map(chosen.map((t, i) => [t, built[filled[i]!.index]!.thumb]))
+    selectedTake.value = null
+    // The thumbnails already exist — nothing to stream, and no second review:
+    // these four were chosen BY looking. The honesty machinery that used to be
+    // the quality gate still runs for its telemetry, but the eye-pick is the gate
+    // now, so the tiles carry no badges in this flow.
+    return true
+  }
 
   /** A tile as the review route wants it: tile-resolution JPEG, a few KB. */
   function asReviewImage(thumb: TakeThumb): string | null {
@@ -1253,6 +1363,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     clearOriginal()
     resetTakes()
     try {
+      // Compose-and-pick first, where a studio has a menu to compose from. It
+      // returns false for any failure and the old path runs untouched below.
+      if (opts.takes?.compose && await composeAndPick(p)) return
       if (opts.takes) {
         let reply: VibeTakesReply | null = null
         try {

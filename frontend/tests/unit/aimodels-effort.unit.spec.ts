@@ -67,6 +67,8 @@ describe('Haiku-hardcoded routes never gain output_config.effort', () => {
   const HAIKU_ROUTES = [
     'server/api/vibe.post.ts',
     'server/api/vibe-review.post.ts',
+    'server/api/vibe-recipes.post.ts',
+    'server/api/vibe-pick.post.ts',
     'server/api/copy-assist.post.ts',
     'server/api/pipeline-suggest.post.ts',
   ]

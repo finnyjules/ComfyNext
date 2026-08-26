@@ -4,6 +4,8 @@ import { describeControls, validatePatch } from '~/lib/spacetype/controlDescript
 import type { StudioTake } from '~/lib/agent/takes'
 import type { TakePromise } from '~/lib/vibePrompt'
 import { parseTakeReview, type TakeReviewEntry } from '~/lib/vibeReview'
+import { salvageRecipes, type GradientRecipe } from '~/lib/gradientfx/recipes'
+import { salvageEyePicks, type EyePick } from '~/lib/gradientfx/eyePick'
 
 /** What a multi-take ask came back with. Exactly one of `takes` (two or more
  *  survived validation) or `patch` is useful — `patch` is set when the server
@@ -151,5 +153,39 @@ export function useVibeControl() {
     }
   }
 
-  return { requestPatch, requestTakes, requestTakeReview }
+  /** Compose readings of the ask from our menus. Throws on failure — the caller
+   *  degrades to the old blind-generation path, which is the honest place for
+   *  that decision to live. */
+  async function requestRecipes(phrase: string, yours: { base: string, palette: string[] }): Promise<GradientRecipe[]> {
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
+    const res = await $fetch<{ recipes?: unknown }>('/api/vibe-recipes', {
+      method: 'POST',
+      body: { apiKey: apiKey || undefined, phrase, yours },
+      timeout: TAKE_REVIEW_TIMEOUT_MS,
+    })
+    return salvageRecipes(res)
+  }
+
+  /** Pick four of our rendered candidates by looking at them. Fails CLOSED to an
+   *  empty list: the caller fills every slot from its own distinctness ranking,
+   *  so a failed pick costs ordering and names, never the strip. */
+  async function requestEyePick(
+    phrase: string,
+    candidates: { name: string, thumbnail: string }[],
+    current: string,
+  ): Promise<EyePick[]> {
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
+    try {
+      const res = await $fetch<{ picks?: unknown }>('/api/vibe-pick', {
+        method: 'POST',
+        body: { apiKey: apiKey || undefined, phrase, candidates, current },
+        timeout: TAKE_REVIEW_TIMEOUT_MS,
+      })
+      return salvageEyePicks(res, candidates.length)
+    } catch {
+      return []
+    }
+  }
+
+  return { requestPatch, requestTakes, requestTakeReview, requestRecipes, requestEyePick }
 }

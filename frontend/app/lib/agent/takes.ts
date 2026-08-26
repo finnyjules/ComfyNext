@@ -33,6 +33,11 @@ export interface StudioTake {
   label: string
   changes: { key: string, value: ParamValue }[]
   rationale: string
+  /** A whole materialized config, for a take COMPOSED rather than patched (the
+   *  compose-and-pick flow). Present, it replaces the base entirely — the same
+   *  contract the `preset` macro has, and it reuses the same whole-config
+   *  restore. Absent, the take is a patch as it always was. */
+  config?: unknown
   /** What this take CLAIMS its picture will show — checked against the real
    *  thumbnail once it renders. Absent when the model was unsure, and absent on
    *  a parametric neighbour (a spread promises nothing of its own). */
