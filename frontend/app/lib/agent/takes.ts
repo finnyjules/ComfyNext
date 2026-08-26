@@ -325,6 +325,23 @@ export const RESPREAD_AMPLIFY = 2
  *  Honest rather than hidden: the tile IS nearly the same picture. */
 export const SUBTLE_SUFFIX = ' (subtle)'
 
+/** Appended to a MODEL take whose picture could not be told apart from another
+ *  take's, after the one local re-spread. Lowest of the three honesty suffixes:
+ *  a take that lost half its changes, or broke a claim it made itself, is saying
+ *  something more serious than "this one looks like that one". */
+export const SIMILAR_SUFFIX = ' (similar)'
+
+/** The three honesty suffixes, most serious first. A tile shows at most ONE:
+ *  `(partial)` already implies the take is degraded, `(differs)` that it broke
+ *  its own promise, and stacking parenthetical apologies on a 52px tile is noise
+ *  rather than honesty. Each stage checks this before adding its own. */
+export const HONESTY_SUFFIXES = [' (partial)', ' (differs)', ' (similar)'] as const
+
+/** True when a label already carries one of the honesty suffixes. */
+export function hasHonestySuffix(label: string): boolean {
+  return HONESTY_SUFFIXES.some(sfx => label.includes(sfx.trim()))
+}
+
 /** Appended to a take whose rendered picture broke a claim its own promise
  *  made, after the one repair attempt. Never shown alongside PARTIAL_SUFFIX —
  *  see `withSuffix`'s callers: a take that lost half its changes is already

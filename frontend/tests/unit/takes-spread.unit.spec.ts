@@ -5,17 +5,20 @@ import type { DescribedControl } from '~/lib/spacetype/controlDescriptor'
 import { validatePatch } from '~/lib/spacetype/controlDescriptor'
 import type { VibeTake } from '~/lib/vibePrompt'
 import {
+  HONESTY_SUFFIXES,
   MIN_PRIMARY_MOVE,
   STATIC_INVISIBLE,
   TAKE_LOG_MAX,
   THUMB_DIFF_SIZE,
   chooseSpreadKeys,
+  hasHonestySuffix,
   logTakeEvent,
   pixelDistance,
   readTakeLog,
   spreadAroundTake,
   thumbDistance,
   thumbSignature,
+  withSuffix,
 } from '~/lib/agent/takes'
 
 const CONTROLS: DescribedControl[] = [
@@ -311,6 +314,26 @@ describe('spreadAroundTake — degenerate input', () => {
     const only = CONTROLS.filter(c => c.kind !== 'slider')
     const t: VibeTake = { label: 'switch only', rationale: '', changes: [{ key: 'mode', value: 'b' }] }
     expect(spreadAroundTake(only, BASE, t, 'seed-1')).toEqual([])
+  })
+})
+
+describe('honesty suffixes — at most one, most serious first', () => {
+  it('lists them loudest-first', () => {
+    expect(HONESTY_SUFFIXES).toEqual([' (partial)', ' (differs)', ' (similar)'])
+  })
+
+  it('recognises a label that already carries one', () => {
+    expect(hasHonestySuffix('warmer (partial)')).toBe(true)
+    expect(hasHonestySuffix('warmer (differs)')).toBe(true)
+    expect(hasHonestySuffix('warmer (similar)')).toBe(true)
+    expect(hasHonestySuffix('warmer')).toBe(false)
+    expect(hasHonestySuffix('partially warm')).toBe(false)
+  })
+
+  it('a suffixed label reads as suffixed even after truncation', () => {
+    // The composition rule only works if the check survives `withSuffix`.
+    const long = withSuffix('an extremely long angle name', ' (differs)')
+    expect(hasHonestySuffix(long)).toBe(true)
   })
 })
 

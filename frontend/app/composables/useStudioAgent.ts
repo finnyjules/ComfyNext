@@ -33,7 +33,8 @@ import { describeControls, validatePatch, type DescribedControl } from '~/lib/sp
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import {
-  DIFFERS_SUFFIX, PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN, withSuffix,
+  DIFFERS_SUFFIX, PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SIMILAR_SUFFIX, SUBTLE_SUFFIX, THUMB_DIFF_MIN,
+  hasHonestySuffix, withSuffix,
   checkPromise, chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
   type PromiseCheck, type StudioTake,
 } from '~/lib/agent/takes'
@@ -445,7 +446,106 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       takeThumbs.value = new Map(takeThumbs.value).set(t, thumb)
     }
     if (spreadRef) await tightenAgainstPick(list, draw)
-    await verifyPromises(list, draw)
+    await verifyPromises(takes.value, draw)
+    // Model takes only: a spread has just been tightened against its parent by
+    // the pass above, and re-separating it here would fight that.
+    if (!spreadRef) await separateDuplicates(takes.value, draw)
+  }
+
+  /**
+   * Four takes must be four PICTURES. Nothing checked that for MODEL takes —
+   * the pairwise pass only ever ran over parametric spreads — and the owner got
+   * three near-identical tiles with no word said. Reproduced on the real
+   * renderer: two takes with different change lists measured 0.00 apart.
+   *
+   * Same remedy shape as everywhere else in this feature, and the same bounds:
+   * ONE deterministic local attempt per slot, then honesty. The attempt here is
+   * a spread around the take ITSELF — the neighbours `spreadAroundTake` already
+   * knows how to build — and the first candidate that clears `THUMB_DIFF_MIN`
+   * against every other tile wins. No second model call, ever.
+   *
+   * Runs AFTER the promise pass on purpose: `(differs)` outranks `(similar)`,
+   * and letting the louder suffix land first means neither has to rewrite the
+   * other.
+   */
+  async function separateDuplicates(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
+    if (takes.value !== list) return
+    let current = takes.value
+    const tried = new Set<number>()
+
+    const sigOf = (i: number) => thumbSignature(takeThumbs.value.get(current[i]!))
+    /** The smallest measurable distance from slot `i` to any other tile. */
+    const loneliness = (i: number, sig: Uint8ClampedArray | null): number | null => {
+      if (!sig) return null
+      let best: number | null = null
+      for (let j = 0; j < current.length; j++) {
+        if (j === i) continue
+        const d = pixelDistance(sig, sigOf(j))
+        if (d === null) continue
+        best = best === null ? d : Math.min(best, d)
+      }
+      return best
+    }
+
+    for (let guard = 0; guard < current.length * 2; guard++) {
+      // The most crowded slot that has not had its attempt yet.
+      let worst: { i: number, d: number } | null = null
+      for (let i = 0; i < current.length; i++) {
+        if (tried.has(i) || hasHonestySuffix(current[i]!.label)) continue
+        const d = loneliness(i, sigOf(i))
+        if (d === null || d >= THUMB_DIFF_MIN) continue
+        if (!worst || d < worst.d) worst = { i, d }
+      }
+      if (!worst) break
+      const i = worst.i
+      tried.add(i)
+      const take = current[i]!
+
+      let kept = false
+      const candidates = spreadAroundTake(
+        takeDescribed.value, takeBase.value, take, `${lastPhrase.value}#distinct${i}`,
+      )
+      for (const candidate of candidates) {
+        // Keep the take's own identity — a spread caption would rename a tile
+        // the model labelled, and only its VALUES are in question here.
+        const moved: StudioTake = { ...take, changes: candidate.changes }
+        const thumb = await draw(moved)
+        if (takes.value !== current) return
+        const d = loneliness(i, thumbSignature(thumb))
+        if (d !== null && d >= THUMB_DIFF_MIN) {
+          replaceTake(i, moved, thumb, (next) => { current = next })
+          kept = true
+          break
+        }
+      }
+      if (!kept) {
+        console.warn(`[takes] "${take.label}" renders too close to another take (${worst.d.toFixed(1)} apart) and could not be separated`)
+        replaceTake(i, { ...take, label: withSuffix(take.label, SIMILAR_SUFFIX) }, takeThumbs.value.get(take) ?? null, (next) => { current = next })
+      }
+    }
+  }
+
+  /** Swap one slot's take, carrying its thumbnail and its side-tables with it. */
+  function replaceTake(i: number, next: StudioTake, thumb: TakeThumb, onList: (list: StudioTake[]) => void) {
+    const old = takes.value[i]!
+    const nextList = takes.value.slice()
+    nextList[i] = next
+    const move = <V>(m: Map<StudioTake, V>) => {
+      const out = new Map(m)
+      const v = out.get(old)
+      out.delete(old)
+      if (v !== undefined) out.set(next, v)
+      return out
+    }
+    const nextThumbs = new Map(takeThumbs.value)
+    nextThumbs.delete(old)
+    nextThumbs.set(next, thumb)
+    takes.value = nextList
+    takeThumbs.value = nextThumbs
+    takePromiseResults.value = move(takePromiseResults.value)
+    takeDropped.value = move(takeDropped.value)
+    if (selectedTake.value === old) selectedTake.value = next
+    onList(nextList)
   }
 
   /** The vocabulary a take's non-macro changes were (and must be) validated
@@ -554,7 +654,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       }
       // ONE suffix. `(partial)` already says the stronger thing about a take
       // that lost half its changes, so `(differs)` does not pile on.
-      if (!take.label.includes(PARTIAL_SUFFIX.trim())) {
+      if (!hasHonestySuffix(take.label)) {
         commit(i, { ...take, label: withSuffix(take.label, DIFFERS_SUFFIX) }, takeThumbs.value.get(take) ?? null)
       }
     }

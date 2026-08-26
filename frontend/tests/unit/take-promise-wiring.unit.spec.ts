@@ -55,7 +55,7 @@ vi.mock('~/lib/agent/takeThumbs', () => ({
 
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
-import { PARTIAL_SUFFIX, readTakeLog } from '~/lib/agent/takes'
+import { PARTIAL_SUFFIX, SIMILAR_SUFFIX, readTakeLog } from '~/lib/agent/takes'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 
 let drawn: Fake | null = null
@@ -105,6 +105,14 @@ function makeAgent(opts: { repairable?: boolean } = {}) {
 }
 
 const flush = async (n = 24) => { for (let i = 0; i < n; i++) await new Promise(r => setTimeout(r, 0)) }
+
+/** What the fake renderer will DRAW for a take — the picture, not the config. */
+function pictureKey(t: { changes: { key: string, value: unknown }[] }): string {
+  const get = (k: string, d: unknown) => t.changes.find(c => c.key === k)?.value ?? d
+  const angle = Number(get('angle', 0))
+  const vertical = Math.abs(((angle % 180) + 180) % 180 - 90) < 45
+  return `${vertical ? 'v' : 'h'}:${String(get('hue', 'orange'))}`
+}
 const labels = (agent: any) => agent.takes.value.map((t: any) => t.label)
 
 /** Two takes so the strip opens; only the first carries a promise. */
@@ -311,5 +319,71 @@ describe('no evidence is never a miss', () => {
     expect(labels(agent)).toEqual(['first', 'second'])
     agent.selectTake(agent.takes.value[0])
     expect(readTakeLog().at(-1)!.promiseResults).toBeUndefined()
+  })
+})
+
+
+// ── model takes that render as the same picture ─────────────────────────────
+//
+// Live evidence (owner report #6): three of four tiles came back near-identical.
+// Reproduced on the real renderer — two takes with DIFFERENT change lists
+// measured 0.00 apart, and nothing said a word: the pairwise pass only ever ran
+// over parametric spreads, never over what the model itself proposed.
+describe('four takes that are not four pictures', () => {
+  /** Two takes whose different changes land on the same rendered picture. */
+  function twins() {
+    return { takes: [
+      { label: 'one', changes: [{ key: 'angle', value: 90 }], rationale: 'a' },
+      // A different change list, an identical render (the hue it names is the
+      // one already there).
+      { label: 'two', changes: [{ key: 'angle', value: 90 }, { key: 'hue', value: 'orange' }], rationale: 'b' },
+      { label: 'three', changes: [{ key: 'angle', value: 0 }, { key: 'hue', value: 'blue' }], rationale: 'c' },
+    ] }
+  }
+
+  it('a near-duplicate is separated, or else says so', async () => {
+    fetchMock.mockResolvedValue(twins())
+    const { agent } = makeAgent()
+    await agent.ask('four ways')
+    await flush()
+
+    // The invariant, not a slot: no two tiles may render the same picture
+    // unless one of them says so. WHICH member of the pair gets moved is the
+    // code's business, not the test's.
+    const plain = agent.takes.value.filter((t: any) => !t.label.includes(SIMILAR_SUFFIX.trim()))
+    const pictures = plain.map((t: any) => pictureKey(t))
+    expect(new Set(pictures).size).toBe(pictures.length)
+    expect(fetchMock.mock.calls).toHaveLength(1) // never a second model call
+  })
+
+  it('leaves four genuinely different takes completely alone', async () => {
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'one', changes: [{ key: 'angle', value: 90 }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'angle', value: 0 }], rationale: 'b' },
+      { label: 'three', changes: [{ key: 'hue', value: 'blue' }], rationale: 'c' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('four ways')
+    const before = agent.takes.value.map((t: any) => JSON.stringify(t.changes))
+    await flush()
+
+    expect(labels(agent)).toEqual(['one', 'two', 'three'])
+    expect(agent.takes.value.map((t: any) => JSON.stringify(t.changes))).toEqual(before)
+  })
+
+  it('a broken promise outranks a duplicate — one suffix, and it is the louder one', async () => {
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'one', changes: [{ key: 'angle', value: 90 }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'angle', value: 90 }, { key: 'hue', value: 'orange' }], rationale: 'b',
+        promise: { colors: ['blue'] } },
+      { label: 'three', changes: [{ key: 'angle', value: 0 }, { key: 'hue', value: 'blue' }], rationale: 'c' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('four ways')
+    await flush()
+
+    const label = agent.takes.value[1]!.label
+    expect(label).toContain('(differs)')
+    expect(label).not.toContain(SIMILAR_SUFFIX.trim())
   })
 })

@@ -29,7 +29,7 @@
  */
 
 import { gradientFx } from '~/lib/gradientfx/renderer'
-import type { GradientConfig } from '~/lib/gradientfx/types'
+import { aspectRatio, type GradientConfig } from '~/lib/gradientfx/types'
 
 import { textureFx } from '~/lib/texturefx/renderer'
 import { textureDefaults } from '~/lib/texturefx/controls'
@@ -63,12 +63,34 @@ export type TakeThumbAdapter = (config: unknown, size?: number) => Promise<TakeT
 
 const DEFAULT_SIZE = 160
 
-function freshCanvas(size: number): HTMLCanvasElement {
+function freshCanvas(w: number, h = w): HTMLCanvasElement {
   const c = document.createElement('canvas')
-  const px = Math.max(1, Math.round(size))
-  c.width = px
-  c.height = px
+  c.width = Math.max(1, Math.round(w))
+  c.height = Math.max(1, Math.round(h))
   return c
+}
+
+/**
+ * The tile's pixel size for a document of the given aspect, fitted inside a
+ * `size`-square box.
+ *
+ * A tile is a PICTURE OF THE DOCUMENT, and a 16:9 design rendered into a square
+ * is a different picture — the field gets sampled over a square window, so the
+ * proportions the user will actually see are not the ones on the tile. That is
+ * not only a cosmetic lie: the promise checker measures the tile, so it was
+ * judging a render nobody gets. Measured on a real liquid 16:9 document, the
+ * square tile read "none" where the real render read "horizontal" — a sideways
+ * gradient walking straight past its own direction check.
+ *
+ * Defensive about its input because `aspectRatio` reads a persisted string: a
+ * zero, a NaN or an absurd ratio yields a usable canvas rather than a crash.
+ */
+export function thumbDims(aspect: number, size: number): { w: number, h: number } {
+  const box = Math.max(1, Math.round(size))
+  const a = Number.isFinite(aspect) && aspect > 0 ? Math.min(64, Math.max(1 / 64, aspect)) : 1
+  return a >= 1
+    ? { w: box, h: Math.max(1, Math.round(box / a)) }
+    : { w: Math.max(1, Math.round(box * a)), h: box }
 }
 
 // Shader thumbnails have no upstream image to sample (a take is a config, not
@@ -94,8 +116,10 @@ function shaderPlaceholderBase(): HTMLCanvasElement {
  */
 async function gradientThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
   const cfg = config as GradientConfig
-  const gpu = gradientFx.render(cfg, size, size, 0)
-  const out = freshCanvas(size)
+  // At the DOCUMENT's aspect, not the box's — see `thumbDims`.
+  const { w, h } = thumbDims(aspectRatio(cfg?.canvas?.aspect ?? "1:1"), size)
+  const gpu = gradientFx.render(cfg, w, h, 0)
+  const out = freshCanvas(w, h)
   out.getContext('2d')!.drawImage(gpu, 0, 0)
   return out
 }
