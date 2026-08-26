@@ -298,6 +298,68 @@ describe('paint first, let the eye reorder', () => {
     expect(agent.takes.value).toEqual([])
   })
 
+  /** A pick call held open, so a test can act while the strip is provisional. */
+  function heldPick(picks: unknown[]) {
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-recipes')) return { recipes: RECIPES }
+      if (String(url).includes('/api/vibe-pick')) { await held; return { picks } }
+      throw new Error('direct path must not be used')
+    })
+    return () => release()
+  }
+
+  it('a HOVER when the pick lands does not become the new baseline', async () => {
+    // The corruption: the baseline was re-captured on every paint, so a reorder
+    // arriving while a candidate was on screen captured THE CANDIDATE as "the
+    // user's design". Every later restore then landed on it, and the studio's
+    // deep watcher saved it — a document quietly replaced by a hover.
+    const release = heldPick([{ index: 4, label: 'the eye’s' }])
+    const { agent, state } = makeComposeAgent()
+    const ask = agent.ask('a dreamy sunset')
+    await flush(20)
+    const mine = JSON.stringify(state.config)
+
+    agent.previewTake(agent.takes.value[0])          // hovering a provisional tile…
+    expect(JSON.stringify(state.config)).not.toBe(mine)
+    release()                                         // …when the pick lands
+    await ask
+    await flush()
+
+    agent.previewTake(null)
+    expect(JSON.stringify(state.config)).toBe(mine)
+    agent.dismissTakes()
+    expect(JSON.stringify(state.config)).toBe(mine)
+  })
+
+  it('a SELECTION when the pick lands leaves a coherent strip', async () => {
+    // Whatever the policy, the canvas must never show a design no tile claims.
+    const release = heldPick([{ index: 4, label: 'the eye’s' }])
+    const { agent, state } = makeComposeAgent()
+    const ask = agent.ask('a dreamy sunset')
+    await flush(20)
+    const mine = JSON.stringify(state.config)
+
+    agent.selectTake(agent.takes.value[1])
+    release()
+    await ask
+    await flush()
+
+    const selected = agent.selectedTake.value as any
+    if (selected) {
+      // If a selection survives it must still be one of the tiles on screen, and
+      // the canvas must be showing exactly it.
+      expect(agent.takes.value).toContain(selected)
+      expect(JSON.stringify(state.config)).toBe(JSON.stringify(selected.config))
+    } else {
+      // Otherwise the honest resting state: the user's own design, untouched.
+      expect(JSON.stringify(state.config)).toBe(mine)
+    }
+    agent.dismissTakes()
+    expect(JSON.stringify(state.config)).toBe(mine)
+  })
+
   it('logs the strip as telemetry — measured, never badged', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     wire()

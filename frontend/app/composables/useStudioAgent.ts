@@ -793,6 +793,23 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     const spread = (a: number, b: number) => pixelDistance(sigs[a] ?? null, sigs[b] ?? null)
     let shownList: StudioTake[] | null = null
 
+    // ── the baseline is captured ONCE, here, before anything is on screen ────
+    //
+    // It must not be re-taken per paint. The strip paints twice — ours, then the
+    // eye-pick's reorder — and by the time the reorder lands the user may be
+    // hovering or holding a provisional tile, which means the LIVE config is a
+    // candidate. Re-capturing then would enshrine that candidate as "the user's
+    // design", and every later restore — unhover, dismiss, a click on "yours" —
+    // would land on it and the studio's deep watcher would save it. A document
+    // replaced by a hover, one seam over from the same bug in the macro path.
+    takeDescribed.value = describeControls(takeControls(), opts.params)
+    takeBase.value = Object.fromEntries(takeDescribed.value.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]))
+    takeOriginal = {}
+    takeOriginalConfig = cloneConfig(src.config())
+    takeOriginalView = src.captureView?.() ?? null
+    takeCurrentThumb.value = yoursThumb
+    spreadRef = null
+
     /**
      * Put four on screen. Called twice: once immediately on OUR distinctness
      * ranking, once more when the eye-pick lands.
@@ -818,16 +835,22 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         } as StudioTake
       })
 
-      takeDescribed.value = describeControls(takeControls(), opts.params)
-      takeBase.value = Object.fromEntries(takeDescribed.value.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]))
-      takeOriginal = {}
-      takeOriginalConfig = cloneConfig(src.config())
-      takeOriginalView = src.captureView?.() ?? null
-      takeCurrentThumb.value = yoursThumb
-      spreadRef = null
+      // Whatever was being previewed belonged to the OLD list. Put the user's
+      // own design back before the tiles change identity underneath them, so the
+      // canvas is never showing a design no tile on screen claims.
+      restoreTakeOriginal()
       takes.value = chosen
       shownList = chosen
       takeThumbs.value = new Map(chosen.map((t, i) => [t, built[filled[i]!.index]!.thumb]))
+      // POLICY: a reorder clears the selection and leaves the user's own design
+      // live. The alternative — carry the selection over when its take survived
+      // — is inconsistent by construction: the eye-pick's whole job is to
+      // replace candidates our ranking got wrong, so it sometimes replaces the
+      // very tile the user had selected and sometimes does not, and the strip
+      // would behave differently for reasons invisible to the person watching
+      // it. Re-applying a preview after the tiles visibly changed identity is
+      // also a decision they did not make. Clearing is uniform, and it rests on
+      // the one thing that is unambiguously theirs.
       selectedTake.value = null
 
       // TELEMETRY, not a gate — and the distinction is the point. The badge
