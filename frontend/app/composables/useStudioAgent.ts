@@ -101,6 +101,11 @@ export interface StudioTakeSource {
   /** Replace the whole base config. Required when `macro` is set — a macro
    *  cannot be expressed through the leaf-writing Params proxy. */
   setConfig?: (config: unknown) => void
+  /** The document's width/height ratio, when the CONFIG cannot say — Shape and
+   *  Vector Type keep their canvas dimensions on the node. A tile rendered
+   *  square for a wide document is a different picture, and the promise checker
+   *  and the duplicate pass both measure the tile. */
+  aspect?: () => number
   /** Studio-owned view state a macro swap is allowed to disturb — Gradient's
    *  selected layer, which `setConfig` must clamp when a preset arrives with
    *  fewer layers. Captured when the strip opens and put back with the config,
@@ -434,10 +439,10 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         snapshot = cloneConfig(swapped)
         return src.paramsOf(snapshot)
       })
-      return adapter(snapshot, THUMB_SIZE)
+      return adapter(snapshot, THUMB_SIZE, src.aspect?.())
     }
     if (!takeCurrentThumb.value) {
-      const yours = await adapter(cloneConfig(baseSnapshot), THUMB_SIZE)
+      const yours = await adapter(cloneConfig(baseSnapshot), THUMB_SIZE, src.aspect?.())
       if (takes.value === list) takeCurrentThumb.value = yours
     }
     for (const t of list) {
@@ -502,21 +507,58 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       const take = current[i]!
 
       let kept = false
+      const macroKey = opts.takes?.macro?.key
+      const macroChange = macroKey ? take.changes.find(c => c.key === macroKey) : undefined
+      // The vocabulary this take's values actually live in — POST-swap for a
+      // macro take. Rebuilding against the pre-swap list would quietly shed the
+      // changes that only exist because the macro ran, which is the very defect
+      // this feature exists to catch, committed by the feature itself.
+      const vocabulary = vocabularyFor(take)
+      // Spread in the take's OWN vocabulary, with its own config as the frame of
+      // reference. Handing `spreadAroundTake` the pre-swap list would make it
+      // drop the post-swap keys before a candidate ever got here — no amount of
+      // re-validation downstream can recover what was never offered.
+      const spreadBase = vocabulary === takeDescribed.value
+        ? takeBase.value
+        : Object.fromEntries(vocabulary.map(d => [d.path, d.current]))
       const candidates = spreadAroundTake(
-        takeDescribed.value, takeBase.value, take, `${lastPhrase.value}#distinct${i}`,
+        vocabulary, spreadBase, take, `${lastPhrase.value}#distinct${i}`,
       )
       for (const candidate of candidates) {
         // Keep the take's own identity — a spread caption would rename a tile
-        // the model labelled, and only its VALUES are in question here.
-        const moved: StudioTake = { ...take, changes: candidate.changes }
+        // the model labelled, and only its VALUES are in question here. The
+        // macro rides at the head, untouched: separating a take must never
+        // change which base look it is.
+        const valid = validatePatch(
+          Object.fromEntries(candidate.changes.filter(c => c.key !== macroKey).map(c => [c.key, c.value])),
+          vocabulary,
+        )
+        const rebuilt = Object.entries(valid).map(([key, value]) => ({ key, value }))
+        const changes = macroChange ? [macroChange, ...rebuilt] : rebuilt
+        // Anything the take HAD that the candidate cannot carry is a loss, and
+        // losses are counted, never swallowed.
+        const shed = take.changes
+          .filter(c => c.key !== macroKey && !(c.key in valid))
+          .map(c => c.key)
+        const moved: StudioTake = { ...take, changes }
         const thumb = await draw(moved)
         if (takes.value !== current) return
         const d = loneliness(i, thumbSignature(thumb))
-        if (d !== null && d >= THUMB_DIFF_MIN) {
-          replaceTake(i, moved, thumb, (next) => { current = next })
-          kept = true
-          break
+        if (d === null || d < THUMB_DIFF_MIN) continue
+        // …and it must still keep the promise the previous pass just verified.
+        // Separation moves the very dials a direction claim depends on, so a
+        // candidate that lands off-promise is refused rather than committed
+        // behind an already-passed check.
+        if (take.promise && checkPromise(thumbSignature(thumb), take.promise).some(r => !r.ok)) continue
+        replaceTake(i, moved, thumb, (next) => { current = next })
+        if (shed.length) {
+          console.warn(`[takes] separating "${take.label}" could not carry: ${shed.join(', ')}`)
+          const nextDropped = new Map(takeDropped.value)
+          nextDropped.set(moved, [...(nextDropped.get(moved) ?? []), ...shed])
+          takeDropped.value = nextDropped
         }
+        kept = true
+        break
       }
       if (!kept) {
         console.warn(`[takes] "${take.label}" renders too close to another take (${worst.d.toFixed(1)} apart) and could not be separated`)

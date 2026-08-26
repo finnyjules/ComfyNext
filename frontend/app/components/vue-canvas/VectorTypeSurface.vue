@@ -311,6 +311,8 @@ const vtAgent = useStudioAgent({
   takes: {
     studio: 'vectortype',
     config: () => config.value,
+    // Same as Shape: the canvas shape is node state, not config state.
+    aspect: () => canvasW.value / Math.max(1, canvasH.value),
     paramsOf: c => makeConfigParams(() => c, () => activeLayerIndex.value, 'appearance'),
   },
 })

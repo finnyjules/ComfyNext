@@ -59,7 +59,13 @@ export type TakeThumbStudioId = typeof TAKE_THUMB_STUDIO_IDS[number]
  *  accepted by `TakeStrip.vue`'s thumb prop, per Task 2's interface), or
  *  `null` for the error tile. */
 export type TakeThumb = HTMLCanvasElement | string | null
-export type TakeThumbAdapter = (config: unknown, size?: number) => Promise<TakeThumb>
+/**
+ * `aspect` is the studio's own document ratio (w/h) when the CONFIG cannot say —
+ * Shape and Vector Type keep their canvas dimensions on the node, not in the
+ * config a take carries. Omitted, an adapter falls back to whatever its config
+ * knows, or to square.
+ */
+export type TakeThumbAdapter = (config: unknown, size?: number, aspect?: number) => Promise<TakeThumb>
 
 const DEFAULT_SIZE = 160
 
@@ -132,6 +138,10 @@ async function gradientThumb(config: unknown, size = DEFAULT_SIZE): Promise<Take
  * `TextureStudioNode.vue`'s card preview merges a saved/partial params bag.
  */
 async function textureThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
+  // SQUARE on purpose, and not an oversight: what this renders is one repeating
+  // TILE, which has no aspect of its own — the sheet it eventually prints on is
+  // a separate Output concern the take vocabulary does not touch. A tile drawn
+  // wide would be a lie about the unit, not a truer picture of the document.
   // Same merge shape `TextureStudioNode.vue`'s card preview uses for a saved
   // params bag (`{ ...textureDefaults(), ...saved }`, `saved` typed as a full
   // `Params`, not a `Partial` — a `Partial<Params>` spread widens every value
@@ -154,6 +164,10 @@ async function textureThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeT
  * preview applies to a saved config.
  */
 async function shaderThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
+  // SQUARE on purpose: this studio has no canvas dimensions anywhere — it
+  // processes whatever upstream frame it is wired to, and a take has no wired
+  // frame (hence the neutral placeholder base below). There is no document
+  // shape to be truer to.
   const cfg: ShaderStudioConfig = hydrateShaderConfig(migrateShaderConfig(config))
   const catalog = await fetchShaderFxCatalog()
   const resolveDef = (id: string) => catalog.effects.find(e => e.id === id) ?? null
@@ -175,12 +189,13 @@ async function shaderThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeTh
  * wrapped `{ doc }` or `{ config }` respectively, mirroring the legacy-blob
  * migration `studioDocFromPersisted` already performs for a persisted node.
  */
-async function shapeThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
+async function shapeThumb(config: unknown, size = DEFAULT_SIZE, aspect?: number): Promise<TakeThumb> {
   const looksLikeDoc = !!config && typeof config === 'object' && Array.isArray((config as { layers?: unknown }).layers)
   const doc: GeoStudioDoc = studioDocFromPersisted(looksLikeDoc ? { doc: config } : { config })
+  const { w, h } = thumbDims(aspect ?? 1, size)
   const shapes = await renderStudio(doc)
-  const out = freshCanvas(size)
-  drawToCanvas(shapes, out.getContext('2d')!, size, size, studioFramePad(doc))
+  const out = freshCanvas(w, h)
+  drawToCanvas(shapes, out.getContext('2d')!, w, h, studioFramePad(doc))
   return out
 }
 
@@ -194,11 +209,12 @@ async function shapeThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThu
  * which a static thumbnail has no equivalent of — `bakeOutput()`'s still
  * frame is the one this adapter matches.
  */
-async function vectorTypeThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
+async function vectorTypeThumb(config: unknown, size = DEFAULT_SIZE, aspect?: number): Promise<TakeThumb> {
   const cfg = mergeVectorTypeConfig(config)
   const font = await loadVariableFont(cfg.fontId)
-  const out = freshCanvas(size)
-  drawVectorTypeToCanvas(out, font, cfg, vtStillTime(cfg), { width: size, height: size, background: null })
+  const { w, h } = thumbDims(aspect ?? 1, size)
+  const out = freshCanvas(w, h)
+  drawVectorTypeToCanvas(out, font, cfg, vtStillTime(cfg), { width: w, height: h, background: null })
   return out
 }
 
@@ -226,9 +242,9 @@ export function isTakeThumbStudioId(studioId: string): studioId is TakeThumbStud
 export function takeThumbFor(studioId: string): TakeThumbAdapter {
   const adapter = isTakeThumbStudioId(studioId) ? ADAPTERS[studioId] : null
   if (!adapter) return async () => null
-  return async (config: unknown, size = DEFAULT_SIZE) => {
+  return async (config: unknown, size = DEFAULT_SIZE, aspect?: number) => {
     try {
-      return await adapter(config, size)
+      return await adapter(config, size, aspect)
     } catch {
       return null
     }

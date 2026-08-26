@@ -116,7 +116,14 @@ const shapeAgent = useStudioAgent({
   // Four Takes. The agent patches the SELECTED layer's mark, but a tile is drawn
   // from the WHOLE doc — a take previewed live shows the composite, so a thumb of
   // the isolated mark would disagree with the thing it is a picture of.
-  takes: { studio: 'shape', config: () => doc.value, paramsOf: c => makeConfigParams(() => markIn(c as GeoStudioDoc)) },
+  takes: {
+    studio: 'shape',
+    config: () => doc.value,
+    paramsOf: c => makeConfigParams(() => markIn(c as GeoStudioDoc)),
+    // The canvas shape lives on the NODE, not in the doc a take carries, so the
+    // tile can only be truthful if the studio hands it over.
+    aspect: () => canvasW.value / Math.max(1, canvasH.value),
+  },
 })
 
 // ── StudioControlPanel wiring (per-layer). GEO_CONTROLS/GEO_SECTIONS drives every

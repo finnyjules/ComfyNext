@@ -387,3 +387,100 @@ describe('four takes that are not four pictures', () => {
     expect(label).not.toContain(SIMILAR_SUFFIX.trim())
   })
 })
+
+
+// ── separation must not quietly undo the take ───────────────────────────────
+//
+// Separation rewrites a take's VALUES. Two things ride on that take which the
+// rewrite can invalidate: changes that only exist because a macro swapped the
+// base config, and the take's own promise. Both were being dropped silently.
+
+/** A toy with a base-look macro whose swapped config has one MORE dial than the
+ *  config the ask was made from — the post-swap-only key. */
+function makeMacroPixelAgent() {
+  const base = { angle: 0, hue: 'orange' } as Record<string, unknown>
+  const state = { config: base }
+  const PRESETS: Record<string, () => any> = {
+    // `tint` exists only after the swap.
+    sunset: () => ({ angle: 0, hue: 'orange', tint: 10 }),
+  }
+  const controlsFor = (cfg: any): ControlSpec[] => [
+    { key: 'preset', label: 'Preset', kind: 'select', options: ['sunset'], default: 'sunset' } as ControlSpec,
+    ...CONTROLS,
+    ...(cfg && 'tint' in cfg
+      ? [{ key: 'tint', label: 'Tint', kind: 'slider', min: 0, max: 100, step: 1, default: 0 } as ControlSpec]
+      : []),
+  ]
+  const agent = useStudioAgent({
+    controls: () => CONTROLS,
+    params: makeConfigParams(() => state.config),
+    label: () => 'Macro toy',
+    takes: {
+      studio: 'gradient',
+      config: () => state.config,
+      paramsOf: (c: unknown) => makeConfigParams(() => c),
+      controls: () => controlsFor(state.config),
+      setConfig: (c: unknown) => { state.config = c as Record<string, unknown> },
+      macro: {
+        key: 'preset',
+        apply: (name: string) => PRESETS[name]?.() ?? null,
+        recontrol: (c: unknown) => controlsFor(c),
+      },
+    },
+  } as any)
+  return { agent, state }
+}
+
+describe('separating a MACRO take', () => {
+  it('keeps its post-swap-only changes, or counts what it had to shed', async () => {
+    // `tint` exists only on the swapped config. Rebuilding the take's values
+    // against the PRE-swap vocabulary drops it — and dropping a change with no
+    // count, no warning and no label is the exact defect this feature exists to
+    // stop, committed by the feature itself.
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'macro', changes: [
+        { key: 'preset', value: 'sunset' }, { key: 'angle', value: 90 }, { key: 'tint', value: 80 },
+      ], rationale: 'a' },
+      { label: 'twin', changes: [{ key: 'angle', value: 90 }, { key: 'hue', value: 'orange' }], rationale: 'b' },
+      { label: 'other', changes: [{ key: 'angle', value: 0 }, { key: 'hue', value: 'blue' }], rationale: 'c' },
+    ] })
+    const { agent } = makeMacroPixelAgent()
+    await agent.ask('two the same')
+    await flush()
+
+    const macro = agent.takes.value.find((t: any) => t.label.startsWith('macro'))!
+    const keys = macro.changes.map((c: any) => c.key)
+    // It KEEPS the post-swap key — the candidate is validated against the
+    // vocabulary the take actually lives in, not the one the ask was made from.
+    expect(keys).toContain('tint')
+    // …and if a separation ever cannot carry something, that is on the record
+    // rather than swallowed.
+    expect(agent.takeDropped.value.get(macro) ?? []).not.toContain('preset')
+    // The macro itself is never shed — that would change the whole base look.
+    expect(keys).toContain('preset')
+  })
+})
+
+describe('separating a take that made a promise', () => {
+  it('never commits a separation that breaks the promise it just verified', async () => {
+    // The take promises vertical and renders vertical; its twin renders the
+    // same. Separation moves `angle` — the very dial the promise depends on —
+    // so a candidate that lands sideways must be refused, not committed.
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'promised', changes: [{ key: 'angle', value: 90 }], rationale: 'a',
+        promise: { direction: 'vertical' } },
+      { label: 'twin', changes: [{ key: 'angle', value: 90 }, { key: 'hue', value: 'orange' }], rationale: 'b' },
+      { label: 'other', changes: [{ key: 'angle', value: 0 }, { key: 'hue', value: 'blue' }], rationale: 'c' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('two the same')
+    await flush()
+
+    const t = agent.takes.value.find((x: any) => x.label.startsWith('promised'))!
+    // Whatever separation did, the tile must still keep its own promise — or
+    // say it does not.
+    const angle = Number(t.changes.find((c: any) => c.key === 'angle')!.value)
+    const stillVertical = Math.abs(((angle % 180) + 180) % 180 - 90) < 45
+    expect(stillVertical || t.label.includes('(')).toBe(true)
+  })
+})

@@ -148,3 +148,41 @@ describe('thumbDims — the tile carries the document\u2019s shape', () => {
     expect(body).not.toMatch(/render\(cfg, size, size/)
   })
 })
+
+
+// ── every studio's tile carries ITS document's shape ────────────────────────
+//
+// The same defect class the gradient fix proved: a tile rendered square while
+// the studio renders wide is a different picture, and the promise checker and
+// the duplicate-separation pass both measure the tile. Four adapters still
+// assumed square. Two of them genuinely are; two were not.
+describe('thumbDims reaches the adapters that have a shape', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../app/lib/agent/takeThumbs.ts', import.meta.url)), 'utf8')
+  const bodyOf = (name: string) => {
+    const i = src.indexOf(`async function ${name}`)
+    const rest = src.slice(i)
+    return rest.slice(0, rest.indexOf('\n}\n') + 2)
+  }
+
+  it('the adapter signature accepts the aspect its studio knows', () => {
+    // Shape and Vector Type keep their canvas dimensions on the NODE, not in
+    // the config the adapter receives, so the studio has to hand it over.
+    expect(src).toMatch(/aspect\?: number/)
+  })
+
+  it('vector type renders at the passed aspect', () => {
+    expect(bodyOf('vectorTypeThumb')).toMatch(/thumbDims/)
+  })
+
+  it('shape renders at the passed aspect', () => {
+    expect(bodyOf('shapeThumb')).toMatch(/thumbDims/)
+  })
+
+  it('texture and shader say IN WORDS why they stay square', () => {
+    // Not an oversight either way: a texture tile is a repeating unit with no
+    // aspect of its own, and the shader studio has no canvas dimensions at all.
+    // Both must say so, so the next reader does not "fix" them.
+    expect(bodyOf('textureThumb')).toMatch(/square/i)
+    expect(bodyOf('shaderThumb')).toMatch(/square/i)
+  })
+})
