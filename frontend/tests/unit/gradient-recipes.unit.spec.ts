@@ -24,6 +24,7 @@ import {
   LOOK_NAMES,
   TAKE_BASE_LAYOUTS,
   TAKE_BASE_LAYOUT_FAMILIES,
+  WITHHELD_LAYOUTS,
   checkLookDrift,
   describeLook,
   isTakeBaseEligible,
@@ -32,7 +33,7 @@ import {
 import { buildGradientPreset } from '~/lib/gradientfx/presets'
 import { AUTHORED_PRESETS } from '~/lib/gradientfx/presetConfigs'
 import { GRADIENT_PRESET_NAMES } from '~/lib/gradientfx/presets'
-import { cloneConfig, type GradientConfig } from '~/lib/gradientfx/types'
+import { LAYOUTS, cloneConfig, type GradientConfig } from '~/lib/gradientfx/types'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
 import { gradientAgentControls } from '~/lib/gradientfx/agentControls'
 
@@ -365,6 +366,17 @@ describe('the recipe menu only offers the versatile layout families', () => {
     for (const bad of ['conic', 'orbit', 'stack', 'linear', 'radial']) {
       expect(TAKE_BASE_LAYOUTS, bad).not.toContain(bad)
     }
+  })
+
+  it('every layout the studio has is on exactly one side of the gate', () => {
+    // An eleventh layout value fails HERE rather than silently landing on the
+    // withheld side — which is where an allowlist would quietly put a new
+    // versatile family, with nobody told.
+    for (const layout of LAYOUTS) {
+      const sides = [TAKE_BASE_LAYOUTS.includes(layout), WITHHELD_LAYOUTS.includes(layout)].filter(Boolean)
+      expect(sides, `${layout} must be offered or withheld, exactly one`).toHaveLength(1)
+    }
+    expect([...TAKE_BASE_LAYOUTS, ...WITHHELD_LAYOUTS].sort()).toEqual([...LAYOUTS].sort())
   })
 
   it('DERIVES the gate — a preset invented at runtime is judged, not looked up', () => {

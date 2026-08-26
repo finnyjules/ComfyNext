@@ -185,6 +185,19 @@ export const TAKE_BASE_LAYOUT_FAMILIES: Record<string, readonly string[]> = {
 /** Flattened, for the eligibility check. */
 export const TAKE_BASE_LAYOUTS: readonly string[] = Object.values(TAKE_BASE_LAYOUT_FAMILIES).flat()
 
+/**
+ * The layouts deliberately kept OFF the agent's menu — named rather than merely
+ * absent, so the partition is a fact the build checks instead of a claim in the
+ * comment above.
+ *
+ * Every member of `LAYOUTS` must appear in exactly one of these two lists. An
+ * eleventh layout value therefore fails a spec rather than silently landing on
+ * whichever side the filter happens to put it — which, since the filter is an
+ * allowlist, would be the withheld side, and a new versatile family would go
+ * missing from the menu with nobody told.
+ */
+export const WITHHELD_LAYOUTS: readonly string[] = ['linear', 'radial', 'conic', 'orbit', 'stack']
+
 /** The seed eligibility is measured with. Fixed on purpose: which family a
  *  preset belongs to is a look-defining fact that must not depend on a roll, and
  *  pinning it makes the menu identical on every load. */
