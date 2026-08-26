@@ -327,11 +327,47 @@ describe('gradient agent tune-up (presets + guidance)', () => {
     expect(built.layers[0]!.color.stops).toEqual(authored.layers[0]!.color.stops)
     expect(authored.seed).toBe('#74xvg7mn')                            // source object untouched
   })
-  it('re-seeded presets vary orientation (angle) per seed but stay deterministic', () => {
-    const a = buildGradientPreset('marble', '#s1')!, b = buildGradientPreset('marble', '#s2')!
+  // Deliberate characterization change: this used to assert the roll on `marble`,
+  // which is an AUTHORED preset. Orientation is now the author's to choose (see
+  // the block below), so the roll is pinned on a BUILDER-ONLY preset instead —
+  // where an algorithm chose the angle and any angle is as good as another.
+  it('an ALGORITHMIC preset varies orientation per seed but stays deterministic', () => {
+    const a = buildGradientPreset('liquid', '#s1')!, b = buildGradientPreset('liquid', '#s2')!
     for (const c of [a, b]) { expect(c.flow!.angle).toBeGreaterThanOrEqual(0); expect(c.flow!.angle).toBeLessThanOrEqual(360) }
     expect(a.flow!.angle).not.toBe(b.flow!.angle)                      // different seeds → different angles
-    expect(buildGradientPreset('marble', '#s1')!.flow!.angle).toBe(a.flow!.angle) // same seed → same angle
+    expect(buildGradientPreset('liquid', '#s1')!.flow!.angle).toBe(a.flow!.angle) // same seed → same angle
+  })
+
+  describe('an authored preset keeps the orientation its author aimed', () => {
+    // Owner report: "sunset" takes carried the right colours but ran LEFT TO
+    // RIGHT — a sideways sunset. The orientation roll ran over every preset,
+    // including the authored ones, and the authored sunset sets flow.angle 269
+    // with a vertical ramp ON PURPOSE: a horizon. For a preset whose whole
+    // subject is a direction, the angle IS a look-defining param, exactly like
+    // its colours — and the function's own doc already promised those are kept.
+    it('sunset keeps its horizon angle and its light, whatever the seed', () => {
+      for (const seed of ['#a', '#b', '#c', '#zzz', '#0']) {
+        const built = buildGradientPreset('sunset', seed)!
+        expect(built.flow!.angle).toBe(AUTHORED_PRESETS.sunset!.flow!.angle)
+        expect(built.relief.light!.azimuth).toBe(AUTHORED_PRESETS.sunset!.relief.light!.azimuth)
+        expect(built.seed).toBe(seed) // still re-seeded: the NOISE varies, the aim does not
+      }
+    })
+
+    it('every authored preset does, not just sunset', () => {
+      for (const [name, authored] of Object.entries(AUTHORED_PRESETS)) {
+        if (!authored) continue
+        const built = buildGradientPreset(name, '#roll-me')!
+        expect(built.flow?.angle, name).toBe(authored.flow?.angle)
+        expect(built.relief.light?.azimuth, name).toBe(authored.relief.light?.azimuth)
+      }
+    })
+
+    it('and the colours are still the author\u2019s too (the promise this restores)', () => {
+      const built = buildGradientPreset('sunset', '#x')!
+      expect(built.layers[0]!.color.stops).toEqual(AUTHORED_PRESETS.sunset!.layers[0]!.color.stops)
+      expect(built.layers[0]!.color.gradientDir).toBe('vertical')
+    })
   })
   it('gradientAgentControls exposes the preset macro only when includePreset', () => {
     const cfg = defaultConfig('#c')

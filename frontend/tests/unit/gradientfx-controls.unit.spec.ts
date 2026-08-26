@@ -231,9 +231,14 @@ function keysNamedIn(text: string): string[] {
  *  never happen is a key NO configuration of that vocabulary can reach, which is
  *  exactly what `preset` was in the studio. Weaker than a per-config check, and
  *  it is the class that actually bit. */
+/** EVERY layout, not just the snapshotted five — the ramp family is where
+ *  `layer.ramp.angle` lives, and a detector that cannot see a real layout
+ *  reports a real key as drift. */
+const ALL_LAYOUTS = ['ramp', 'radialRamp', 'conic', 'curve', 'linear', 'radial', 'orbit', 'stack', 'liquid', 'mesh'] as const
+
 function offeredBy(opts: { includePreset?: boolean } = {}): Set<string> {
   const out = new Set<string>()
-  for (const layout of LAYOUTS_UNDER_TEST) {
+  for (const layout of ALL_LAYOUTS) {
     for (const c of gradientAgentControls(cfgWithLayout(layout), opts)) {
       out.add(c.key.replace(/\.\d+\./g, '.N.'))
     }

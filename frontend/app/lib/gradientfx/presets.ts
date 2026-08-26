@@ -42,19 +42,39 @@ const BUILDERS: Record<GradientPresetName, (seed: string) => GradientConfig> = {
  *  (e.g. aurora/frosted the user builds that have no algorithmic builder). */
 export const GRADIENT_PRESET_NAMES: string[] = [...new Set([...Object.keys(BUILDERS), ...Object.keys(AUTHORED_PRESETS)])]
 
-/** Build a preset's base config (defaults backfilled), or null for an unknown name.
- *  A user-authored config wins over the algorithmic builder; its seed is refreshed
- *  so the noise varies run-to-run while the look-defining params stay the user's. */
+/**
+ * Build a preset's base config (defaults backfilled), or null for an unknown name.
+ * A user-authored config wins over the algorithmic builder; its seed is refreshed
+ * so the NOISE varies run-to-run while the look-defining params stay the user's.
+ *
+ * ## Orientation belongs to whoever chose it
+ *
+ * An ALGORITHMIC preset's flow angle and light azimuth were picked by a random
+ * number in the first place, so re-rolling them per seed adds welcome variety
+ * and costs nothing — two marbles that flow the same way would look like a
+ * repeat.
+ *
+ * An AUTHORED preset's were picked by a person. `sunset` sets `flow.angle` 269
+ * against a vertical ramp because a sunset is a HORIZON; `dawn` sets 90 for the
+ * same reason. Rolling those produced exactly what the owner reported — right
+ * colours, sideways sun — and contradicted this function's own promise that an
+ * authored preset's look-defining params stay the author's. For a preset whose
+ * subject IS a direction, the angle is as look-defining as the colours.
+ *
+ * So the roll runs on builder output only. Both callers benefit: the canvas
+ * tuner's `applyPreset`, and the in-studio takes macro, which rides this same
+ * function.
+ */
 export function buildGradientPreset(name: string, seed: string = randomSeed()): GradientConfig | null {
   const authored = AUTHORED_PRESETS[name]
   const base = authored ? { ...cloneConfig(authored), seed } : BUILDERS[name as GradientPresetName]?.(seed)
   if (!base) return null
   const cfg = ensureConfigDefaults(base)
-  // Vary ORIENTATION per seed so re-seeded presets don't all flow/light the same way.
-  // Angle is orientation-only — keeps the vibe, adds variety. Salted so it's
-  // independent of the noise/grain seeding.
-  const rng = makeRng(seed, 'orient')
-  if (cfg.flow) cfg.flow.angle = Math.round(rng.range(0, 360))
-  if (cfg.relief.light) cfg.relief.light.azimuth = Math.round(rng.range(0, 360))
+  if (!authored) {
+    // Salted so orientation is independent of the noise/grain seeding.
+    const rng = makeRng(seed, 'orient')
+    if (cfg.flow) cfg.flow.angle = Math.round(rng.range(0, 360))
+    if (cfg.relief.light) cfg.relief.light.azimuth = Math.round(rng.range(0, 360))
+  }
   return cfg
 }

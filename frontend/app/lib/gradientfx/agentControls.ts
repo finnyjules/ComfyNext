@@ -72,6 +72,7 @@ PICK A STYLE FIRST (the "preset" control sets the whole base look, and it is the
 - sunset — warm purple→gold sky wash. Triggers: "sunset", "sunrise", "dusk", "dawn", "golden hour", "twilight", "warm sky".
 - ripple / stack — concentric rings ("rings", "ripples", "concentric", "target"). mesh — soft blurry blobs ("colour wash", "soft blobs", "cloudy", "gradient mesh"). linear — simple straight ramp ("simple", "plain", "two-tone", "duotone").
 Then OVERRIDE only what the request ADDS. When merely ADJUSTING an existing gradient ("more veins", "darker", "warmer", "less blur"), do NOT set preset — tune the specific knobs.
+DIRECTION: a preset arrives already aimed by its author (sunset is a horizon, dawn rises). Set flow.angle (or layer.ramp.angle on a ramp layout) AFTER the preset ONLY when the request itself names a direction — "sideways", "diagonal", "top to bottom", "rising". Otherwise leave the aim alone.
 `
 
 /** The knob vocabulary — true whether or not the macro is offered. */
