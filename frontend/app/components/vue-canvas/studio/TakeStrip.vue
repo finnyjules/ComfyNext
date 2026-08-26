@@ -40,10 +40,13 @@ const props = withDefaults(defineProps<{
   current?: Thumb
   selected?: VibeTake | null
   busy?: boolean
+  /** True while the model is looking at these four pictures and deciding whether
+   *  to fix any of them. A hint, never a block: every tile stays usable. */
+  reviewing?: boolean
   /** False when the selected take moved nothing a "±" could be taken around —
    *  the host decides (it owns the controls); the strip just greys the button. */
   canVary?: boolean
-}>(), { current: null, selected: null, busy: false, canVary: true })
+}>(), { current: null, selected: null, busy: false, reviewing: false, canVary: true })
 
 const emit = defineEmits<{
   /** Preview this take live, or (null) go back to the original. */
@@ -146,6 +149,9 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
                     @click="selected && emit('variationsOf', selected)">
         ≈ variations of this
       </StudioButton>
+      <span v-if="reviewing" data-testid="take-reviewing" class="pl-1 text-[11px] text-white/40">
+        looking at these<span class="animate-pulse">…</span>
+      </span>
       <span class="flex-1" />
       <StudioButton data-testid="take-dismiss" variant="subtle" @click="emit('dismiss')">Dismiss</StudioButton>
       <StudioButton data-testid="take-keep" variant="primary" :disabled="busy || !selected" @click="emit('keep')">

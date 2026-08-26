@@ -761,6 +761,10 @@ export interface TakeEvent {
   /** How the take's own promise measured against its real render. Taste data
    *  (which claims a person keeps despite a miss) and diagnostics in one. */
   promiseResults?: PromiseCheck[]
+  /** What the model said when it was shown this take's own picture — keep, fix
+   *  or replace, and why. Taste data of a different kind: it records the model's
+   *  second thoughts alongside the person's first ones. */
+  reviewVerdict?: { verdict: string, label?: string, reason?: string }
 }
 
 export const TAKE_LOG_KEY = 'sailor.takeLog.v1'

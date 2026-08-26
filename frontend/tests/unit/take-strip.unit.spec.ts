@@ -276,6 +276,26 @@ describe('TakeStrip — variations gating', () => {
   })
 })
 
+describe('TakeStrip — the see-first hint', () => {
+  it('shows a quiet hint while the model is looking at these pictures', () => {
+    const w = mountStrip({ reviewing: true })
+    expect(w.find('[data-testid="take-reviewing"]').exists()).toBe(true)
+  })
+
+  it('is absent by default, so a host that never reviews shows no chrome', () => {
+    expect(mountStrip().find('[data-testid="take-reviewing"]').exists()).toBe(false)
+  })
+
+  it('is a HINT, not a block — every tile and button stays usable', async () => {
+    const w = mountStrip({ reviewing: true, selected: TAKES[0] })
+    for (const id of ['take-more', 'take-variations', 'take-keep', 'take-dismiss']) {
+      expect(w.get(`[data-testid="${id}"]`).attributes('disabled')).toBeUndefined()
+    }
+    await tiles(w)[1]!.trigger('mouseenter')
+    expect(w.emitted('hover')![0]).toEqual([TAKES[1]])
+  })
+})
+
 describe('TakeStrip — presentation only', () => {
   it('imports nothing but its own button (no studio, config or fetch knowledge)', async () => {
     const fs = await import('node:fs')

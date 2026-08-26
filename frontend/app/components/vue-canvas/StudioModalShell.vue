@@ -91,6 +91,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               :takes="agent.takes.value" :thumbs="agent.takeThumbs.value"
               :current="agent.takeCurrentThumb.value" :selected="agent.selectedTake.value"
               :busy="agent.busy.value" :can-vary="agent.canVaryTake.value"
+              :reviewing="agent.reviewingTakes?.value"
               @hover="agent.previewTake" @select="agent.selectTake"
               @keep="agent.keepTake" @dismiss="agent.dismissTakes"
               @more-directions="agent.moreDirections" @variations-of="agent.variationsOfTake"

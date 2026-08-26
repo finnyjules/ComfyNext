@@ -40,12 +40,16 @@ import {
   type PromiseCheck, type StudioTake,
 } from '~/lib/agent/takes'
 import { VARIANTS_UNSUPPORTED, type PromiseDirection } from '~/lib/vibePrompt'
+import type { TakeReviewEntry, TakeVerdict } from '~/lib/vibeReview'
 import { takeThumbFor, type TakeThumb } from '~/lib/agent/takeThumbs'
 
 /** How many readings to ask for. The API accepts 2–4 and rejects anything else
  *  loudly (Task 1's `optionalVariants`), so this is a constant, not a knob. */
 const TAKE_COUNT = 4
 const THUMB_SIZE = 160
+/** Tile-resolution JPEG for the see-first review — a few KB per picture, which
+ *  is plenty for judging colour, direction and contrast. */
+const REVIEW_JPEG_QUALITY = 0.7
 
 /**
  * A control that swaps the studio's WHOLE base config rather than nudging one
@@ -156,7 +160,7 @@ function isVariantsUnsupported(e: unknown): boolean {
  *  visual self-review pass); opts.apiKey is the Anthropic key for that pass. Both
  *  optional — omit them and the agent is tune-only (no review). */
 export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null | Promise<string | null>; apiKey?: () => string; tier?: string; guidance?: () => string; takes?: StudioTakeSource }) {
-  const { requestPatch, requestTakes } = useVibeControl()
+  const { requestPatch, requestTakes, requestTakeReview } = useVibeControl()
   const busy = ref(false)
   const error = ref('')
   const notice = ref('')
@@ -258,6 +262,11 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   const takeDropped = shallowRef<Map<StudioTake, string[]>>(new Map())
   /** How each take's promise measured against its real render. */
   const takePromiseResults = shallowRef<Map<StudioTake, PromiseCheck[]>>(new Map())
+  /** What the model said when it looked at its own picture for this take. */
+  const takeVerdicts = shallowRef<Map<StudioTake, TakeReviewEntry>>(new Map())
+  /** True while the see-first pass is out. The strip is fully usable meanwhile —
+   *  this drives a quiet hint, never a block. */
+  const reviewingTakes = ref(false)
 
   const hasTakes = computed(() => takes.value.length > 0)
   /** "≈ variations of this" is honest only when the pick actually moved a dial:
@@ -391,6 +400,8 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     macroConfigs.clear()
     takeDropped.value = new Map()
     takePromiseResults.value = new Map()
+    takeVerdicts.value = new Map()
+    reviewingTakes.value = false
     spreadRef = null
   }
 
@@ -412,6 +423,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       ...(fromPick === null ? {} : { visualDiffFromPick: Number(fromPick.toFixed(2)) }),
       ...(t && takeDropped.value.get(t)?.length ? { droppedKeys: takeDropped.value.get(t)! } : {}),
       ...(t && takePromiseResults.value.get(t)?.length ? { promiseResults: takePromiseResults.value.get(t)! } : {}),
+      ...(t && takeVerdicts.value.get(t) ? { reviewVerdict: takeVerdicts.value.get(t)! } : {}),
     })
   }
 
@@ -451,7 +463,12 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       if (takes.value !== list) return // superseded by a re-roll or a dismiss
       takeThumbs.value = new Map(takeThumbs.value).set(t, thumb)
     }
+    // The see-first loop, for MODEL rounds only: a parametric spread is our own
+    // maths, and there is nothing for the model to have an opinion about.
+    if (!spreadRef) await reviewOwnTakes(list, draw)
     if (spreadRef) await tightenAgainstPick(list, draw)
+    // The checkers still run, and still run LAST: they were the judge, they are
+    // now the backstop. Nothing they used to catch stops being caught.
     await verifyPromises(takes.value, draw)
     // Model takes only: a spread has just been tightened against its parent by
     // the pass above, and re-separating it here would fight that.
@@ -693,6 +710,105 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeDropped.value = move(takeDropped.value)
     if (selectedTake.value === old) selectedTake.value = next
     onList(nextList)
+  }
+
+
+  /** A tile as the review route wants it: tile-resolution JPEG, a few KB. */
+  function asReviewImage(thumb: TakeThumb): string | null {
+    if (!thumb) return null
+    if (typeof thumb === 'string') return thumb
+    try { return thumb.toDataURL('image/jpeg', REVIEW_JPEG_QUALITY) } catch { return null }
+  }
+
+  /**
+   * The see-first loop: show the model the four pictures its own takes produced,
+   * with the design the user already had for reference, and let it keep, fix or
+   * replace each one BEFORE the user judges them.
+   *
+   * This is the architecture change the checkers were always heading towards.
+   * They used to be an after-the-fact court — measuring the result and labelling
+   * what was wrong. Now the model gets to see its own work first, and they run
+   * afterwards as a backstop.
+   *
+   * Bounded hard, in every direction:
+   *   • ONE round. A fixed take is never re-reviewed; recursion here would be a
+   *     model arguing with itself on the user's time.
+   *   • Fails CLOSED. No key, any error, a timeout — the strip is exactly what it
+   *     would have been, and one console line says the review was skipped.
+   *   • Never first-paint. The tiles are already on screen and fully usable; this
+   *     runs after them, behind a quiet hint.
+   *   • Superseded-checked at every await. If the user picked, kept or dismissed
+   *     while the review was out, what they SAW is what they get.
+   */
+  async function reviewOwnTakes(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
+    const src = opts.takes
+    if (!src || takes.value !== list || !lastPhrase.value) return
+    const current = asReviewImage(takeCurrentThumb.value)
+    const shots = list.map(t => asReviewImage(takeThumbs.value.get(t) ?? null))
+    // Every tile must have a picture: reviewing a strip where some tiles failed
+    // to draw would ask the model to judge blanks.
+    if (!current || shots.some(s => !s)) {
+      console.info('[takes] see-first review skipped: not every tile has a picture yet')
+      return
+    }
+
+    reviewingTakes.value = true
+    let reviews: TakeReviewEntry[] | null = null
+    try {
+      reviews = await requestTakeReview(
+        takeDescribed.value,
+        lastPhrase.value,
+        list.map((t, i) => ({ label: t.label, changes: t.changes, thumbnail: shots[i]! })),
+        current,
+      )
+    } finally {
+      reviewingTakes.value = false
+    }
+    if (!reviews) { console.info('[takes] see-first review skipped (no key, an error, or too slow)'); return }
+    if (takes.value !== list) return // the user moved on while it was out
+
+    let current2 = list
+    const applied: TakeVerdict[] = []
+    for (let i = 0; i < current2.length; i++) {
+      const verdict = reviews[i]
+      if (!verdict) continue
+      const take = current2[i]!
+      takeVerdicts.value = new Map(takeVerdicts.value).set(take, verdict)
+      applied.push(verdict.verdict)
+      if (verdict.verdict === 'keep' || !verdict.changes?.length) continue
+
+      // Through the SAME door as an original take: macro first, validated
+      // against the post-swap vocabulary, losses counted. A reviewed take is a
+      // take, and gets no shortcuts the model's first answer did not get.
+      const done = finalizeTake({
+        label: verdict.label ?? take.label,
+        changes: verdict.changes as { key: string, value: ParamValue }[],
+        rationale: verdict.reason ?? take.rationale,
+        // A fix keeps the take's promise (same intent, corrected values); a
+        // REPLACE is a different reading, so the old claim would not be about it.
+        ...(verdict.verdict === 'fix' && take.promise ? { promise: take.promise } : {}),
+      }, takeDescribed.value)
+      if (!done) continue
+
+      const thumb = await draw(done.take)
+      if (takes.value !== current2) return
+      replaceTake(i, done.take, thumb, (next) => { current2 = next })
+      takeVerdicts.value = new Map(takeVerdicts.value).set(done.take, verdict)
+      const nextDropped = new Map(takeDropped.value)
+      if (done.dropped.length) nextDropped.set(done.take, done.dropped)
+      else nextDropped.delete(done.take)
+      takeDropped.value = nextDropped
+      // The old picture's promise findings describe a picture that is gone.
+      const nextResults = new Map(takePromiseResults.value)
+      nextResults.delete(done.take)
+      takePromiseResults.value = nextResults
+    }
+
+    const counts = applied.reduce<Record<string, number>>((a, v) => ({ ...a, [v]: (a[v] ?? 0) + 1 }), {})
+    console.info(
+      `[takes] see-first review: ${Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(', ') || 'nothing'}`
+      + ` · ${reviews.map((r, i) => `"${list[i]?.label}" ${r.verdict}${r.reason ? `: ${r.reason}` : ''}`).join(' · ')}`,
+    )
   }
 
   /** The vocabulary a take's non-macro changes were (and must be) validated
@@ -1215,7 +1331,8 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   return {
     busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert,
     // Four Takes
-    takes, takeThumbs, takeCurrentThumb, takeDropped, takePromiseResults, selectedTake, hasTakes, canVaryTake,
+    takes, takeThumbs, takeCurrentThumb, takeDropped, takePromiseResults, takeVerdicts, reviewingTakes,
+    selectedTake, hasTakes, canVaryTake,
     previewTake, selectTake, keepTake, dismissTakes, abandonTakes, moreDirections, variationsOfTake,
   }
 }

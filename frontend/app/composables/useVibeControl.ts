@@ -3,6 +3,7 @@ import type { DescribedControl } from '~/lib/spacetype/controlDescriptor'
 import { describeControls, validatePatch } from '~/lib/spacetype/controlDescriptor'
 import type { StudioTake } from '~/lib/agent/takes'
 import type { TakePromise } from '~/lib/vibePrompt'
+import { parseTakeReview, type TakeReviewEntry } from '~/lib/vibeReview'
 
 /** What a multi-take ask came back with. Exactly one of `takes` (two or more
  *  survived validation) or `patch` is useful — `patch` is set when the server
@@ -29,6 +30,11 @@ export interface VibeTakesReply {
   patch?: Record<string, ParamValue>
   rationale?: string
 }
+
+/** Client-side cap on the review. Chosen so a slow review is dropped long
+ *  before a person would wonder whether the strip is stuck — the takes are
+ *  already on screen and usable throughout. */
+export const TAKE_REVIEW_TIMEOUT_MS = 15_000
 
 export function useVibeControl() {
   const { getLocalSetting } = useLocalSettings()
@@ -109,5 +115,35 @@ export function useVibeControl() {
     return { described, takes: [], patch: validatePatch(raw, described), rationale: res?.rationale ?? '' }
   }
 
-  return { requestPatch, requestTakes }
+  /**
+   * The see-first loop: hand the model the pictures its own takes produced and
+   * let it keep, fix or replace each one.
+   *
+   * Fails CLOSED into "no review happened" — the caller gets `null` for any
+   * problem at all, including the timeout, because the only outcome this pass is
+   * allowed to have is a better strip or the strip the user would have had
+   * anyway. It never throws.
+   */
+  async function requestTakeReview(
+    controls: DescribedControl[],
+    phrase: string,
+    takes: { label: string, changes: { key: string, value: ParamValue }[], thumbnail: string }[],
+    current: string,
+    timeoutMs = TAKE_REVIEW_TIMEOUT_MS,
+  ): Promise<TakeReviewEntry[] | null> {
+    if (!takes.length || !current) return null
+    const apiKey = getLocalSetting('Sailor.AI.AnthropicApiKey')
+    try {
+      const res = await $fetch<{ reviews?: unknown }>('/api/vibe-review', {
+        method: 'POST',
+        body: { apiKey: apiKey || undefined, controls, phrase, takes, current },
+        timeout: timeoutMs,
+      })
+      return parseTakeReview(res, takes.length)
+    } catch {
+      return null
+    }
+  }
+
+  return { requestPatch, requestTakes, requestTakeReview }
 }

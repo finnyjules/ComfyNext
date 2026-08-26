@@ -152,3 +152,58 @@ sunset with no diagnosis at all.
 A second model call to re-ask for a take that failed its own promise; promises on
 the single-tune path; anything the checkers cannot measure from a still (motion,
 texture "feel", typography).
+
+---
+
+## Addition (2026-08-26): the see-first loop — the model looks at its own takes
+
+*Approved by Julien.*
+
+### In simple terms
+
+Until now our pixel checkers were an after-the-fact court: they measured what the
+model produced and labelled what was wrong, but the model never saw its own work.
+Now, once the four thumbnails exist, we show them BACK to the model — four
+pictures with their labels, plus the design the user already had — and ask it, of
+each one: looking at this, would a person say it is what was asked for? It may
+keep a take, fix it (corrected values from the same vocabulary), or replace it
+outright. Only then does the user see the strip settle.
+
+The architecture change is the point: **the checkers stop being the judge and
+become the model's feedback signal.** They still run afterwards as a backstop, so
+nothing that used to be caught stops being caught.
+
+### Scope
+
+11. **A sibling route, not a mode.** `/api/vibe-review` — separate from
+    `/api/vibe` deliberately: vibe's request body is pinned byte-identical by a
+    back-compat characterization test and its source is scanned for the exact
+    model id, so folding a vision branch with image payloads into it would put
+    two request shapes and two schemas behind one pinned contract. The review's
+    failure modes must also never touch the ask path.
+12. **Input**: the phrase, the offered vocabulary (post-macro where a take
+    swapped the base), each take's `{label, changes, thumbnail}` and the "yours"
+    thumbnail for reference. Thumbnails as base64 JPEG at tile resolution, a few
+    KB each. Model: `claude-haiku-4-5`, patch tier, no `effort` (Haiku errors on
+    it).
+13. **Output**, per take: `{verdict: 'keep' | 'fix' | 'replace', changes?, label?,
+    reason?}`. Wire-legal schema (no count keywords), and salvaged not refused: a
+    malformed entry becomes `keep`, so a bad review can only ever leave the
+    original take alone.
+14. **One round, never recursive.** A fix or a replacement goes through the SAME
+    finalize path as an original take — macro first, post-swap validation,
+    dropped-key accounting — its thumbnail is re-rendered, and only then do the
+    existing promise check and duplicate separation run as backstop.
+15. **Never worse, never slower to first paint.** The strip appears exactly as it
+    does today; the review fires after the thumbnails land, behind a quiet
+    per-strip "reviewing…" hint. No key, any error, or a timeout skips silently
+    to today's behaviour with one console line. Every await re-checks that the
+    strip is still current — if the user picked, kept or dismissed mid-review,
+    what they saw is what they get.
+16. **Metered and logged** like the other Anthropic assist routes, with the
+    verdicts (and reasons) on the pick-log events plus one strip-level summary.
+
+### Out of scope
+
+A second review round; reviewing the single-tune path; letting a review add takes
+beyond the four.

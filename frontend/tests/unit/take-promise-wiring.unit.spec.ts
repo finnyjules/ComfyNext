@@ -20,7 +20,10 @@ vi.mock('ofetch', () => ({ $fetch: (...args: unknown[]) => fetchMock(...args) })
 ;(globalThis as any).useLocalSettings = () => ({ getLocalSetting: () => 'test-key' })
 
 const SIZE = 32
-type Fake = { __buf: Uint8ClampedArray | null }
+/** A fake thumbnail. `toDataURL` is real enough for the see-first review, which
+ *  only needs SOME image bytes per tile — the pixels it carries are the ones the
+ *  checkers read out of `__buf`. */
+type Fake = { __buf: Uint8ClampedArray | null, toDataURL?: (type?: string, q?: number) => string }
 
 /** angle 90 ⇒ top-to-bottom ramp, angle 0 ⇒ side-to-side, in the promised hue. */
 const PALETTE: Record<string, [number, number, number]> = {
@@ -29,6 +32,7 @@ const PALETTE: Record<string, [number, number, number]> = {
 }
 function picture(angle: number, hue: string, fail = false): Fake {
   if (fail) return { __buf: null }
+  const tag = `${angle}:${hue}`
   const [r, g, b] = PALETTE[hue] ?? PALETTE.orange!
   const buf = new Uint8ClampedArray(SIZE * SIZE * 4)
   const vertical = Math.abs(((angle % 180) + 180) % 180 - 90) < 45
@@ -42,7 +46,7 @@ function picture(angle: number, hue: string, fail = false): Fake {
       buf[i + 3] = 255
     }
   }
-  return { __buf: buf }
+  return { __buf: buf, toDataURL: () => `data:image/jpeg;base64,${btoa(tag)}` }
 }
 
 let renderFails = false
@@ -105,6 +109,12 @@ function makeAgent(opts: { repairable?: boolean } = {}) {
 }
 
 const flush = async (n = 24) => { for (let i = 0; i < n; i++) await new Promise(r => setTimeout(r, 0)) }
+/** Calls that ASKED for takes — the see-first review is a separate route and a
+ *  deliberate second call, so "no second model call" means no second ASK. */
+const askCalls = () => fetchMock.mock.calls.filter((c: any) => {
+  const u = String(c[0])
+  return u.includes('/api/vibe') && !u.includes('/api/vibe-review')
+})
 
 /** What the fake renderer will DRAW for a take — the picture, not the config. */
 function pictureKey(t: { changes: { key: string, value: unknown }[] }): string {
@@ -172,7 +182,7 @@ describe('a direction the picture broke', () => {
     const t = agent.takes.value[0]!
     expect(t.changes.find(c => c.key === 'angle')!.value).toBe(90) // repaired
     expect(t.label).toBe('first')
-    expect(fetchMock.mock.calls).toHaveLength(1) // never a second model call
+    expect(askCalls()).toHaveLength(1) // the repair is local — never a second ask
   })
 
   it('the repair is applied to the studio when the take is previewed', async () => {
@@ -353,7 +363,7 @@ describe('four takes that are not four pictures', () => {
     const plain = agent.takes.value.filter((t: any) => !t.label.includes(SIMILAR_SUFFIX.trim()))
     const pictures = plain.map((t: any) => pictureKey(t))
     expect(new Set(pictures).size).toBe(pictures.length)
-    expect(fetchMock.mock.calls).toHaveLength(1) // never a second model call
+    expect(askCalls()).toHaveLength(1) // separation is local — never a second ask
   })
 
   it('leaves four genuinely different takes completely alone', async () => {
@@ -780,5 +790,248 @@ describe('a base swap starts clean', () => {
     // …so it concedes honestly instead.
     expect((agent.takes.value as any[]).some(t => t.label.includes(SIMILAR_SUFFIX.trim()))).toBe(true)
     warn.mockRestore()
+  })
+})
+
+
+// ── the see-first loop ──────────────────────────────────────────────────────
+//
+// The model is shown its own four pictures and may keep, fix or replace each
+// one. These drive the REAL orchestration with the review route stubbed at the
+// same fetch seam the ask uses — so the finalize path, the re-render, the
+// backstops and the superseded guards are all shipped code.
+
+/** Answer /api/vibe-review with these verdicts; everything else passes through. */
+function reviewReply(reviews: unknown[], takesReply?: unknown) {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (String(url).includes('/api/vibe-review')) return { reviews }
+    return takesReply ?? reply(undefined, [{ key: 'angle', value: 0 }])
+  })
+}
+
+describe('the model looks at its own takes', () => {
+  it('keeps a strip the review is happy with, exactly as it was', async () => {
+    reviewReply([{ verdict: 'keep', reason: 'reads right' }, { verdict: 'keep' }])
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    const before = agent.takes.value.map((t: any) => JSON.stringify(t.changes))
+    await flush()
+
+    expect(agent.takes.value.map((t: any) => JSON.stringify(t.changes))).toEqual(before)
+    expect(labels(agent)).toEqual(['first', 'second'])
+  })
+
+  it('applies a FIX in place, and re-renders the tile it changed', async () => {
+    reviewReply([{ verdict: 'fix', changes: [{ key: 'angle', value: 90 }], label: 'upright', reason: 'it was sideways' }, { verdict: 'keep' }])
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    await flush()
+
+    const fixed = agent.takes.value[0]!
+    expect(fixed.changes.find((c: any) => c.key === 'angle')!.value).toBe(90)
+    expect(fixed.label).toBe('upright')
+    // The tile is the NEW picture, not the one the model complained about.
+    expect(agent.takeThumbs.value.get(fixed)).toBeTruthy()
+  })
+
+  it('a REPLACE drops the promise, because it is a different reading', async () => {
+    reviewReply([
+      { verdict: 'replace', changes: [{ key: 'angle', value: 90 }], label: 'other idea' },
+      { verdict: 'keep' },
+    ], { takes: [
+      { label: 'first', changes: [{ key: 'angle', value: 0 }], rationale: 'r', promise: { direction: 'horizontal' } },
+      { label: 'second', changes: [{ key: 'hue', value: 'blue' }], rationale: 's' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('a wash')
+    await flush()
+
+    const replaced = agent.takes.value[0]!
+    expect(replaced.label).toBe('other idea')
+    expect(replaced.promise).toBeUndefined()
+  })
+
+  it('a fix keeps the take\u2019s promise — same intent, corrected values', async () => {
+    reviewReply([
+      { verdict: 'fix', changes: [{ key: 'angle', value: 90 }] },
+      { verdict: 'keep' },
+    ], { takes: [
+      { label: 'first', changes: [{ key: 'angle', value: 0 }], rationale: 'r', promise: { direction: 'vertical' } },
+      { label: 'second', changes: [{ key: 'hue', value: 'blue' }], rationale: 's' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    await flush()
+    expect(agent.takes.value[0]!.promise).toEqual({ direction: 'vertical' })
+  })
+
+  it('a fix goes through the SAME finalize path — unofferable keys are counted', async () => {
+    reviewReply([
+      { verdict: 'fix', changes: [{ key: 'angle', value: 90 }, { key: 'notAKey', value: 3 }] },
+      { verdict: 'keep' },
+    ])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    await flush()
+
+    const fixed = agent.takes.value[0]!
+    expect(fixed.changes.map((c: any) => c.key)).not.toContain('notAKey')
+    expect(agent.takeDropped.value.get(fixed)).toContain('notAKey')
+    warn.mockRestore()
+  })
+
+  it('records the verdict on the pick log, reason and all', async () => {
+    reviewReply([{ verdict: 'keep', reason: 'reads right' }, { verdict: 'keep' }])
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    await flush()
+
+    agent.selectTake(agent.takes.value[0])
+    expect(readTakeLog().at(-1)!.reviewVerdict).toMatchObject({ verdict: 'keep', reason: 'reads right' })
+  })
+
+  it('flies a quiet flag while it is out, and lowers it after', async () => {
+    reviewReply([{ verdict: 'keep' }, { verdict: 'keep' }])
+    const { agent } = makeAgent()
+    expect(agent.reviewingTakes.value).toBe(false)
+    await agent.ask('a vertical wash')
+    await flush()
+    expect(agent.reviewingTakes.value).toBe(false)
+  })
+
+  it('never reviews a parametric spread — that is our maths, not the model\u2019s', async () => {
+    reviewReply([{ verdict: 'keep' }, { verdict: 'keep' }], { takes: [
+      { label: 'one', changes: [{ key: 'angle', value: 90 }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'angle', value: 30 }], rationale: 'b' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('a wash')
+    await flush()
+    const before = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes('vibe-review')).length
+
+    agent.selectTake(agent.takes.value[0])
+    agent.variationsOfTake(agent.takes.value[0])
+    await flush()
+
+    const after = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes('vibe-review')).length
+    expect(after).toBe(before)
+  })
+})
+
+describe('the review can never make things worse', () => {
+  it('a failed review leaves the strip exactly as it was, with one quiet line', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-review')) throw new Error('timeout')
+      return reply(undefined, [{ key: 'angle', value: 0 }])
+    })
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    const before = agent.takes.value.map((t: any) => JSON.stringify(t.changes))
+    await flush()
+
+    expect(agent.takes.value.map((t: any) => JSON.stringify(t.changes))).toEqual(before)
+    expect(agent.reviewingTakes.value).toBe(false)
+    expect(info.mock.calls.flat().map(String).join(' ')).toMatch(/review skipped/)
+    info.mockRestore()
+  })
+
+  it('a nonsense review is a no-op, not a corruption', async () => {
+    reviewReply(['nope', { verdict: 'fix' }])
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    const before = agent.takes.value.map((t: any) => JSON.stringify(t.changes))
+    await flush()
+    expect(agent.takes.value.map((t: any) => JSON.stringify(t.changes))).toEqual(before)
+  })
+
+  it('never runs a second round on its own output', async () => {
+    reviewReply([{ verdict: 'fix', changes: [{ key: 'angle', value: 90 }] }, { verdict: 'keep' }])
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    await flush()
+    const reviews = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes('vibe-review'))
+    expect(reviews).toHaveLength(1)
+  })
+
+  it('a strip the user dismissed mid-review is never rewritten behind them', async () => {
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-review')) {
+        await held
+        return { reviews: [{ verdict: 'fix', changes: [{ key: 'angle', value: 90 }] }, { verdict: 'keep' }] }
+      }
+      return reply(undefined, [{ key: 'angle', value: 0 }])
+    })
+    const { agent } = makeAgent()
+    await agent.ask('a vertical wash')
+    await flush(6)
+
+    agent.dismissTakes()          // the user moved on…
+    release()                     // …and only then does the review land
+    await flush()
+
+    expect(agent.hasTakes.value).toBe(false)
+    expect(agent.takes.value).toEqual([])
+  })
+
+  it('a review that lands after a NEW ask never rewrites the new strip', async () => {
+    // Honest about what this proves: that a stale review never reaches the new
+    // strip — not WHICH of the several guards stopped it. Three stand in its
+    // way (the draw loop's own supersede check, the post-fetch one, and the
+    // emptied vocabulary a reset leaves behind), and no fixture I could build
+    // isolates the middle one. It stays because it is the only one that is
+    // ABOUT this race; the other two stop it by side effect.
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    let reviews = 0
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-review')) {
+        // Only the FIRST review is held, and only it carries the stale label —
+        // the second ask's own review is content with what it sees.
+        if (++reviews === 1) {
+          await held
+          return { reviews: [{ verdict: 'fix', changes: [{ key: 'angle', value: 90 }], label: 'STALE' }, { verdict: 'keep' }] }
+        }
+        return { reviews: [{ verdict: 'keep' }, { verdict: 'keep' }] }
+      }
+      return reply(undefined, [{ key: 'angle', value: 0 }])
+    })
+    const { agent } = makeAgent()
+    await agent.ask('first ask')
+    await flush(6)
+
+    await agent.ask('second ask')   // a whole new strip…
+    await flush(6)
+    release()                        // …and only now does the FIRST review land
+    await flush()
+
+    expect(labels(agent).some((l: string) => l.includes('STALE'))).toBe(false)
+  })
+
+  it('what the user KEPT mid-review is what they saw', async () => {
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-review')) {
+        await held
+        return { reviews: [{ verdict: 'fix', changes: [{ key: 'angle', value: 90 }] }, { verdict: 'keep' }] }
+      }
+      return reply(undefined, [{ key: 'angle', value: 0 }])
+    })
+    const { agent, config } = makeAgent()
+    await agent.ask('a vertical wash')
+    await flush(6)
+
+    agent.selectTake(agent.takes.value[0])
+    agent.keepTake()
+    release()
+    await flush()
+
+    // The take they looked at had angle 0. The review's correction must not
+    // reach into a design they already committed.
+    expect(config.angle).toBe(0)
   })
 })
