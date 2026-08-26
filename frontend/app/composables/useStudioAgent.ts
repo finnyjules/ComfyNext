@@ -33,7 +33,7 @@ import { describeControls, validatePatch, type DescribedControl } from '~/lib/sp
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import {
-  PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN,
+  PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN, withSuffix,
   chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
   type StudioTake,
 } from '~/lib/agent/takes'
@@ -83,6 +83,12 @@ export interface StudioTakeSource {
   /** Replace the whole base config. Required when `macro` is set — a macro
    *  cannot be expressed through the leaf-writing Params proxy. */
   setConfig?: (config: unknown) => void
+  /** Studio-owned view state a macro swap is allowed to disturb — Gradient's
+   *  selected layer, which `setConfig` must clamp when a preset arrives with
+   *  fewer layers. Captured when the strip opens and put back with the config,
+   *  so one hover cannot permanently move the user's selection. */
+  captureView?: () => unknown
+  restoreView?: (view: unknown) => void
   macro?: StudioTakeMacro
 }
 
@@ -189,6 +195,29 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   /** A deep copy of the base config as the strip opened — the only way back from
    *  a macro swap. Null for a studio with no macro. */
   let takeOriginalConfig: unknown = null
+  /** The studio's own view state at that same moment (Gradient's active layer). */
+  let takeOriginalView: unknown = null
+  /**
+   * One materialized base config per macro VALUE, for the life of the strip.
+   *
+   * `buildGradientPreset` re-seeds itself on every call — noise seed, flow angle,
+   * light azimuth. Calling it once per consumer would mean the tile you looked
+   * at, the preview you hovered, and the config you kept were three different
+   * gradients, and a second hover would visibly re-roll. So a macro value is
+   * built ONCE and every consumer works from a copy of that instance.
+   */
+  const macroConfigs = new Map<string, unknown>()
+
+  /** The one materialization of `value`, or null if the studio rejects it. */
+  function materializeMacro(value: string): unknown | null {
+    const src = opts.takes
+    const macro = src?.macro
+    if (!macro || !src) return null
+    if (macroConfigs.has(value)) return macroConfigs.get(value)!
+    const built = macro.apply(value, src.config())
+    if (built) macroConfigs.set(value, built)
+    return built ?? null
+  }
   let takeRound = 0
   /** Set only while the strip is showing a parametric SPREAD (not model takes):
    *  the take it spread around, its thumbnail, and the seed — everything the
@@ -228,7 +257,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     let macroChange: { key: string, value: ParamValue } | null = null
     const macroValue = macro ? raw[macro.key] : undefined
     if (macro && src && typeof macroValue === 'string') {
-      const swapped = macro.apply(macroValue, src.config())
+      const swapped = materializeMacro(macroValue)
       if (swapped) {
         macroChange = { key: macro.key, value: macroValue }
         // Re-describe against the SWAPPED config: a preset can change how many
@@ -251,7 +280,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     // More than half the ask lost? Say so on the tile, the same way `(subtle)`
     // does — silent dropping is what let a sunset rationale sit over a rainbow.
     const asked = Object.keys(raw).length
-    const label = dropped.length * 2 > asked ? `${rawTake.label}${PARTIAL_SUFFIX}` : rawTake.label
+    const label = dropped.length * 2 > asked ? withSuffix(rawTake.label, PARTIAL_SUFFIX) : rawTake.label
     return { take: { label, changes, rationale: rawTake.rationale }, dropped }
   }
 
@@ -279,10 +308,11 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
    *  no second view to hand back. */
   function swapLiveBase(value: string): Params | null {
     const src = opts.takes
-    const macro = src?.macro
-    if (!macro || !src?.setConfig) return null
-    const swapped = macro.apply(value, src.config())
-    if (swapped) src.setConfig(swapped)
+    if (!src?.setConfig) return null
+    const swapped = materializeMacro(value)
+    // A COPY: the materialization is the shared source of truth for this macro
+    // value, and the live config is about to be edited by the take's overrides.
+    if (swapped) src.setConfig(cloneConfig(swapped))
     return null
   }
 
@@ -301,6 +331,15 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     const src = opts.takes
     if (src?.macro && src.setConfig && takeOriginalConfig !== null) {
       src.setConfig(cloneConfig(takeOriginalConfig))
+      // The view goes back BEFORE anything else reads it — `setConfig` clamps a
+      // selection that a fewer-layer preset made invalid, and leaving it clamped
+      // means one hover permanently moved the user's selected layer.
+      if (src.restoreView) src.restoreView(takeOriginalView)
+      // …and then STOP. The whole config is already back. Replaying the captured
+      // keys on top would re-resolve every `layer.` path against whatever index
+      // is current now — writing one layer's values into another, which the deep
+      // watcher then saves. A hover must not be able to corrupt a document.
+      return
     }
     if (!takeOriginal) return
     for (const k of Object.keys(takeOriginal)) opts.params[k] = takeOriginal[k] as ParamValue
@@ -315,6 +354,8 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeBase.value = {}
     takeOriginal = null
     takeOriginalConfig = null
+    takeOriginalView = null
+    macroConfigs.clear()
     takeDropped.value = new Map()
     spreadRef = null
   }
@@ -357,9 +398,11 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       // shipped.
       let snapshot = cloneConfig(baseSnapshot)
       applyTakeWith(t, src.paramsOf(snapshot), (value) => {
-        const swapped = src.macro?.apply(value, snapshot)
+        const swapped = materializeMacro(value)
         if (!swapped) return null
-        snapshot = swapped
+        // The same instance every consumer sees, copied so the overrides below
+        // cannot leak back into it.
+        snapshot = cloneConfig(swapped)
         return src.paramsOf(snapshot)
       })
       return adapter(snapshot, THUMB_SIZE)
@@ -442,7 +485,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       conceded.add(i)
       const t = current[i]!
       if (t.label.endsWith(SUBTLE_SUFFIX)) return
-      commitSlot(i, { ...t, label: `${t.label}${SUBTLE_SUFFIX}` }, takeThumbs.value.get(t) ?? null)
+      commitSlot(i, { ...t, label: withSuffix(t.label, SUBTLE_SUFFIX) }, takeThumbs.value.get(t) ?? null)
     }
 
     // ① each tile against the take it spread around
@@ -524,6 +567,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     )
     takeOriginal = {}
     takeOriginalConfig = opts.takes?.macro ? cloneConfig(opts.takes.config()) : null
+    takeOriginalView = opts.takes?.captureView?.() ?? null
     takeCurrentThumb.value = null
     takeDropped.value = finalized.dropped
     spreadRef = null
@@ -715,9 +759,21 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
           // macro cannot ride the proposal list (it is not a setParam), so it is
           // dropped here and counted like any other unapplicable key.
           const only = finalized.takes[0]
-          const leaves = (only?.changes ?? []).filter(c => c.key !== opts.takes?.macro?.key)
+          const macroKey = opts.takes?.macro?.key
+          const leaves = (only?.changes ?? []).filter(c => c.key !== macroKey)
+          // A proposal list is setParam-only, so a lone take's whole-look macro
+          // cannot ride it. That is a dropped key like any other and is counted
+          // like one — dropping it quietly, under a rationale describing the
+          // look it would have produced, IS the defect this seam exists to fix.
+          const lostMacro = !!macroKey && leaves.length !== (only?.changes.length ?? 0)
+          if (lostMacro) {
+            console.warn(`[takes] only one usable take came back, so the whole-look change was dropped: ${macroKey}`)
+          }
           const patch = reply.patch ?? Object.fromEntries(leaves.map(c => [c.key, c.value]))
-          showProposal(patch, reply.rationale ?? only?.rationale ?? '', p)
+          showProposal(patch, lostMacro ? '' : (reply.rationale ?? only?.rationale ?? ''), p)
+          if (lostMacro) {
+            notice.value = 'Only part of that could be applied: the overall style change needs the four-takes view, so just the adjustments were kept.'
+          }
           return
         }
       }

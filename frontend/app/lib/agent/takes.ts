@@ -326,6 +326,22 @@ export const SUBTLE_SUFFIX = ' (subtle)'
  *  intent nothing carried out. */
 export const PARTIAL_SUFFIX = ' (partial)'
 
+/** The strip's tile-label budget (`caption` above targets the same number). */
+export const MAX_LABEL_CHARS = 24
+
+/**
+ * `label + suffix`, trimming the LABEL rather than the suffix.
+ *
+ * The suffix is the honest part — `(partial)` / `(subtle)` is the whole reason
+ * the tile is labelled at all — so a long angle name must not push it off the
+ * end and leave a tile that looks like an ordinary alternative.
+ */
+export function withSuffix(label: string, suffix: string, max = MAX_LABEL_CHARS): string {
+  if (label.length + suffix.length <= max) return `${label}${suffix}`
+  const room = Math.max(1, max - suffix.length - 1)
+  return `${label.slice(0, room).trimEnd()}…${suffix}`
+}
+
 /** A thumbnail as the strip accepts it. Only a canvas can be compared — an
  *  adapter that hands back a data URL is simply not measured (no decode, no
  *  async), and the caller treats an unmeasurable pair as "can't tell". */

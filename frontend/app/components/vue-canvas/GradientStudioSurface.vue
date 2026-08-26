@@ -117,7 +117,15 @@ const gradientAgent = useStudioAgent({
   takes: {
     studio: 'gradient',
     config: () => config.value,
-    paramsOf: c => makeConfigParams(() => c, () => activeLayer.value),
+    // Clamped against the config it is GIVEN, not the live one: a preset base can
+    // have fewer layers than the stack on screen, and an unclamped `layer.` path
+    // on the thumbnail clone resolves to a layer that does not exist — so the
+    // tile's recolours are silently dropped and it shows a bare preset while the
+    // live preview shows the recoloured one.
+    paramsOf: c => makeConfigParams(
+      () => c,
+      () => Math.max(0, Math.min(activeLayer.value, ((c as GradientConfig)?.layers?.length ?? 1) - 1)),
+    ),
     controls: () => gradientAgentControls(config.value, { includePreset: true }),
     guidance: () => GRADIENT_GUIDANCE,
     setConfig: (c) => {
@@ -125,11 +133,16 @@ const gradientAgent = useStudioAgent({
       // A preset's base may have fewer layers than the one on screen.
       activeLayer.value = Math.min(activeLayer.value, config.value.layers.length - 1)
     },
+    // …and the clamp is undone with the config: without this, one hover of a
+    // one-layer preset permanently moves the user's selection to layer 0.
+    captureView: () => activeLayer.value,
+    restoreView: (v) => { activeLayer.value = Math.min(Number(v) || 0, config.value.layers.length - 1) },
     macro: {
       key: 'preset',
       apply: name => buildGradientPreset(name),
       // A preset can change how many colour stops exist, so the take's remaining
-      // colour changes are validated against the SWAPPED config's list.
+      // colour changes are validated against the SWAPPED config's list — and
+      // against the layer that list will actually be written through.
       recontrol: c => gradientAgentControls(c as GradientConfig, { includePreset: true }),
     },
   },

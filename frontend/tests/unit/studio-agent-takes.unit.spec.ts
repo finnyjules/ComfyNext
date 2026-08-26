@@ -552,6 +552,186 @@ describe('useStudioAgent — a take may swap the whole base look', () => {
   })
 })
 
+// ── the LAYERED toy ────────────────────────────────────────────────────────
+//
+// The flat toy above let two real bugs through, so this one has the two
+// properties the real studio has and the flat one lacked: LAYERS addressed
+// through the live `layer.` prefix at a user-chosen index, and a `setConfig`
+// that CLAMPS that index the way the surface must when a preset arrives with
+// fewer layers. `nonce` stands in for `buildGradientPreset`'s re-seeding —
+// every call returns a materially different config.
+let presetNonce = 0
+const presetCalls: string[] = []
+const LAYERED_PRESETS: Record<string, () => any> = {
+  // ONE layer, THREE stops — fewer layers AND more stops than the user's.
+  sunset: () => ({ base: 'sunset', nonce: ++presetNonce, layers: [
+    { color: { stops: [{ color: '#ff8a3d' }, { color: '#d94f9c' }, { color: '#4b2a7a' }] } },
+  ] }),
+  duo: () => ({ base: 'duo', nonce: ++presetNonce, layers: [
+    { color: { stops: [{ color: '#000000' }, { color: '#ffffff' }] } },
+    { color: { stops: [{ color: '#111111' }, { color: '#eeeeee' }] } },
+  ] }),
+}
+
+function makeLayeredAgent() {
+  const state = {
+    config: { base: 'user', nonce: 0, layers: [
+      { color: { stops: [{ color: '#0a0a0a' }, { color: '#0b0b0b' }] } },
+      { color: { stops: [{ color: '#1a1a1a' }, { color: '#1b1b1b' }] } },
+      { color: { stops: [{ color: '#2a2a2a' }, { color: '#2b2b2b' }] } },
+    ] } as any,
+    activeLayer: 2,
+  }
+  /** Configs handed to `paramsOf` — the thumbnail clones, observable. */
+  const clones: any[] = []
+  const clampIn = (cfg: any) => Math.max(0, Math.min(state.activeLayer, (cfg?.layers?.length ?? 1) - 1))
+  const controlsFor = (cfg: any, layerIdx: number): ControlSpec[] => [
+    { key: 'preset', label: 'Style preset', kind: 'select', options: Object.keys(LAYERED_PRESETS), default: 'user' } as ControlSpec,
+    ...((cfg?.layers?.[layerIdx]?.color?.stops ?? []).map((_: unknown, i: number) => (
+      { key: `layer.color.stops.${i}.color`, label: `Colour ${i + 1}`, kind: 'color', default: '#ffffff' } as ControlSpec
+    ))),
+  ]
+  const agent = useStudioAgent({
+    controls: () => controlsFor(state.config, state.activeLayer).filter(c => c.key !== 'preset'),
+    params: makeConfigParams(() => state.config, () => state.activeLayer),
+    label: () => 'Layered toy',
+    takes: {
+      studio: 'gradient',
+      config: () => state.config,
+      paramsOf: (c: any) => { clones.push(c); return makeConfigParams(() => c, () => clampIn(c)) },
+      controls: () => controlsFor(state.config, state.activeLayer),
+      setConfig: (c: any) => {
+        state.config = c
+        state.activeLayer = Math.min(state.activeLayer, state.config.layers.length - 1)
+      },
+      captureView: () => state.activeLayer,
+      restoreView: (v: unknown) => { state.activeLayer = Number(v) },
+      macro: {
+        key: 'preset',
+        apply: (name: string) => { presetCalls.push(name); return LAYERED_PRESETS[name]?.() ?? null },
+        recontrol: (c: any) => controlsFor(c, clampIn(c)),
+      },
+    },
+  } as any)
+  return { agent, state, clones }
+}
+
+const LAYERED_TAKES = [
+  { label: 'sunset', changes: [
+    { key: 'preset', value: 'sunset' },
+    { key: 'layer.color.stops.0.color', value: '#00ff00' },
+    // Stop 2 exists only AFTER the swap — the user's layers have two stops, the
+    // sunset preset has three. It is what makes the post-swap re-describe
+    // necessary, and what makes a per-key replay on restore actively harmful:
+    // the key has no prior value, so replaying it fabricates a third stop.
+    { key: 'layer.color.stops.2.color', value: '#4b2a7a' },
+  ], rationale: 'warm orange through magenta to deep purple' },
+  { label: 'duo', changes: [{ key: 'preset', value: 'duo' }], rationale: 'two-tone' },
+]
+
+describe('useStudioAgent — a macro swap must leave nothing behind', () => {
+  it('restoring a fewer-layer preset does not write the old layer into a new one', async () => {
+    // The whole-config restore is COMPLETE. Replaying the captured keys on top
+    // of it re-resolves `layer.` against the CLAMPED index, so layer 2's colours
+    // land in layer 0 — and the studio's deep watcher then persists them. A
+    // hover must not be able to corrupt a saved document.
+    fetchMock.mockResolvedValue({ takes: LAYERED_TAKES })
+    const { agent, state } = makeLayeredAgent()
+    await agent.ask('a dreamy sunset')
+    const before = JSON.stringify(state.config)
+
+    agent.previewTake(agent.takes.value[0])
+    agent.previewTake(null)
+
+    expect(state.config.layers[0].color.stops[0].color).toBe('#0a0a0a')
+    // No fabricated stop, on any layer: the take reached a third stop that only
+    // the preset had, and replaying that key would grow one here.
+    for (const l of state.config.layers) expect(l.color.stops).toHaveLength(2)
+    expect(JSON.stringify(state.config)).toBe(before)
+  })
+
+  it('puts the selected layer back too', async () => {
+    fetchMock.mockResolvedValue({ takes: LAYERED_TAKES })
+    const { agent, state } = makeLayeredAgent()
+    await agent.ask('a dreamy sunset')
+    expect(state.activeLayer).toBe(2)
+
+    agent.previewTake(agent.takes.value[0]) // one layer — the surface clamps to 0
+    expect(state.activeLayer).toBe(0)
+    agent.previewTake(null)
+    expect(state.activeLayer).toBe(2)
+
+    agent.selectTake(agent.takes.value[0])
+    agent.dismissTakes()
+    expect(state.activeLayer).toBe(2)
+  })
+
+  it('materializes a preset ONCE — tile, hover and commit are the same config', async () => {
+    // `buildGradientPreset` re-rolls its seed on every call, so calling it per
+    // consumer means the tile you picked is not the config you keep, and a
+    // second hover visibly re-rolls.
+    fetchMock.mockResolvedValue({ takes: LAYERED_TAKES })
+    presetCalls.length = 0
+    const { agent, state } = makeLayeredAgent()
+    await agent.ask('a dreamy sunset')
+
+    agent.previewTake(agent.takes.value[0])
+    const firstHover = state.config.nonce
+    agent.previewTake(null)
+    agent.previewTake(agent.takes.value[0])
+    const secondHover = state.config.nonce
+    agent.previewTake(null)
+    agent.selectTake(agent.takes.value[0])
+    agent.keepTake()
+    const kept = state.config.nonce
+
+    expect(secondHover).toBe(firstHover)
+    expect(kept).toBe(firstHover)
+    expect(presetCalls.filter(n => n === 'sunset')).toHaveLength(1)
+  })
+
+  it('draws the tile from the SAME materialization, with its recolour applied', async () => {
+    // The thumbnail clone resolves `layer.` against its own layer count; with a
+    // one-layer preset and the user on layer 2 the recolour used to resolve to
+    // a layer that does not exist and be dropped, so the tile showed a bare
+    // preset while the live preview showed the recolour.
+    fetchMock.mockResolvedValue({ takes: LAYERED_TAKES })
+    const { agent, clones } = makeLayeredAgent()
+    await agent.ask('a dreamy sunset')
+    // The thumbnail stream awaits once per tile; drain it properly.
+    for (let i = 0; i < 12; i++) await settle()
+
+    const drawn = clones.filter(c => c?.base === 'sunset')
+    expect(drawn.length).toBeGreaterThan(0)
+    // '#00ff00' appears nowhere in the preset itself — only a correctly
+    // resolved write can put it there.
+    expect(drawn.some(c => c.layers[0].color.stops[0].color === '#00ff00')).toBe(true)
+  })
+
+  it('the sole-take degrade accounts for the macro it cannot carry', async () => {
+    // A proposal list is setParam-only, so a lone take's preset is dropped —
+    // which is the ORIGINAL bug if it happens silently under a rationale that
+    // describes the vanished look.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ takes: [
+      LAYERED_TAKES[0],
+      { label: 'junk', changes: [{ key: 'nope', value: 1 }], rationale: '' },
+    ] })
+    const { agent } = makeLayeredAgent()
+    await agent.ask('a dreamy sunset')
+
+    expect(agent.hasTakes.value).toBe(false)
+    expect(agent.hasProposal.value).toBe(true)
+    expect(String(warn.mock.calls.flat().join(' '))).toContain('preset')
+    // The rationale described the preset. It must not survive the preset.
+    for (const ch of agent.changes.value) {
+      expect(ch.rationale).not.toContain('warm orange')
+    }
+    expect(agent.notice.value).toMatch(/part|whole|style/i)
+    warn.mockRestore()
+  })
+})
+
 describe('useStudioAgent — dropped keys are visible', () => {
   it('records them, warns once, and logs them with the decision', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -585,6 +765,24 @@ describe('useStudioAgent — dropped keys are visible', () => {
 
     expect(agent.takes.value[0]!.label).toBe('ambitious (partial)')
     expect(agent.takes.value[1]!.label).toBe('modest')
+    warn.mockRestore()
+  })
+
+  it('keeps the "(partial)" suffix on a long label instead of ellipsizing it off', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'an extremely long angle name', changes: [
+        { key: 'hue', value: 40 }, { key: 'nope', value: 1 }, { key: 'alsoNope', value: 2 },
+      ], rationale: '' },
+      { label: 'modest', changes: [{ key: 'softness', value: 0.8 }], rationale: '' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('warmer')
+
+    const label = agent.takes.value[0]!.label
+    expect(label.endsWith('(partial)')).toBe(true)
+    expect(label.length).toBeLessThanOrEqual(24)
+    expect(label).toContain('an extre')
     warn.mockRestore()
   })
 
