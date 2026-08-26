@@ -478,20 +478,26 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     if (takes.value !== list) return
     let current = takes.value
     const tried = new Set<number>()
+    /** Slots that tried and failed. Kept as a SET rather than read off the label,
+     *  because a take that already carried a louder suffix keeps it (see the
+     *  concede branch) and so cannot be recognised by its badge. */
+    const conceded = new Set<number>()
 
     const sigOf = (i: number) => thumbSignature(takeThumbs.value.get(current[i]!))
-    /** The smallest measurable distance from slot `i` to any other tile. */
-    const loneliness = (i: number, sig: Uint8ClampedArray | null): number | null => {
+    /** The nearest other tile to slot `i`, and how far away it is. */
+    const nearest = (i: number, sig: Uint8ClampedArray | null): { j: number, d: number } | null => {
       if (!sig) return null
-      let best: number | null = null
+      let best: { j: number, d: number } | null = null
       for (let j = 0; j < current.length; j++) {
         if (j === i) continue
         const d = pixelDistance(sig, sigOf(j))
         if (d === null) continue
-        best = best === null ? d : Math.min(best, d)
+        if (!best || d < best.d) best = { j, d }
       }
       return best
     }
+    const loneliness = (i: number, sig: Uint8ClampedArray | null): number | null =>
+      nearest(i, sig)?.d ?? null
 
     for (let guard = 0; guard < current.length * 2; guard++) {
       // The most crowded slot that has not had its attempt yet.
@@ -503,10 +509,14 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         // surviving fragments that easily converge with its neighbour's. Skipping
         // every labelled take is what let two "(partial)" twins render as one
         // picture with nothing said.
-        if (tried.has(i) || current[i]!.label.includes(SIMILAR_SUFFIX.trim())) continue
-        const d = loneliness(i, sigOf(i))
-        if (d === null || d >= TAKE_DISTINCT_MIN) continue
-        if (!worst || d < worst.d) worst = { i, d }
+        if (tried.has(i) || conceded.has(i) || current[i]!.label.includes(SIMILAR_SUFFIX.trim())) continue
+        const near = nearest(i, sigOf(i))
+        if (!near || near.d >= TAKE_DISTINCT_MIN) continue
+        // If the tile it resembles has ALREADY conceded, the resemblance is
+        // recorded. Two "(similar)" badges say the same thing twice and blame
+        // both members for something only one of them has to fix.
+        if (conceded.has(near.j) || current[near.j]!.label.includes(SIMILAR_SUFFIX.trim())) continue
+        if (!worst || near.d < worst.d) worst = { i, d: near.d }
       }
       if (!worst) break
       const i = worst.i
@@ -574,8 +584,16 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       if (!kept) kept = await offerDifferentBase(i, take, draw, (next) => { current = next })
 
       if (!kept) {
+        conceded.add(i)
         console.warn(`[takes] "${take.label}" renders too close to another take (${worst.d.toFixed(1)} apart) and could not be separated`)
-        replaceTake(i, { ...take, label: withSuffix(take.label, SIMILAR_SUFFIX) }, takeThumbs.value.get(take) ?? null, (next) => { current = next })
+        // Only badge a tile that has nothing to say yet. `withSuffix` TRIMS the
+        // label to make room, so stamping a second suffix does not append — it
+        // replaces, and "(partial)" (this take lost half its ask) is a louder
+        // admission than "(similar)". The warning above still records the
+        // finding either way; what is protected here is the tile's one badge.
+        if (!hasHonestySuffix(take.label)) {
+          replaceTake(i, { ...take, label: withSuffix(take.label, SIMILAR_SUFFIX) }, takeThumbs.value.get(take) ?? null, (next) => { current = next })
+        }
       }
     }
   }
@@ -632,13 +650,23 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
         const d = pixelDistance(sig, thumbSignature(takeThumbs.value.get(other)))
         if (d !== null && d < TAKE_DISTINCT_MIN) lonely = false
       })
+      // "yours" is a tile in this strip too. A spare preset that renders like the
+      // design already on screen has separated nothing the user can see.
+      const vsYours = pixelDistance(sig, thumbSignature(takeCurrentThumb.value))
+      if (vsYours !== null && vsYours < TAKE_DISTINCT_MIN) lonely = false
       if (!lonely) continue
       console.info(`[takes] "${take.label}" matched another take, so a different base is offered instead: ${name}`)
       replaceTake(i, candidate, thumb, onList)
-      // A fresh take carries none of the old one's baggage.
+      // A fresh take carries none of the old one's baggage — neither the keys it
+      // could not apply nor, crucially, its promise findings: those were
+      // measured on a picture that is no longer on this tile, and logging them
+      // against the new one would put fabricated evidence into the taste stream.
       const nextDropped = new Map(takeDropped.value)
       nextDropped.delete(candidate)
       takeDropped.value = nextDropped
+      const nextResults = new Map(takePromiseResults.value)
+      nextResults.delete(candidate)
+      takePromiseResults.value = nextResults
       return true
     }
     return false

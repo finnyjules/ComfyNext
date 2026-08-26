@@ -662,3 +662,123 @@ describe('a duplicate that is ALREADY labelled is still a duplicate', () => {
     expect(conceded.length).toBeLessThanOrEqual(1)
   })
 })
+
+
+/** A NON-macro toy whose picture no offered slider can move: the only slider is
+ *  `tint`, which the renderer ignores. Nothing can separate two of these. */
+function makeStuckAgent() {
+  const config = { angle: 0, hue: 'orange', tint: 0 } as Record<string, unknown>
+  const controls: ControlSpec[] = [
+    { key: 'tint', label: 'Tint', kind: 'slider', min: 0, max: 100, step: 1, default: 0 } as ControlSpec,
+  ]
+  const agent = useStudioAgent({
+    controls: () => controls,
+    params: makeConfigParams(() => config),
+    label: () => 'Stuck toy',
+    takes: {
+      studio: 'gradient',
+      config: () => config,
+      paramsOf: (c: unknown) => makeConfigParams(() => c),
+      controls: () => controls,
+    },
+  } as any)
+  return { agent, config }
+}
+
+describe('conceding a duplicate never erases what the tile already admitted', () => {
+  const gutted = () => ({ takes: [
+    { label: 'warm pastel dusk', changes: [{ key: 'tint', value: 10 }, { key: 'nope', value: 1 }, { key: 'alsoNope', value: 2 }], rationale: 'a' },
+    { label: 'moody soft dusk', changes: [{ key: 'tint', value: 40 }, { key: 'thirdNope', value: 3 }, { key: 'fourthNope', value: 4 }], rationale: 'b' },
+  ] })
+
+  it('keeps "(partial)" rather than overwriting it with "(similar)"', async () => {
+    // `withSuffix` trims the label to make room, so stamping a second suffix
+    // does not append — it REPLACES, and the louder admission is the one lost.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { agent } = makeStuckAgent()
+    await agent.ask('two dusks')
+    await flush()
+
+    for (const t of agent.takes.value as any[]) {
+      expect(t.label, t.label).toContain(PARTIAL_SUFFIX.trim())
+      expect(t.label, t.label).not.toContain(SIMILAR_SUFFIX.trim())
+    }
+    // The warning still fires — the finding is not lost, only the second badge.
+    expect(warn.mock.calls.flat().map(String).join(' ')).toMatch(/too close/)
+    warn.mockRestore()
+  })
+
+  it('concedes only ONE tile of an unseparable pair, not both', async () => {
+    // Two "(similar)" badges say the same thing twice and blame both members
+    // for a resemblance that only takes one to fix.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'one', changes: [{ key: 'tint', value: 10 }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'tint', value: 40 }], rationale: 'b' },
+    ] })
+    const { agent } = makeStuckAgent()
+    await agent.ask('two the same')
+    await flush()
+
+    const conceded = (agent.takes.value as any[]).filter(t => t.label.includes(SIMILAR_SUFFIX.trim()))
+    expect(conceded).toHaveLength(1)
+    warn.mockRestore()
+  })
+
+  it('the gutted fixture really is unseparable (the test would lie otherwise)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue(gutted())
+    const { agent } = makeStuckAgent()
+    await agent.ask('two dusks')
+    await flush()
+    expect(warn.mock.calls.flat().map(String).join(' ')).toMatch(/could not be separated/)
+    warn.mockRestore()
+  })
+
+  beforeEach(() => { fetchMock.mockResolvedValue(gutted()) })
+})
+
+describe('a base swap starts clean', () => {
+  it('carries none of the replaced take\u2019s promise findings', async () => {
+    // Those were measured on a picture that is no longer on the tile. Logging
+    // them against the new one puts fabricated evidence into the taste stream.
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'warm pastel dusk', changes: [{ key: 'preset', value: 'sunset' }], rationale: 'a',
+        promise: { colors: ['blue'] } },
+      { label: 'moody soft dusk', changes: [{ key: 'preset', value: 'sunset' }, { key: 'tint', value: 40 }], rationale: 'b' },
+    ] })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { agent } = makeBaseSwapAgent()
+    await agent.ask('two dusks')
+    await flush()
+
+    const swapped = (agent.takes.value as any[]).find(t => t.changes.some((c: any) => c.value === 'ink'))
+    if (swapped) {
+      expect(agent.takePromiseResults.value.get(swapped)).toBeUndefined()
+      agent.selectTake(swapped)
+      expect(readTakeLog().at(-1)!.promiseResults).toBeUndefined()
+    }
+    warn.mockRestore()
+  })
+
+  it('never offers a base that just duplicates the CURRENT design', async () => {
+    // "yours" is a tile in this strip too. The toy's own config renders exactly
+    // like its `sunset` preset, so with both takes on `ink` the only spare base
+    // available is one the user is already looking at — offering it would
+    // separate nothing anybody can see.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'one', changes: [{ key: 'preset', value: 'ink' }], rationale: 'a' },
+      { label: 'two', changes: [{ key: 'preset', value: 'ink' }, { key: 'tint', value: 40 }], rationale: 'b' },
+    ] })
+    const { agent } = makeBaseSwapAgent()
+    await agent.ask('two inks')
+    await flush()
+
+    const presets = (agent.takes.value as any[]).map(t => t.changes.find((c: any) => c.key === 'preset')?.value)
+    expect(presets).not.toContain('sunset')
+    // …so it concedes honestly instead.
+    expect((agent.takes.value as any[]).some(t => t.label.includes(SIMILAR_SUFFIX.trim()))).toBe(true)
+    warn.mockRestore()
+  })
+})
