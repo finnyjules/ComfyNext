@@ -10,9 +10,20 @@ import type { StudioTake } from '~/lib/agent/takes'
  *  a second call. */
 export interface VibeTakesReply {
   /** The controls as they were described to the model — the caller needs these
-   *  for the local neighbour spread, so it is handed them rather than
-   *  re-deriving them (and risking a different list). */
+   *  for validation and for the local neighbour spread, so it is handed them
+   *  rather than re-deriving them (and risking a different list). */
   described: DescribedControl[]
+  /**
+   * The takes EXACTLY as the model sent them — unvalidated, unclamped, unknown
+   * keys included.
+   *
+   * Deliberately raw: a studio with a MACRO control (Gradient's `preset`) swaps
+   * its whole base config, which changes which keys even exist — so validating
+   * here, against the pre-swap vocabulary, would drop the new base's keys before
+   * anyone could re-describe. Clamping is `useStudioAgent`'s job, after the
+   * macro; it is also what counts how many keys a take lost, which used to
+   * happen silently.
+   */
   takes: StudioTake[]
   patch?: Record<string, ParamValue>
   rationale?: string
@@ -78,18 +89,14 @@ export function useVibeControl() {
     })
 
     if (Array.isArray(res?.takes)) {
-      const takes: StudioTake[] = []
-      for (const t of res.takes) {
-        const raw: Record<string, ParamValue> = {}
-        for (const c of t.changes ?? []) raw[c.key] = c.value
-        const valid = validatePatch(raw, described)
-        const changes = Object.entries(valid).map(([key, value]) => ({ key, value }))
-        // A take that survives with nothing to change IS the current config;
-        // showing it as an alternative would be a lie.
-        if (!changes.length) continue
-        takes.push({ label: t.label, changes, rationale: t.rationale ?? '' })
+      return {
+        described,
+        takes: res.takes.map(t => ({
+          label: t.label,
+          changes: (t.changes ?? []).map(c => ({ key: c.key, value: c.value })),
+          rationale: t.rationale ?? '',
+        })),
       }
-      return { described, takes }
     }
 
     const raw: Record<string, ParamValue> = {}

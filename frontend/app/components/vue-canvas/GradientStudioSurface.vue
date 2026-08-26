@@ -31,7 +31,8 @@ import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
 import { makeConfigParams } from '~/lib/agent/configParams'
-import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agentControls'
+import { GRADIENT_GUIDANCE, gradientAgentControls, gradientGuidance } from '~/lib/gradientfx/agentControls'
+import { buildGradientPreset } from '~/lib/gradientfx/presets'
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
@@ -100,11 +101,38 @@ const activeAgentControls = computed(() => gradientAgentControls(config.value))
 const gradientAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: agentParams, label: () => 'Gradient studio',
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
-  guidance: () => GRADIENT_GUIDANCE,
+  // Preset-LESS guidance, matching the preset-less vocabulary above. The two must
+  // move together: guidance teaching PRESET-FIRST against a list with no `preset`
+  // made the model answer with a key validatePatch silently dropped, leaving a
+  // rationale that described a look nothing applied.
+  guidance: () => gradientGuidance(),
   render: () => renderGradientForReview(),
-  // Four Takes: which thumbnail adapter draws a take, and how to read a COPY of
-  // this config as Params so a tile can be drawn without touching the live one.
-  takes: { studio: 'gradient', config: () => config.value, paramsOf: c => makeConfigParams(() => c, () => activeLayer.value) },
+  // ── Four Takes ────────────────────────────────────────────────────────────
+  // The takes ask gets a WIDER vocabulary than the single tune: the `preset`
+  // macro, the only control that can change the base look at all. Safe here and
+  // not there — a take is previewed non-destructively and committed only by an
+  // explicit Keep, whereas a single tune applies the moment it lands, and a
+  // whole-config swap arriving unbidden is the silent-wipe hazard the shader
+  // macro already taught us about.
+  takes: {
+    studio: 'gradient',
+    config: () => config.value,
+    paramsOf: c => makeConfigParams(() => c, () => activeLayer.value),
+    controls: () => gradientAgentControls(config.value, { includePreset: true }),
+    guidance: () => GRADIENT_GUIDANCE,
+    setConfig: (c) => {
+      config.value = ensureConfigDefaults(cloneConfig(c as GradientConfig))
+      // A preset's base may have fewer layers than the one on screen.
+      activeLayer.value = Math.min(activeLayer.value, config.value.layers.length - 1)
+    },
+    macro: {
+      key: 'preset',
+      apply: name => buildGradientPreset(name),
+      // A preset can change how many colour stops exist, so the take's remaining
+      // colour changes are validated against the SWAPPED config's list.
+      recontrol: c => gradientAgentControls(c as GradientConfig, { includePreset: true }),
+    },
+  },
 })
 
 // Collections variable binding (Slice 2a, Task 6) — Gradient is the first inline-

@@ -33,7 +33,7 @@ import { describeControls, validatePatch, type DescribedControl } from '~/lib/sp
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import {
-  RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN,
+  PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN,
   chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
   type StudioTake,
 } from '~/lib/agent/takes'
@@ -45,6 +45,26 @@ import { takeThumbFor, type TakeThumb } from '~/lib/agent/takeThumbs'
 const TAKE_COUNT = 4
 const THUMB_SIZE = 160
 
+/**
+ * A control that swaps the studio's WHOLE base config rather than nudging one
+ * value — Gradient's `preset`. Generic on purpose: Shader's `effect` is the same
+ * shape (and the same hazard) and can ride this hook when its takes land.
+ *
+ * Two halves, both required, mirroring `studioTune`'s macro-ordering contract:
+ * the macro applies FIRST, and the take's remaining changes are then validated
+ * against the SWAPPED config's vocabulary — a preset can change how many colour
+ * stops exist, so a stop-colour written against the old list would be dropped
+ * (or, worse, land on a stop that means something else).
+ */
+export interface StudioTakeMacro {
+  /** The control key that carries the swap (Gradient: `preset`). */
+  key: string
+  /** Build the base config for a macro value, or null for an unknown one. */
+  apply: (value: string, config: unknown) => unknown | null
+  /** The vocabulary of a config AFTER the swap. */
+  recontrol: (config: unknown) => ControlSpec[]
+}
+
 /** What a studio must tell us to draw take thumbnails: which adapter to use, its
  *  config root, and how to view a COPY of that config as Params. The copy is why
  *  `paramsOf` exists — a thumbnail must never be drawn by mutating the config the
@@ -53,6 +73,17 @@ export interface StudioTakeSource {
   studio: string
   config: () => unknown
   paramsOf: (config: unknown) => Params
+  /** Vocabulary for the TAKES ask. Defaults to the tune vocabulary — Gradient
+   *  overrides it to add the `preset` macro, which the single-tune path
+   *  deliberately still withholds. */
+  controls?: () => ControlSpec[]
+  /** Guidance for the TAKES ask. MUST match whatever `controls` offers: guidance
+   *  naming a key the list lacks is the failure this whole seam exists to stop. */
+  guidance?: () => string
+  /** Replace the whole base config. Required when `macro` is set — a macro
+   *  cannot be expressed through the leaf-writing Params proxy. */
+  setConfig?: (config: unknown) => void
+  macro?: StudioTakeMacro
 }
 
 /** A cheap deep copy. Every studio config this runs against is the same JSON blob
@@ -107,6 +138,15 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
 
   function clearOriginal() { for (const k of Object.keys(original)) delete original[k] }
 
+  /** The vocabulary and guidance the TAKES ask uses. A studio may widen both —
+   *  Gradient adds the `preset` macro here and nowhere else, because a take is
+   *  previewed non-destructively and only committed on an explicit Keep, whereas
+   *  the single-tune path would apply a whole-config swap the instant it landed.
+   *  They move together on purpose: guidance that names a key its own list lacks
+   *  is the exact failure this pair exists to prevent. */
+  function takeControls(): ControlSpec[] { return opts.takes?.controls?.() ?? opts.controls() }
+  function takeGuidance(): string | undefined { return opts.takes?.guidance?.() ?? opts.guidance?.() }
+
   /** Re-apply the accepted patches live onto the reactive params (rejected keys
    *  fall back to their original value). The studio re-renders from params. */
   function recompute() {
@@ -146,12 +186,19 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
    *  writes these back verbatim, `undefined` included, so a key the config never
    *  had does not survive a preview. */
   let takeOriginal: Record<string, ParamValue> | null = null
+  /** A deep copy of the base config as the strip opened — the only way back from
+   *  a macro swap. Null for a studio with no macro. */
+  let takeOriginalConfig: unknown = null
   let takeRound = 0
   /** Set only while the strip is showing a parametric SPREAD (not model takes):
    *  the take it spread around, its thumbnail, and the seed — everything the
    *  render-aware re-spread below needs. Cleared for a model round, which has
    *  nothing to be "too close to". */
   let spreadRef: { take: StudioTake, thumb: TakeThumb, seed: string } | null = null
+
+  /** Keys a take asked for that nothing could apply — per take, for the log and
+   *  for the `(partial)` caption. */
+  const takeDropped = shallowRef<Map<StudioTake, string[]>>(new Map())
 
   const hasTakes = computed(() => takes.value.length > 0)
   /** "≈ variations of this" is honest only when the pick actually moved a dial:
@@ -163,11 +210,98 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     return chooseSpreadKeys(takeDescribed.value, takeBase.value, t).length > 0
   })
 
-  function applyTake(t: StudioTake) {
-    for (const ch of t.changes) opts.params[ch.key] = ch.value
+  /**
+   * Turn ONE raw model take into the take the rest of the system handles:
+   * macro first (it decides which keys even exist), everything else validated
+   * against the resulting vocabulary, and an honest count of what was lost.
+   *
+   * Returns null for a take with nothing applicable left — that take IS the
+   * current config, and showing it as an alternative would be a lie.
+   */
+  function finalizeTake(rawTake: StudioTake, described: DescribedControl[]): { take: StudioTake, dropped: string[] } | null {
+    const src = opts.takes
+    const macro = src?.macro
+    const raw: Record<string, ParamValue> = {}
+    for (const ch of rawTake.changes) raw[ch.key] = ch.value
+
+    let vocabulary = described
+    let macroChange: { key: string, value: ParamValue } | null = null
+    const macroValue = macro ? raw[macro.key] : undefined
+    if (macro && src && typeof macroValue === 'string') {
+      const swapped = macro.apply(macroValue, src.config())
+      if (swapped) {
+        macroChange = { key: macro.key, value: macroValue }
+        // Re-describe against the SWAPPED config: a preset can change how many
+        // colour stops exist, and a stop colour validated against the old list
+        // would be dropped or land on a stop that now means something else.
+        vocabulary = describeControls(macro.recontrol(swapped), src.paramsOf(swapped))
+      }
+    }
+
+    const rest: Record<string, ParamValue> = {}
+    for (const [k, v] of Object.entries(raw)) { if (k !== macro?.key) rest[k] = v }
+    const valid = validatePatch(rest, vocabulary)
+    const changes = Object.entries(valid).map(([key, value]) => ({ key, value }))
+    const dropped = Object.keys(rest).filter(k => !(k in valid))
+    // A macro value the studio did not recognise is a dropped key like any other.
+    if (macro && macroValue !== undefined && !macroChange) dropped.push(macro.key)
+    if (macroChange) changes.unshift(macroChange) // macro FIRST — every consumer applies in order
+    if (!changes.length) return null
+
+    // More than half the ask lost? Say so on the tile, the same way `(subtle)`
+    // does — silent dropping is what let a sunset rationale sit over a rainbow.
+    const asked = Object.keys(raw).length
+    const label = dropped.length * 2 > asked ? `${rawTake.label}${PARTIAL_SUFFIX}` : rawTake.label
+    return { take: { label, changes, rationale: rawTake.rationale }, dropped }
   }
 
+  /**
+   * The ONE place a take's changes become writes. The macro (if any) is at the
+   * head of `changes`, so a single ordered pass gives the required
+   * macro-then-overrides sequence; `swapBase` is handed the macro VALUE and
+   * returns the Params view of whatever base it installed.
+   */
+  function applyTakeWith(t: StudioTake, params: Params, swapBase: (value: string) => Params | null): void {
+    const macro = opts.takes?.macro
+    let write = params
+    for (const ch of t.changes) {
+      if (macro && ch.key === macro.key) {
+        const next = swapBase(String(ch.value))
+        if (next) write = next
+        continue
+      }
+      write[ch.key] = ch.value
+    }
+  }
+
+  /** Install a macro's base config on the LIVE studio. Returns null because the
+   *  live Params proxy reads through to whatever `setConfig` installed — there is
+   *  no second view to hand back. */
+  function swapLiveBase(value: string): Params | null {
+    const src = opts.takes
+    const macro = src?.macro
+    if (!macro || !src?.setConfig) return null
+    const swapped = macro.apply(value, src.config())
+    if (swapped) src.setConfig(swapped)
+    return null
+  }
+
+  /** Apply a take to the LIVE studio. */
+  function applyTake(t: StudioTake) {
+    applyTakeWith(t, opts.params, swapLiveBase)
+  }
+
+  /**
+   * Undo whatever a preview applied. Two mechanisms, because a macro cannot be
+   * undone key-by-key: it replaced the whole base config, so the whole base
+   * config is what has to come back. A studio without a macro keeps the
+   * (cheaper, byte-exact) per-key restore it always had.
+   */
   function restoreTakeOriginal() {
+    const src = opts.takes
+    if (src?.macro && src.setConfig && takeOriginalConfig !== null) {
+      src.setConfig(cloneConfig(takeOriginalConfig))
+    }
     if (!takeOriginal) return
     for (const k of Object.keys(takeOriginal)) opts.params[k] = takeOriginal[k] as ParamValue
   }
@@ -180,6 +314,8 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeDescribed.value = []
     takeBase.value = {}
     takeOriginal = null
+    takeOriginalConfig = null
+    takeDropped.value = new Map()
     spreadRef = null
   }
 
@@ -199,6 +335,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       action,
       ...(visualDiff === null ? {} : { visualDiff: Number(visualDiff.toFixed(2)) }),
       ...(fromPick === null ? {} : { visualDiffFromPick: Number(fromPick.toFixed(2)) }),
+      ...(t && takeDropped.value.get(t)?.length ? { droppedKeys: takeDropped.value.get(t)! } : {}),
     })
   }
 
@@ -214,9 +351,17 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     const adapter = takeThumbFor(src.studio)
     const baseSnapshot = cloneConfig(src.config())
     const draw = async (t: StudioTake) => {
-      const snapshot = cloneConfig(baseSnapshot)
-      const p = src.paramsOf(snapshot)
-      for (const ch of t.changes) p[ch.key] = ch.value
+      // A macro take is drawn from the config the macro produces, not from a
+      // copy of the user's — otherwise a preset tile shows the old base look
+      // with a couple of colours moved, which is precisely the lie that was
+      // shipped.
+      let snapshot = cloneConfig(baseSnapshot)
+      applyTakeWith(t, src.paramsOf(snapshot), (value) => {
+        const swapped = src.macro?.apply(value, snapshot)
+        if (!swapped) return null
+        snapshot = swapped
+        return src.paramsOf(snapshot)
+      })
       return adapter(snapshot, THUMB_SIZE)
     }
     if (!takeCurrentThumb.value) {
@@ -351,15 +496,38 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     void renderTakeThumbs(list)
   }
 
-  function openTakes(reply: VibeTakesReply) {
+  /** Validate a whole reply into showable takes, recording what each one lost. */
+  function finalizeTakes(reply: VibeTakesReply): { takes: StudioTake[], dropped: Map<StudioTake, string[]> } {
+    const out: StudioTake[] = []
+    const dropped = new Map<StudioTake, string[]>()
+    for (const raw of reply.takes) {
+      const done = finalizeTake(raw, reply.described)
+      if (!done) continue
+      out.push(done.take)
+      if (done.dropped.length) dropped.set(done.take, done.dropped)
+    }
+    const lost = [...dropped.values()].flat()
+    if (lost.length) {
+      // Third time this class has bitten. It is no longer allowed to be silent.
+      console.warn(
+        `[takes] ${lost.length} requested key(s) could not be applied and were dropped:`,
+        [...new Set(lost)].join(', '),
+      )
+    }
+    return { takes: out, dropped }
+  }
+
+  function openTakes(reply: VibeTakesReply, finalized: { takes: StudioTake[], dropped: Map<StudioTake, string[]> }) {
     takeDescribed.value = reply.described
     takeBase.value = Object.fromEntries(
       reply.described.map(d => [d.path, (opts.params[d.path] ?? d.current) as ParamValue]),
     )
     takeOriginal = {}
+    takeOriginalConfig = opts.takes?.macro ? cloneConfig(opts.takes.config()) : null
     takeCurrentThumb.value = null
+    takeDropped.value = finalized.dropped
     spreadRef = null
-    setTakes(reply.takes)
+    setTakes(finalized.takes)
   }
 
   /** Hover: show `t`, or fall back to whatever is SELECTED (a selection is live,
@@ -390,8 +558,17 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     if (!t) return
     restoreTakeOriginal()
     clearOriginal()
+    const macro = opts.takes?.macro
+    // The macro half has no older equivalent to route through — swapping the
+    // base config IS its apply path, and it must land before the overrides so
+    // they are measured against the config they will live in.
+    if (macro) {
+      const swap = t.changes.find(c => c.key === macro.key)
+      if (swap) swapLiveBase(String(swap.value))
+    }
     const built: ProposedChange[] = []
     for (const ch of t.changes) {
+      if (macro && ch.key === macro.key) continue
       if (ch.value === opts.params[ch.key]) continue // skip no-ops, same as ask()
       original[ch.key] = opts.params[ch.key] as ParamValue
       built.push(changeFor(ch.key, ch.value, t.rationale))
@@ -446,8 +623,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     try {
       const avoid = takes.value.map(t => t.label).join(', ')
       const phrase = `${lastPhrase.value} — give ${TAKE_COUNT} DIFFERENT directions${avoid ? `, none of them a restatement of: ${avoid}` : ''}. (round ${++takeRound})`
-      const reply = await requestTakes(opts.controls(), opts.params, opts.label(), phrase, opts.guidance?.(), TAKE_COUNT)
-      if (reply.takes.length >= 2) openTakes(reply)
+      const reply = await requestTakes(takeControls(), opts.params, opts.label(), phrase, takeGuidance(), TAKE_COUNT)
+      const finalized = finalizeTakes(reply)
+      if (finalized.takes.length >= 2) openTakes(reply, finalized)
       else notice.value = 'No different directions came back — try rewording it.'
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
@@ -523,18 +701,22 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       if (opts.takes) {
         let reply: VibeTakesReply | null = null
         try {
-          reply = await requestTakes(opts.controls(), opts.params, opts.label(), p, opts.guidance?.(), TAKE_COUNT)
+          reply = await requestTakes(takeControls(), opts.params, opts.label(), p, takeGuidance(), TAKE_COUNT)
         } catch (e) {
           // Only this server's own "I don't do takes" 400 is re-asked the
           // single-patch way; every other failure is the user's to see.
           if (!isVariantsUnsupported(e)) throw e
         }
-        if (reply && reply.takes.length >= 2) { openTakes(reply); return }
         if (reply) {
+          const finalized = finalizeTakes(reply)
+          if (finalized.takes.length >= 2) { openTakes(reply, finalized); return }
           // One usable take, or the old single-patch shape: either way the answer
-          // is already paid for — show it as today's proposal.
-          const only = reply.takes[0]
-          const patch = reply.patch ?? Object.fromEntries((only?.changes ?? []).map(c => [c.key, c.value]))
+          // is already paid for — show it as today's proposal. A lone take's
+          // macro cannot ride the proposal list (it is not a setParam), so it is
+          // dropped here and counted like any other unapplicable key.
+          const only = finalized.takes[0]
+          const leaves = (only?.changes ?? []).filter(c => c.key !== opts.takes?.macro?.key)
+          const patch = reply.patch ?? Object.fromEntries(leaves.map(c => [c.key, c.value]))
           showProposal(patch, reply.rationale ?? only?.rationale ?? '', p)
           return
         }
@@ -582,7 +764,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   return {
     busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert,
     // Four Takes
-    takes, takeThumbs, takeCurrentThumb, selectedTake, hasTakes, canVaryTake,
+    takes, takeThumbs, takeCurrentThumb, takeDropped, selectedTake, hasTakes, canVaryTake,
     previewTake, selectTake, keepTake, dismissTakes, abandonTakes, moreDirections, variationsOfTake,
   }
 }

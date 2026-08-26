@@ -202,3 +202,74 @@ describe('relief light is offered where it actually does something', () => {
     })
   }
 })
+
+// ── guidance ↔ vocabulary drift detector ────────────────────────────────────
+//
+// Third bite of this class, so it gets a detector rather than another fix.
+// Guidance that names a key its accompanying control list does NOT offer is
+// worse than silence: the model answers with that key, `validatePatch` drops it
+// without a word, and the rationale then describes an intent nothing applied.
+// That shipped — the in-studio path offered no `preset` while the guidance
+// taught PRESET-FIRST, so "a dreamy sunset-like gradient" returned a preset swap
+// that vanished and a rationale describing a sunset over an untouched rainbow.
+import { gradientGuidance, GRADIENT_GUIDANCE } from '../../app/lib/gradientfx/agentControls'
+
+/** Every dotted key a guidance string names, plus bare `"preset"` from its JSON
+ *  examples. `stops.0.` style indices are normalised so a guidance line about
+ *  stop 0 is checked against whichever stop keys the config actually has. */
+function keysNamedIn(text: string): string[] {
+  const dotted = Array.from(text.matchAll(/\b([a-z][a-zA-Z]*(?:\.[a-zA-Z0-9]+){1,4})\b/g)).map(m => m[1]!)
+  const bare = /"preset"\s*:/.test(text) ? ['preset'] : []
+  return [...new Set([...dotted, ...bare])]
+    .filter(k => !/^(e\.g|i\.e|0\.\d|\d)/.test(k))
+    .map(k => k.replace(/\.\d+\./g, '.N.'))
+}
+
+/** Every key the vocabulary can EVER offer, across layouts. The union, not one
+ *  config's list, because the guidance is deliberately layout-agnostic — it
+ *  teaches `flow.depth` knowing the knob appears only on liquid/mesh. What must
+ *  never happen is a key NO configuration of that vocabulary can reach, which is
+ *  exactly what `preset` was in the studio. Weaker than a per-config check, and
+ *  it is the class that actually bit. */
+function offeredBy(opts: { includePreset?: boolean } = {}): Set<string> {
+  const out = new Set<string>()
+  for (const layout of LAYOUTS_UNDER_TEST) {
+    for (const c of gradientAgentControls(cfgWithLayout(layout), opts)) {
+      out.add(c.key.replace(/\.\d+\./g, '.N.'))
+    }
+  }
+  return out
+}
+
+describe('guidance never names a key its own control list lacks', () => {
+  it('the preset-less assembly names no key the preset-less vocabulary omits', () => {
+    const offered = offeredBy()
+    const unknown = keysNamedIn(gradientGuidance()).filter(k => !offered.has(k))
+    expect(unknown).toEqual([])
+  })
+
+  it('…and specifically never mentions the preset macro it cannot use', () => {
+    const g = gradientGuidance()
+    expect(g).not.toContain('"preset"')
+    expect(g.toLowerCase()).not.toContain('preset')
+  })
+
+  it('the preset assembly names no key the preset vocabulary omits', () => {
+    const offered = offeredBy({ includePreset: true })
+    const unknown = keysNamedIn(GRADIENT_GUIDANCE).filter(k => !offered.has(k))
+    expect(unknown).toEqual([])
+  })
+
+  it('the detector bites: the preset text against the preset-less vocabulary', () => {
+    // The shipped defect, reproduced — the OLD guidance paired with the studio's
+    // OLD vocabulary. If this ever comes back empty the detector has gone blind.
+    const unknown = keysNamedIn(GRADIENT_GUIDANCE).filter(k => !offeredBy().has(k))
+    expect(unknown).toContain('preset')
+  })
+
+  it('the two assemblies really are different texts (the split is not cosmetic)', () => {
+    expect(gradientGuidance()).not.toBe(GRADIENT_GUIDANCE)
+    expect(GRADIENT_GUIDANCE).toContain('"preset":"marble"')
+    expect(gradientGuidance()).toContain('layer.color.stops.0.color')
+  })
+})

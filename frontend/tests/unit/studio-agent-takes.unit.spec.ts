@@ -385,6 +385,222 @@ describe('useStudioAgent — the pick log', () => {
   })
 })
 
+// ── the whole-look macro (Gradient's `preset`) ──────────────────────────────
+//
+// The shipped defect: the studio offered no macro, the guidance taught
+// PRESET-FIRST anyway, so the model answered `{"preset":"sunset", …}`,
+// validatePatch dropped the preset without a word, the leftover scalar nudges
+// landed on the old rainbow ramp, and the rationale described a sunset. Three
+// things had to change; these pin the composable's share of them.
+
+/** A toy studio with a base-look macro. Two "presets", each with a different
+ *  number of colour stops — the case that makes re-describing mandatory. */
+const PRESETS: Record<string, () => Record<string, unknown>> = {
+  sunset: () => ({ base: 'sunset', stops: [{ color: '#ff8a3d' }, { color: '#d94f9c' }, { color: '#4b2a7a' }] }),
+  duo: () => ({ base: 'duo', stops: [{ color: '#000000' }, { color: '#ffffff' }] }),
+}
+const stopControls = (cfg: any): ControlSpec[] =>
+  (cfg?.stops ?? []).map((_: unknown, i: number) => (
+    { key: `stops.${i}.color`, label: `Colour ${i + 1}`, kind: 'color', default: '#ffffff' } as ControlSpec
+  ))
+const macroControls = (cfg: any): ControlSpec[] => [
+  { key: 'preset', label: 'Style preset', kind: 'select', options: Object.keys(PRESETS), default: 'duo' } as ControlSpec,
+  { key: 'blur', label: 'Blur', kind: 'slider', min: 0, max: 100, step: 1, default: 0 } as ControlSpec,
+  ...stopControls(cfg),
+]
+
+function makeMacroAgent() {
+  const state = { config: { base: 'duo', blur: 0, stops: [{ color: '#111111' }, { color: '#222222' }] } as any }
+  const agent = useStudioAgent({
+    // The single-tune vocabulary deliberately has NO macro.
+    controls: () => stopControls(state.config),
+    params: makeConfigParams(() => state.config),
+    label: () => 'Toy studio',
+    guidance: () => 'tune-only guidance',
+    takes: {
+      studio: 'gradient',
+      config: () => state.config,
+      paramsOf: (c: unknown) => makeConfigParams(() => c),
+      controls: () => macroControls(state.config),
+      guidance: () => 'macro guidance',
+      setConfig: (c: unknown) => { state.config = c },
+      macro: {
+        key: 'preset',
+        apply: (name: string) => PRESETS[name]?.() ?? null,
+        recontrol: (c: unknown) => macroControls(c),
+      },
+    },
+  } as any)
+  return { agent, state }
+}
+
+describe('useStudioAgent — a take may swap the whole base look', () => {
+  it('asks with the WIDER vocabulary and its matching guidance', async () => {
+    fetchMock.mockResolvedValue({ takes: TAKES })
+    const { agent } = makeMacroAgent()
+    await agent.ask('a dreamy sunset')
+
+    const body = (fetchMock.mock.calls[0]![1] as any).body
+    expect(body.controls.map((c: any) => c.path)).toContain('preset')
+    expect(body.guidance).toBe('macro guidance')
+  })
+
+  it('the single-tune path still gets NEITHER — a swap must not arrive unbidden', async () => {
+    fetchMock.mockResolvedValue({ changes: [{ key: 'stops.0.color', value: '#abcdef' }], rationale: '' })
+    const { agent } = makeMacroAgent()
+    // Force the degrade so requestPatch (the single-tune fetch) is the one used.
+    await (agent as any).reroll?.(0)
+    fetchMock.mockReset()
+    fetchMock.mockResolvedValue({ changes: [], rationale: 'nope' })
+    const solo = useStudioAgent({
+      controls: () => stopControls({ stops: [{ color: '#111111' }] }),
+      params: makeConfigParams(() => ({} as any)),
+      label: () => 'Toy studio',
+      guidance: () => 'tune-only guidance',
+    } as any)
+    await solo.ask('warmer')
+    const body = (fetchMock.mock.calls[0]![1] as any).body
+    expect(body.controls.map((c: any) => c.path)).not.toContain('preset')
+    expect(body.guidance).toBe('tune-only guidance')
+    expect(body.variants).toBeUndefined()
+  })
+
+  it('applies the macro FIRST, then the take’s overrides on the new base', async () => {
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'sunset', changes: [{ key: 'preset', value: 'sunset' }, { key: 'blur', value: 40 }], rationale: '' },
+      { label: 'duo', changes: [{ key: 'blur', value: 10 }], rationale: '' },
+    ] })
+    const { agent, state } = makeMacroAgent()
+    await agent.ask('a dreamy sunset')
+
+    // The macro is at the head of the change list, so one ordered pass is enough.
+    expect(agent.takes.value[0]!.changes[0]).toEqual({ key: 'preset', value: 'sunset' })
+    agent.previewTake(agent.takes.value[0])
+    expect(state.config.base).toBe('sunset')
+    expect(state.config.blur).toBe(40)
+    expect(state.config.stops).toHaveLength(3)
+  })
+
+  it('validates the take’s other changes against the POST-swap stop list', async () => {
+    // `stops.2.color` does not exist on the two-stop config the ask was made
+    // from — only on the three-stop sunset the take swaps in. Validating before
+    // the swap is what dropped it, and dropping it is what left a sunset
+    // rationale sitting over the old ramp.
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'sunset', changes: [
+        { key: 'preset', value: 'sunset' },
+        { key: 'stops.2.color', value: '#4b2a7a' },
+        { key: 'stops.9.color', value: '#000000' }, // beyond even the new list
+      ], rationale: '' },
+      { label: 'duo', changes: [{ key: 'blur', value: 10 }], rationale: '' },
+    ] })
+    const { agent, state } = makeMacroAgent()
+    await agent.ask('a dreamy sunset')
+
+    const keys = agent.takes.value[0]!.changes.map(c => c.key)
+    expect(keys).toContain('stops.2.color')
+    expect(keys).not.toContain('stops.9.color')
+    agent.previewTake(agent.takes.value[0])
+    expect(state.config.stops[2].color).toBe('#4b2a7a')
+  })
+
+  it('restores the WHOLE base config on unhover — a swap cannot be undone key by key', async () => {
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'sunset', changes: [{ key: 'preset', value: 'sunset' }, { key: 'blur', value: 40 }], rationale: '' },
+      { label: 'duo', changes: [{ key: 'blur', value: 10 }], rationale: '' },
+    ] })
+    const { agent, state } = makeMacroAgent()
+    await agent.ask('a dreamy sunset')
+    const before = JSON.stringify(state.config)
+
+    agent.previewTake(agent.takes.value[0])
+    expect(JSON.stringify(state.config)).not.toBe(before)
+    agent.previewTake(null)
+    expect(JSON.stringify(state.config)).toBe(before)
+
+    agent.selectTake(agent.takes.value[0])
+    agent.dismissTakes()
+    expect(JSON.stringify(state.config)).toBe(before)
+  })
+
+  it('keeps a macro take: the new base survives the commit', async () => {
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'sunset', changes: [{ key: 'preset', value: 'sunset' }, { key: 'blur', value: 40 }], rationale: '' },
+      { label: 'duo', changes: [{ key: 'blur', value: 10 }], rationale: '' },
+    ] })
+    const { agent, state } = makeMacroAgent()
+    await agent.ask('a dreamy sunset')
+    agent.selectTake(agent.takes.value[0])
+    agent.keepTake()
+
+    expect(state.config.base).toBe('sunset')
+    expect(state.config.blur).toBe(40)
+    expect(agent.hasTakes.value).toBe(false)
+    expect(agent.hasProposal.value).toBe(false)
+  })
+
+  it('an unknown preset is a dropped key, not a silent no-op', async () => {
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'nope', changes: [{ key: 'preset', value: 'marble' }, { key: 'blur', value: 40 }], rationale: '' },
+      { label: 'duo', changes: [{ key: 'blur', value: 10 }], rationale: '' },
+    ] })
+    const { agent } = makeMacroAgent()
+    await agent.ask('marble')
+    const t = agent.takes.value[0]!
+    expect(t.changes.map(c => c.key)).toEqual(['blur'])
+    expect(agent.takeDropped.value.get(t)).toContain('preset')
+  })
+})
+
+describe('useStudioAgent — dropped keys are visible', () => {
+  it('records them, warns once, and logs them with the decision', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'warmer', changes: [{ key: 'hue', value: 40 }, { key: 'nope', value: 1 }], rationale: '' },
+      { label: 'softer', changes: [{ key: 'softness', value: 0.8 }], rationale: '' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('warmer')
+
+    const t = agent.takes.value[0]!
+    expect(agent.takeDropped.value.get(t)).toEqual(['nope'])
+    expect(warn).toHaveBeenCalled()
+    expect(String(warn.mock.calls[0]!.join(' '))).toContain('nope')
+
+    agent.selectTake(t)
+    expect(readTakeLog().at(-1)!.droppedKeys).toEqual(['nope'])
+    warn.mockRestore()
+  })
+
+  it('says "(partial)" on a take that lost more than half of what it asked for', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ takes: [
+      { label: 'ambitious', changes: [
+        { key: 'hue', value: 40 }, { key: 'nope', value: 1 }, { key: 'alsoNope', value: 2 },
+      ], rationale: '' },
+      { label: 'modest', changes: [{ key: 'softness', value: 0.8 }], rationale: '' },
+    ] })
+    const { agent } = makeAgent()
+    await agent.ask('warmer')
+
+    expect(agent.takes.value[0]!.label).toBe('ambitious (partial)')
+    expect(agent.takes.value[1]!.label).toBe('modest')
+    warn.mockRestore()
+  })
+
+  it('a take that applies cleanly is neither labelled nor logged as lossy', async () => {
+    fetchMock.mockResolvedValue({ takes: TAKES })
+    const { agent } = makeAgent()
+    await agent.ask('warmer')
+    for (const t of agent.takes.value) {
+      expect(t.label).not.toContain('(partial)')
+      expect(agent.takeDropped.value.get(t)).toBeUndefined()
+    }
+    agent.selectTake(agent.takes.value[0])
+    expect(readTakeLog().at(-1)!.droppedKeys).toBeUndefined()
+  })
+})
+
 describe('useStudioAgent — abandoning an open strip', () => {
   it('re-asking restores the original first, and records the rejection', async () => {
     // The trap: retyping while a take is previewing would otherwise make that

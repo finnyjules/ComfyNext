@@ -320,6 +320,12 @@ export const RESPREAD_AMPLIFY = 2
  *  Honest rather than hidden: the tile IS nearly the same picture. */
 export const SUBTLE_SUFFIX = ' (subtle)'
 
+/** Appended to a take that lost more than half of what it asked for — the model
+ *  named keys this studio cannot apply. Same honesty as SUBTLE_SUFFIX: the tile
+ *  admits it is only part of the idea, instead of a rationale describing an
+ *  intent nothing carried out. */
+export const PARTIAL_SUFFIX = ' (partial)'
+
 /** A thumbnail as the strip accepts it. Only a canvas can be compared — an
  *  adapter that hands back a data URL is simply not measured (no decode, no
  *  async), and the caller treats an unmeasurable pair as "can't tell". */
@@ -390,6 +396,9 @@ export interface TakeEvent {
    *  calibrate THUMB_DIFF_MIN; `visualDiff` (vs "yours") answers a different,
    *  also-useful question and neither substitutes for the other. */
   visualDiffFromPick?: number
+  /** Keys the take asked for that nothing could apply. Present only when
+   *  non-empty; the third time silent key-dropping cost a day, it became data. */
+  droppedKeys?: string[]
 }
 
 export const TAKE_LOG_KEY = 'sailor.takeLog.v1'
