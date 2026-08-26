@@ -14,6 +14,7 @@ import {
   RECIPES_SCHEMA,
   buildRecipesPrompt,
   materializeRecipe,
+  moodMenu,
   salvageRecipes,
   summarizeConfig,
 } from '~/lib/gradientfx/recipes'
@@ -109,8 +110,112 @@ describe('mood dials are OURS, and only touch keys the studio offers', () => {
   })
 
   it('is a small, human-sized menu', () => {
+    // Grew from 10 to 14 when the four material-texture dials landed
+    // (frosted/textured/deep/flat) — still a menu a person can read at a glance.
     expect(MOOD_NAMES.length).toBeGreaterThanOrEqual(6)
-    expect(MOOD_NAMES.length).toBeLessThanOrEqual(12)
+    expect(MOOD_NAMES.length).toBeLessThanOrEqual(16)
+  })
+})
+
+describe('the material-texture dials — frosted / textured / deep / flat', () => {
+  // The gap these close: the original ten dials never touched flow.foldScale or
+  // relief.relief, and gloss only went UP — so "frosted glass" landed on
+  // soft/airy/dreamy (depth DOWN, no texture) and had to be hand-tuned. These
+  // four let the model turn material texture the way it already turns colour.
+  const NEW = ['frosted', 'textured', 'deep', 'flat'] as const
+
+  // key → {min,max} for every slider the studio offers across the layouts these
+  // dials touch. Built from the schema itself, so a dial that named a dead or
+  // typo'd path — or set a value out of a key's range — fails HERE.
+  const rangeOf = (() => {
+    const map = new Map<string, { kind: string, min?: number, max?: number }>()
+    for (const layout of ['linear', 'radial', 'orbit', 'liquid', 'mesh', 'ramp'] as const) {
+      const cfg: any = defaultConfig('#p')
+      cfg.canvas.layout = layout
+      for (const c of gradientAgentControls(cfg, { includePreset: true })) {
+        map.set(c.key, { kind: (c as any).kind, min: (c as any).min, max: (c as any).max })
+      }
+    }
+    return map
+  })()
+
+  it('each new dial writes ONLY keys the schema has, every value in that key’s range', () => {
+    for (const mood of NEW) {
+      const dial = MOOD_DIALS[mood]!
+      expect(dial, mood).toBeTruthy()
+      for (const [key, value] of Object.entries(dial)) {
+        const spec = rangeOf.get(key)
+        expect(spec, `${mood}/${key} must be a real control key`).toBeTruthy()
+        if (typeof value === 'number') {
+          expect(value, `${mood}/${key} below min`).toBeGreaterThanOrEqual(spec!.min!)
+          expect(value, `${mood}/${key} above max`).toBeLessThanOrEqual(spec!.max!)
+        } else {
+          // a boolean only makes sense on a switch/toggle control
+          expect(['switch', 'toggle', 'boolean'], `${mood}/${key} kind`).toContain(spec!.kind)
+        }
+      }
+    }
+  })
+
+  // Materialize on a liquid base so foldScale/gloss/depth/shadows are all live,
+  // then read the direction back off the real config the recipe path produces.
+  const marble = (mood: string[]) =>
+    materializeRecipe(recipe({ base: 'marble', mood }), own(), cloneConfig, '#s')!
+  const base = marble([])
+
+  it('frosted / textured / deep RAISE fold scale; flat LOWERS it', () => {
+    for (const m of ['frosted', 'textured', 'deep']) {
+      expect(marble([m]).flow.foldScale, m).toBeGreaterThan(base.flow.foldScale)
+    }
+    expect(marble(['flat']).flow.foldScale).toBeLessThan(base.flow.foldScale)
+  })
+
+  it('frosted and textured set gloss LOW — matte frost, not wet glass', () => {
+    // The whole point of the owner’s call: gloss 14/8, NOT the authored
+    // frosted preset’s wet-glass 96.
+    for (const m of ['frosted', 'textured']) {
+      expect(marble([m]).flow.gloss, m).toBeLessThanOrEqual(20)
+    }
+  })
+
+  it('deep raises the depth + shadow + fold-scale triple together', () => {
+    const d = marble(['deep'])
+    expect(d.flow.depth).toBeGreaterThan(base.flow.depth)
+    expect(d.flow.shadows).toBeGreaterThan(base.flow.shadows)
+    expect(d.flow.foldScale).toBeGreaterThan(base.flow.foldScale)
+  })
+
+  it('flat lowers depth and fold scale and turns grain OFF', () => {
+    const f = marble(['flat'])
+    const deep = marble(['deep'])
+    expect(f.flow.foldScale).toBeLessThan(base.flow.foldScale)  // lowered vs the base
+    expect(f.flow.depth).toBeLessThan(deep.flow.depth)          // the shallow pole opposite deep
+    expect(f.flow.depth).toBeLessThanOrEqual(10)                // and low in absolute terms
+    expect(f.post.grain).toBe(false)
+  })
+
+  it('frosted actually lands relief + grain + a raised fold scale on the config', () => {
+    // The exact failure the redesign fixes: the frost turns without hand-tuning.
+    const f = marble(['frosted'])
+    expect(f.relief.relief).toBe(MOOD_DIALS.frosted!['relief.relief'])
+    expect(f.post.grain).toBe(true)
+    expect(f.flow.foldScale).toBe(MOOD_DIALS.frosted!['flow.foldScale'])
+    expect(f.flow.gloss).toBe(MOOD_DIALS.frosted!['flow.gloss'])
+  })
+
+  it('the menu offers all four, and salvage keeps a recipe naming them', () => {
+    const menu = moodMenu()
+    for (const m of NEW) expect(menu, m).toContain(m)
+    // MAX_MOODS is 3, so name them in pairs.
+    expect(salvageRecipes({ recipes: [recipe({ mood: ['frosted', 'deep'] })] })[0]!.mood)
+      .toEqual(['frosted', 'deep'])
+    expect(salvageRecipes({ recipes: [recipe({ mood: ['textured', 'flat'] })] })[0]!.mood)
+      .toEqual(['textured', 'flat'])
+  })
+
+  it('a non-dial word beside a new one is still dropped — the guard is intact', () => {
+    expect(salvageRecipes({ recipes: [recipe({ mood: ['frosted', 'zesty', 'flat'] })] })[0]!.mood)
+      .toEqual(['frosted', 'flat'])
   })
 })
 

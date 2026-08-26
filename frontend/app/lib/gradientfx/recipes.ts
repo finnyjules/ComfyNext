@@ -39,6 +39,15 @@ export const MOOD_DIALS: Record<string, MoodDial> = {
   glossy: { 'flow.gloss': 68, 'flow.highlights': 72 },
   grainy: { 'post.grain': true, 'post.grainAmount': 0.42 },
   airy: { 'focus.blur': 40, 'flow.depth': 10, 'flow.shadows': 20 },
+  // Material texture — the four the original ten could not reach. flow.foldScale
+  // and relief.relief were DEAD (no dial touched them) and gloss only went UP, so
+  // "frosted glass" had nowhere to land but soft/airy (depth DOWN, no texture).
+  // These turn the frost the way the colour dials turn colour. Matte, not wet:
+  // gloss stays low (14/8), NOT the authored frosted preset's wet-glass 96.
+  frosted: { 'post.grain': true, 'post.grainAmount': 0.32, 'flow.foldScale': 86, 'relief.relief': 0.30, 'flow.gloss': 14, 'flow.depth': 45, 'flow.shadows': 42 },
+  textured: { 'post.grain': true, 'post.grainAmount': 0.38, 'flow.foldScale': 78, 'relief.relief': 0.28, 'flow.gloss': 8 },
+  deep: { 'flow.depth': 80, 'flow.shadows': 60, 'flow.foldScale': 82 },
+  flat: { 'flow.depth': 6, 'flow.foldScale': 28, 'flow.shadows': 16, 'post.grain': false },
 }
 
 export const MOOD_NAMES: string[] = Object.keys(MOOD_DIALS)
