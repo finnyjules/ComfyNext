@@ -7,6 +7,51 @@
 
 import { BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
 
+/**
+ * Liquid "Depth & Light" soft limits.
+ *
+ * (This lives out here rather than beside the GLSL because comments inside the
+ * shader's template literal are shipped verbatim in the /embed bundles, and
+ * comments out here are not.)
+ *
+ * The liquid layout used to render Depth as CAMOUFLAGE — flat navy and white
+ * blotches with hard edges — instead of a folded surface. The cause was one
+ * mistake made in TWO places: the fold slope is long-tailed, and both places
+ * added it RAW to a quantity that was then hard-clamped, so a large fraction of
+ * every frame arrived pre-flattened. Measured live at 512x512 on the config that
+ * prompted the report (marble base, Depth 71 / Highlights 15 / Shadows 58 /
+ * Fold scale 64):
+ *
+ *   fold height field   18 populated luminance bins, 0.0% at the extremes — healthy
+ *   ramp coordinate     47.5% of the frame pushed outside 0..1 and clamped, i.e.
+ *                       painted with only the first and last colour stop
+ *   Lambert term        31.6% of the frame pinned at exactly 0 — one flat dark
+ *                       value with a hard edge around it
+ *
+ * Those two masks are the blotches; the field and the blend were never at fault.
+ * Both are fixed with a tanh soft limit: linear near zero, so low Depth renders
+ * as before, and asymptotic far out, so nothing reaches the clamp. Fixing only
+ * one is not enough — bounding the slope alone still left the Lambert clamp
+ * flattening a sixth of the frame, and the render still read as camouflage.
+ *
+ * After both, on the same config: populated bins 15 -> 25, extremes 13.9% -> 8.7%,
+ * clamped ramp coordinate 47.5% -> 14% (about 9 of those 14 points are the frame
+ * corners, which the base ramp has clamped since long before Depth existed).
+ *
+ * A quieter bug fixed alongside: the old term gave a FLAT surface d ~= 0.78, not
+ * 0.5, so nudging Depth one unit off zero jumped mean luminance 0.719 -> 0.771 —
+ * a 7.2% cliff. Centring d at 0.5 makes shade exactly 1.0 on a flat surface, so
+ * the same move now costs 0.36%.
+ *
+ * Retuning these is a taste call, not a correctness one; the guard spec asserts
+ * the shader is built from whatever they are, and that they keep the properties
+ * the fix relies on.
+ */
+/** How far, as a fraction of the colour ramp, Depth may slide the lookup. */
+export const REFRACT_REACH = 0.25
+/** Scales the fold's tilt-toward-the-light before the tanh that shapes it. */
+export const TILT_GAIN = 0.5
+
 export const GRADIENT_VS = `#version 300 es
 out vec2 v_texCoord;
 void main() {
@@ -405,7 +450,12 @@ vec4 computeLayer(int i, vec2 p) {
     // Depth refraction: bend the gradient through the 3D fold relief so the colours
     // drape/refract over the folds instead of lying flat under the shading. Same
     // fold-scale compensation as the emboss; scales with Depth, 0 when Depth is 0.
-    if (u_flowDepth > 0.001) t += dot(g * (7.0 / u_flowFoldScale), dir) * u_flowDepth * 0.3;
+    if (u_flowDepth > 0.001) {
+      // Soft-limited: the raw offset ran off the ends of the ramp. See REFRACT_REACH.
+      const float REFRACT_REACH = ${REFRACT_REACH.toFixed(4)};
+      float off = dot(g * (7.0 / u_flowFoldScale), dir) * u_flowDepth * 0.3;
+      t += REFRACT_REACH * tanh(off / REFRACT_REACH);
+    }
     t = clamp(t, 0.0, 1.0);
 
     // Marbled veins: displace the coordinate by turbulence, then fold it through a
@@ -688,11 +738,15 @@ void main() {
     // range looked crisp. Normalize to that top (max u_flowFoldScale = 7.0) so Depth
     // reads equally defined at EVERY fold scale.
     float fcomp = 7.0 / u_flowFoldScale;
-    vec3 n = normalize(vec3(-(hx - h) / e * fcomp, -(hy - h) / e * fcomp, 1.0 / max(u_flowDepth, 0.05)));
+    vec2 g = vec2(-(hx - h) / e, -(hy - h) / e) * fcomp;
+    vec3 n = normalize(vec3(g, 1.0 / max(u_flowDepth, 0.05)));
     vec3 L = normalize(vec3(0.4, 0.5, 0.8));
-    float d = clamp(dot(n, L), 0.0, 1.0);
     if (u_flowDepth > 0.001) {
-      float gain = d > 0.5 ? u_flowHighlights : u_flowShadows;
+      // Tilt toward the light, soft-limited; 0.5 = flat = no change. See TILT_GAIN.
+      const float TILT_GAIN = ${TILT_GAIN.toFixed(4)};
+      float d = 0.5 + 0.5 * tanh(dot(g, L.xy) * u_flowDepth * TILT_GAIN);
+      // Crossfade the gains — switching at d = 0.5 creased every terminator.
+      float gain = mix(u_flowShadows, u_flowHighlights, smoothstep(0.3, 0.7, d));
       float shade = 1.0 + (d - 0.5) * 2.0 * gain;
       col *= clamp(shade, 0.0, 2.0);
     }

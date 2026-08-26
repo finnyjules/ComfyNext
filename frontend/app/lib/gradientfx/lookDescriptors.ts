@@ -60,14 +60,21 @@ export const LOOK_DESCRIPTORS: Record<string, LookDescriptor> = {
   // white 55% / grey 24% / black 12% — none, light, 32.3
   ink: { colors: ['white', 'grey', 'black'], direction: 'none', tone: 'light', busy: 32.3,
     mood: 'monochrome ink in water, high contrast and busy' },
-  // red 45% / orange 38% / yellow 17% — none, mid, 36.2
-  lava: { colors: ['red', 'orange', 'yellow'], direction: 'none', tone: 'mid', busy: 36.2,
+  // red / orange / yellow — radial, mid, 24.9. Re-measured 2026-08-26 after the
+  // liquid Depth & Light soft limits (shaders.ts): lava runs Depth 100, so the
+  // fix removed the clamp-flattened blotches that read as undirected noise —
+  // the glow now reads from its bright centre (none → radial) and the busy
+  // energy halved (47.5 → 24.9 under the same checkers, same seed).
+  lava: { colors: ['red', 'orange', 'yellow'], direction: 'radial', tone: 'mid', busy: 24.9,
     mood: 'molten heat, glowing and turbulent' },
   // blue 52% / purple 19% / magenta 13% — radial, light, 8.0
   satin: { colors: ['blue', 'purple', 'magenta'], direction: 'radial', tone: 'light', busy: 8.0,
     mood: 'soft silky sheen, pastel and gentle' },
-  // magenta 44% / orange 16% / red 15% — horizontal, light, 8.5
-  liquid: { colors: ['magenta', 'orange', 'red'], direction: 'horizontal', tone: 'light', busy: 8.5,
+  // magenta / orange / red — horizontal, mid, 7.4. Re-measured 2026-08-26 after
+  // the liquid Depth & Light soft limits (shaders.ts): centring the tilt term
+  // removed the old shading's spurious flat-surface brightening, so the mean
+  // luminance dropped from the light band into mid (0.641 → 0.562).
+  liquid: { colors: ['magenta', 'orange', 'red'], direction: 'horizontal', tone: 'mid', busy: 7.4,
     mood: 'warm liquid flow running sideways' },
   // black 30% / blue 17% / orange 12% — radial, dark, 19.5
   ripple: { colors: ['black', 'blue', 'orange'], direction: 'radial', tone: 'dark', busy: 19.5,
