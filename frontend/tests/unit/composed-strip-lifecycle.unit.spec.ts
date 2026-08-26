@@ -460,3 +460,53 @@ describe('re-rolling keeps the OLD strip live — and it must not poison the new
     expect(own.config.note).toBe('from yours')
   })
 })
+
+
+describe('a fallback is recorded as a fallback, not as a rejection', () => {
+  it('logs action "fallback" with the reason when composing fails', async () => {
+    // Counting these as dismissals would tell a taste analyst that people
+    // rejected takes they were never shown.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/vibe-recipes')) throw Object.assign(new Error('nope'), { statusCode: 405 })
+      return { takes: [
+        { label: 'direct one', changes: [{ key: 'tint', value: 10 }], rationale: 'a' },
+        { label: 'direct two', changes: [{ key: 'tint', value: 40 }], rationale: 'b' },
+      ] }
+    })
+    const { agent } = makeComposeAgent()
+    await agent.ask('a dreamy sunset')
+    await flush()
+
+    const ev = readTakeLog().find(e => e.action === 'fallback')!
+    expect(ev, 'a fallback must be on the record').toBeTruthy()
+    expect(ev.fallback).toContain('405')
+    expect(readTakeLog().some(e => e.action === 'dismiss')).toBe(false)
+    // …and it is loud, not quiet.
+    expect(warn.mock.calls.flat().map(String).join(' ')).toContain('direct path')
+    warn.mockRestore()
+  })
+
+  it('records the eye-pick being unavailable too, for symmetry', async () => {
+    // Without it, "the eye-pick never runs" and "the eye-pick always agrees
+    // with us" look identical in the data.
+    wire('fail')
+    const { agent } = makeComposeAgent()
+    await agent.ask('a dreamy sunset')
+    await flush()
+
+    const ev = readTakeLog().find(e => e.action === 'fallback')!
+    expect(ev).toBeTruthy()
+    expect(ev.fallback).toMatch(/eye-pick/)
+    // The strip itself is fine — four takes, chosen by us.
+    expect(agent.takes.value).toHaveLength(4)
+  })
+
+  it('a healthy composed run logs no fallback at all', async () => {
+    wire()
+    const { agent } = makeComposeAgent()
+    await agent.ask('a dreamy sunset')
+    await flush()
+    expect(readTakeLog().some(e => e.action === 'fallback')).toBe(false)
+  })
+})

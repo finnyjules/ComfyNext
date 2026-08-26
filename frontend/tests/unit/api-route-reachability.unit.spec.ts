@@ -21,19 +21,16 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { NITRO_API_PATHS, NITRO_API_PREFIXES } from '../../server/lib/nitroApiPaths'
 
 const serverRoot = fileURLToPath(new URL('../../server', import.meta.url))
-const proxySrc = readFileSync(join(serverRoot, 'middleware/comfyui-proxy.ts'), 'utf8')
 
-/** Pull an array literal out of the middleware source. */
-function listOf(name: string): string[] {
-  const m = new RegExp(`const ${name} = \\[([^\\]]*)\\]`, 's').exec(proxySrc)
-  if (!m) throw new Error(`${name} not found in comfyui-proxy.ts`)
-  return Array.from(m[1]!.matchAll(/'([^']+)'/g)).map(x => x[1]!)
-}
-
-const PATHS = listOf('NITRO_API_PATHS')
-const PREFIXES = listOf('NITRO_API_PREFIXES')
+// The REAL lists, imported from the module the middleware imports too — not
+// scraped out of its source. A regex over source drifts silently the moment the
+// literal is reformatted, and a guard that can quietly stop seeing anything is
+// worse than none.
+const PATHS = NITRO_API_PATHS
+const PREFIXES = NITRO_API_PREFIXES
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -59,7 +56,6 @@ describe('every API route is reachable through the proxy', () => {
 
   it('the scan is alive', () => {
     expect(files.length).toBeGreaterThan(20)
-    expect(PATHS.length + PREFIXES.length).toBeGreaterThan(20)
   })
 
   const unreachable = files.map(routePath).filter(p => !reachable(p))

@@ -8,10 +8,11 @@ import { deployMode, engineMultiUser } from '../utils/deployMode'
 import { handleMeteredPrompt } from '../utils/meterGraphRun'
 import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload, handleHostedSailor, handleHostedSailorData, handleHostedOutputListing, handleHostedUserScoped } from '../utils/engineGate'
 import { normalizeEnginePath, hostedEngineDecision } from '../utils/enginePath'
+import { NITRO_API_PATHS, NITRO_API_PREFIXES } from '../lib/nitroApiPaths'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
-const NITRO_API_PATHS = ['/api/explain', '/api/pipeline-suggest', '/api/font-suggest', '/api/secrets', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts', '/api/loras-local', '/api/lora-cover', '/api/community-workflow', '/api/voices-local', '/api/voice-preview-file', '/api/vibe', '/api/vibe-review', '/api/vibe-recipes', '/api/vibe-pick', '/api/agent-plan', '/api/agent-review', '/api/image-search', '/api/image-fetch', '/api/copy-assist', '/api/ai-status', '/api/dataset-match', '/api/training-image', '/api/wallet']
-const NITRO_API_PREFIXES = ['/api/billing', '/api/webhooks', '/api/admin', '/api/templates', '/api/cloud-train', '/api/voice-clone', '/api/training-queue', '/api/krea', '/api/vector', '/api/inpaint', '/api/house-styles', '/api/brand-kits', '/api/template-fonts', '/api/library-font', '/api/characters-local', '/api/lipsync', '/api/meter', '/api/pool', '/api/scene3d', '/api/style-profile', '/api/fonts', '/api/depth', '/api/taste', '/api/moodboards', '/api/wardrobe']
+// — the lists live in their own module so the reachability guard can import the
+// real values rather than scrape this file. See server/lib/nitroApiPaths.ts.
 const NITRO_ROUTE_PREFIXES = ['/view', '/history']
 
 export default defineEventHandler(async (event) => {

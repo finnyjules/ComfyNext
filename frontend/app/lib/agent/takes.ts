@@ -742,7 +742,15 @@ export function checkPromise(sig: Uint8ClampedArray | null, promise: TakePromise
 
 // ─── the pick log ────────────────────────────────────────────────────────────
 
-export type TakeAction = 'keep' | 'dismiss' | 'switch'
+/**
+ * What a logged decision WAS.
+ *
+ * `fallback` is not a decision the user made — it records that a flow could not
+ * run and something older answered instead. It gets its own name so it cannot
+ * be mistaken for a rejection: counting these as dismissals would tell a taste
+ * analyst that people rejected takes they were never shown.
+ */
+export type TakeAction = 'keep' | 'dismiss' | 'switch' | 'fallback'
 
 /** One decision. `prompt` is the phrase the user typed — the only free text
  *  stored, and it never leaves the browser. */

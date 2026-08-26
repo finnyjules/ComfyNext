@@ -779,18 +779,20 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
      *  fallback is how the owner came to judge the old engine believing it was
      *  the new one — the strip looked plausible, and nothing anywhere said which
      *  path had built it. */
+    const noteFallback = (reason: string) => {
+      if (!opts.takes) return
+      logTakeEvent({
+        studio: opts.takes.studio,
+        prompt: phrase,
+        takeLabel: '',
+        changes: [],
+        action: 'fallback',
+        fallback: reason,
+      })
+    }
     const fellBack = (reason: string) => {
       console.warn(`[takes] compose-and-pick unavailable, using the direct path — ${reason}`)
-      if (opts.takes) {
-        logTakeEvent({
-          studio: opts.takes.studio,
-          prompt: phrase,
-          takeLabel: '',
-          changes: [],
-          action: 'dismiss',
-          fallback: reason,
-        })
-      }
+      noteFallback(reason)
       return false
     }
 
@@ -929,7 +931,10 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     )
     if (takes.value !== shownList) return true // the user moved on; leave it be
     if (!picks.length) {
-      console.info('[takes] eye-pick unavailable — keeping the four we chose')
+      // Same shape of event as a recipe fallback, for the same reason: without
+      // it, "the eye-pick never runs" and "the eye-pick always agrees with us"
+      // are indistinguishable in the data.
+      noteFallback('the eye-pick was unavailable — kept the four we chose ourselves')
       return true
     }
     showPicks(picks, 'the eye')
