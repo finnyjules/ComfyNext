@@ -17,7 +17,20 @@ import {
   salvageRecipes,
   summarizeConfig,
 } from '~/lib/gradientfx/recipes'
-import { DRIFT_TOLERANCE, LOOK_DESCRIPTORS, LOOK_NAMES, checkLookDrift, describeLook, lookMenu } from '~/lib/gradientfx/lookDescriptors'
+import {
+  ALL_LOOK_NAMES,
+  DRIFT_TOLERANCE,
+  LOOK_DESCRIPTORS,
+  LOOK_NAMES,
+  TAKE_BASE_LAYOUTS,
+  TAKE_BASE_LAYOUT_FAMILIES,
+  checkLookDrift,
+  describeLook,
+  isTakeBaseEligible,
+  lookMenu,
+} from '~/lib/gradientfx/lookDescriptors'
+import { buildGradientPreset } from '~/lib/gradientfx/presets'
+import { AUTHORED_PRESETS } from '~/lib/gradientfx/presetConfigs'
 import { GRADIENT_PRESET_NAMES } from '~/lib/gradientfx/presets'
 import { cloneConfig, type GradientConfig } from '~/lib/gradientfx/types'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
@@ -29,8 +42,11 @@ const recipe = (over: Partial<any> = {}) => ({
 })
 
 describe('the look menu describes every preset we offer', () => {
-  it('covers every offered preset name, and invents none', () => {
-    expect([...LOOK_NAMES].sort()).toEqual([...GRADIENT_PRESET_NAMES].sort())
+  it('describes every preset the studio offers, and invents none', () => {
+    // The DESCRIPTOR table still covers all of them — they are all reachable by
+    // hand, and the drift guard still checks every one. What narrowed is the
+    // agent's menu, below.
+    expect([...ALL_LOOK_NAMES].sort()).toEqual([...GRADIENT_PRESET_NAMES].sort())
   })
 
   it('reads as a menu a person could use', () => {
@@ -45,6 +61,15 @@ describe('the look menu describes every preset we offer', () => {
     const { MEASURABLE_COLORS } = await import('~/lib/agent/takes')
     for (const [name, d] of Object.entries(LOOK_DESCRIPTORS)) {
       for (const c of d.colors) expect(MEASURABLE_COLORS, `${name}/${c}`).toContain(c)
+    }
+  })
+
+  it('the drift guard still covers EVERY preset, menu or not', () => {
+    // Narrowing the agent's menu must not narrow the studio's guarantees.
+    for (const name of ALL_LOOK_NAMES) {
+      const d = LOOK_DESCRIPTORS[name]!
+      expect(checkLookDrift(name, { colors: [...d.colors], direction: d.direction, tone: d.tone, busy: d.busy }), name)
+        .toEqual([])
     }
   })
 
@@ -294,5 +319,98 @@ describe('the drift guard — a descriptor that stops telling the truth', () => 
 
   it('an unknown look is drift, not a pass', () => {
     expect(checkLookDrift('nope', asMeasured('sunset'))).toEqual(['unknown look'])
+  })
+})
+
+
+describe('the recipe menu only offers the versatile layout families', () => {
+  // Julien's call after the first real-model runs: conic, stripe, orbit and
+  // stack looks are "too specific and never really fit the vision". Measured
+  // 2026-08-26 from `buildGradientPreset(name, '#menu').canvas.layout`.
+  const MEASURED: Record<string, string> = {
+    marble: 'liquid', oil: 'liquid', ink: 'liquid', lava: 'liquid', satin: 'liquid',
+    liquid: 'liquid', aurora: 'liquid', frosted: 'liquid', sunset: 'liquid',
+    mesh: 'mesh', dawn: 'ramp', halo: 'radialRamp',
+    ripple: 'orbit', stack: 'stack', linear: 'linear', spectrum: 'conic',
+  }
+
+  it('each preset still builds the layout the gate was measured against', () => {
+    // If this drifts, the in/out table below is describing a catalog we no
+    // longer have — and the gate would be silently offering something else.
+    for (const [name, layout] of Object.entries(MEASURED)) {
+      expect(buildGradientPreset(name, '#menu')?.canvas.layout, name).toBe(layout)
+    }
+  })
+
+  it('offers no preset whose measured layout is outside the families', () => {
+    for (const name of LOOK_NAMES) {
+      expect(TAKE_BASE_LAYOUTS, name).toContain(buildGradientPreset(name, '#menu')!.canvas.layout)
+    }
+  })
+
+  it('withholds exactly the four the catalog has today', () => {
+    const withheld = ALL_LOOK_NAMES.filter(n => !LOOK_NAMES.includes(n)).sort()
+    expect(withheld).toEqual(['linear', 'ripple', 'spectrum', 'stack'])
+  })
+
+  it('keeps the looks people actually ask for', () => {
+    for (const n of ['dawn', 'halo', 'aurora', 'frosted', 'sunset', 'marble', 'mesh']) {
+      expect(LOOK_NAMES, n).toContain(n)
+    }
+  })
+
+  it('the families cover the five Julien named, and nothing else', () => {
+    expect(Object.keys(TAKE_BASE_LAYOUT_FAMILIES).sort())
+      .toEqual(['CURVE', 'LINEAR', 'LIQUID', 'MESH', 'RADIAL'])
+    for (const bad of ['conic', 'orbit', 'stack', 'linear', 'radial']) {
+      expect(TAKE_BASE_LAYOUTS, bad).not.toContain(bad)
+    }
+  })
+
+  it('DERIVES the gate — a preset invented at runtime is judged, not looked up', () => {
+    // The real derive-don't-enumerate control. A hand-typed exclusion list would
+    // give identical answers for today's catalog, so the only way to tell the
+    // two apart is to introduce a preset no list has ever heard of and check the
+    // gate still gets it right — from the config it builds, and nothing else.
+    const authored = AUTHORED_PRESETS as Record<string, unknown>
+    const base = buildGradientPreset('dawn', '#menu')!   // an OFFERED family (ramp)
+    const conic = buildGradientPreset('spectrum', '#menu')!
+    try {
+      authored['brand-new-ramp'] = JSON.parse(JSON.stringify(base))
+      authored['brand-new-conic'] = JSON.parse(JSON.stringify(conic))
+      expect(isTakeBaseEligible('brand-new-ramp'), 'admitted with no edit to the gate').toBe(true)
+      expect(isTakeBaseEligible('brand-new-conic'), 'withheld with no edit to the gate').toBe(false)
+    } finally {
+      delete authored['brand-new-ramp']
+      delete authored['brand-new-conic']
+    }
+    expect(isTakeBaseEligible('halo')).toBe(true)      // radialRamp
+    expect(isTakeBaseEligible('spectrum')).toBe(false) // conic
+    expect(isTakeBaseEligible('not-a-preset')).toBe(false)
+  })
+
+  it('the menu prose the model sees carries only offered looks', () => {
+    const menu = lookMenu()
+    for (const n of LOOK_NAMES) expect(menu, n).toContain(`${n} —`)
+    for (const n of ['spectrum', 'stack', 'ripple']) expect(menu, n).not.toContain(`${n} —`)
+  })
+})
+
+describe('salvage drops a recipe naming a withheld base', () => {
+  const wrapOne = (base: string) => ({ recipes: [
+    { base, palette: ['#ff9a4d', '#4b2a7a'], mood: [], name: 'x' },
+    { base: 'sunset', palette: ['#ff9a4d', '#4b2a7a'], mood: [], name: 'ok' },
+  ] })
+
+  it('a conic/stripe/orbit/stack base is dropped like any unknown one', () => {
+    for (const base of ['spectrum', 'stack', 'ripple', 'linear']) {
+      const out = salvageRecipes(wrapOne(base))
+      expect(out.map(r => r.base), base).toEqual(['sunset'])
+    }
+  })
+
+  it('and "yours" is always allowed, whatever the user\u2019s own layout is', () => {
+    // It is their design; the menu narrows what we OFFER, not what they have.
+    expect(salvageRecipes(wrapOne(OWN_BASE)).map(r => r.base)).toEqual([OWN_BASE, 'sunset'])
   })
 })

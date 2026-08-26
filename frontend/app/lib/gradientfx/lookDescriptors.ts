@@ -1,3 +1,5 @@
+import { buildGradientPreset } from './presets'
+
 /**
  * What each gradient preset actually RENDERS as.
  *
@@ -150,8 +152,71 @@ export function checkLookDrift(name: string, measured: LookMeasurement): string[
   return drift
 }
 
-/** The menu the model chooses a base from. */
-export const LOOK_NAMES: string[] = Object.keys(LOOK_DESCRIPTORS)
+
+// ── which looks the model may compose FROM ──────────────────────────────────
+//
+// Julien's call after the first real-model runs: only the VERSATILE layout
+// families belong on the recipe menu. Conic, stripe, orbit and stack looks are
+// "too specific and never really fit the vision". They stay first-class in the
+// STUDIO — the user can still pick any of them by hand — this narrows the
+// AGENT's menu and nothing else.
+//
+// The full layout union, and where each value falls:
+//
+//   ramp        → LINEAR   offered   (the studio's "Linear")
+//   radialRamp  → RADIAL   offered   (the studio's "Radial")
+//   curve       → CURVE    offered
+//   liquid      → LIQUID   offered
+//   mesh        → MESH     offered
+//   linear      → stripes  withheld  (the studio's "Linear stripes")
+//   radial      → stripes  withheld  (the studio's "Radial stripes")
+//   conic       → conic    withheld
+//   orbit       → orbit    withheld
+//   stack       → stack    withheld
+//
+export const TAKE_BASE_LAYOUT_FAMILIES: Record<string, readonly string[]> = {
+  LINEAR: ['ramp'],
+  RADIAL: ['radialRamp'],
+  CURVE: ['curve'],
+  LIQUID: ['liquid'],
+  MESH: ['mesh'],
+}
+
+/** Flattened, for the eligibility check. */
+export const TAKE_BASE_LAYOUTS: readonly string[] = Object.values(TAKE_BASE_LAYOUT_FAMILIES).flat()
+
+/** The seed eligibility is measured with. Fixed on purpose: which family a
+ *  preset belongs to is a look-defining fact that must not depend on a roll, and
+ *  pinning it makes the menu identical on every load. */
+const ELIGIBILITY_SEED = '#menu'
+
+/**
+ * Is this preset's look one the recipe menu offers?
+ *
+ * DERIVED, never a hand-typed name list — the shared-catalog lesson. Eligibility
+ * is the MEASURED `canvas.layout` of the preset's own materialized config, so a
+ * preset re-authored into a different family leaves or joins the menu on its
+ * own, and a NEW preset in an offered family is admitted without anyone editing
+ * this file.
+ */
+export function isTakeBaseEligible(name: string): boolean {
+  const layout = buildGradientPreset(name, ELIGIBILITY_SEED)?.canvas?.layout
+  return !!layout && TAKE_BASE_LAYOUTS.includes(layout)
+}
+
+/** Every preset with a descriptor. The STUDIO-side list — the drift guard still
+ *  covers all of them, because they are all still reachable by hand. */
+export const ALL_LOOK_NAMES: string[] = Object.keys(LOOK_DESCRIPTORS)
+
+/**
+ * The looks the model may compose from.
+ *
+ * Narrowing this ONE list narrows everything downstream at once: the menu prose,
+ * the base a recipe may name, and what `salvageRecipes` accepts — a recipe
+ * naming a withheld base is dropped by the same check that has always dropped an
+ * unknown one.
+ */
+export const LOOK_NAMES: string[] = ALL_LOOK_NAMES.filter(isTakeBaseEligible)
 
 /** One line per look, for the prompt. Deliberately prose, not JSON: it is a menu
  *  a reader could use, which is the whole point of the redesign. */
