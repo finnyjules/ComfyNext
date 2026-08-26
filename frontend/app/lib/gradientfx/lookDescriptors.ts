@@ -60,25 +60,28 @@ export const LOOK_DESCRIPTORS: Record<string, LookDescriptor> = {
   // white 55% / grey 24% / black 12% — none, light, 32.3
   ink: { colors: ['white', 'grey', 'black'], direction: 'none', tone: 'light', busy: 32.3,
     mood: 'monochrome ink in water, high contrast and busy' },
-  // red 61% / orange 25% / yellow 12% — radial, mid, 24.9. Re-measured
-  // 2026-08-26 (authored seed #xixo4m99) after the liquid Depth & Light soft
-  // limits (shaders.ts): lava runs Depth 100, so the fix removed the
-  // clamp-flattened blotches that read as undirected noise — the glow now reads
-  // from its bright centre (none → radial) and busy roughly halved (the re-run
-  // read 47.5 pre-fix vs 24.9 post-fix; the 36.2 recorded before this session
-  // came from the original measuring session, whose exact seed/settings did not
-  // reproduce, so only the pre/post DELTA here is like-for-like).
-  lava: { colors: ['red', 'orange', 'yellow'], direction: 'radial', tone: 'mid', busy: 24.9,
+  // red 61% / orange 28% / yellow 11% — radial, mid, 23.9. Re-measured
+  // 2026-08-26 (authored seed #xixo4m99) after the liquid Depth & Light soft-
+  // light composite (shaders.ts): lava runs Depth 100 / Shadows 0, so soft-light
+  // barely moves it from the earlier tanh-fix reading (busy 24.9 → 23.9). The
+  // earlier fix already removed the clamp-flattened blotches that read as
+  // undirected noise, so the glow reads from its bright centre (radial); the
+  // 36.2 recorded before that session came from the original measuring session,
+  // whose exact seed/settings did not reproduce, so only the post-fix numbers
+  // here are like-for-like.
+  lava: { colors: ['red', 'orange', 'yellow'], direction: 'radial', tone: 'mid', busy: 23.9,
     mood: 'molten heat, glowing and turbulent' },
   // blue 52% / purple 19% / magenta 13% — radial, light, 8.0
   satin: { colors: ['blue', 'purple', 'magenta'], direction: 'radial', tone: 'light', busy: 8.0,
     mood: 'soft silky sheen, pastel and gentle' },
-  // magenta 60% / orange 19% / red 12% — horizontal, mid, 7.4. Re-measured
-  // 2026-08-26 (seed #default0) after the liquid Depth & Light soft limits
-  // (shaders.ts): centring the tilt term removed the old shading's spurious
-  // flat-surface brightening, so mean luminance dropped from the light band
-  // into mid (0.641 → 0.562 in the same-seed pre/post comparison).
-  liquid: { colors: ['magenta', 'orange', 'red'], direction: 'horizontal', tone: 'mid', busy: 7.4,
+  // magenta 60% / orange 19% / red 12% — horizontal, mid, 7.0. Re-measured
+  // 2026-08-26 (seed #default0) after the liquid Depth & Light soft-light
+  // composite (shaders.ts): the earlier tanh fix centred the tilt (mean
+  // luminance dropped from the light band into mid, 0.641 → 0.562), and the
+  // soft-light blend leaves this preset near-identical (busy 7.4 → 7.0, lum
+  // 0.562 → 0.565, colour split unchanged) — it has Shadows 53 / Highlights 60
+  // so the blend is gentle, not a crusher.
+  liquid: { colors: ['magenta', 'orange', 'red'], direction: 'horizontal', tone: 'mid', busy: 7.0,
     mood: 'warm liquid flow running sideways' },
   // black 30% / blue 17% / orange 12% — radial, dark, 19.5
   ripple: { colors: ['black', 'blue', 'orange'], direction: 'radial', tone: 'dark', busy: 19.5,

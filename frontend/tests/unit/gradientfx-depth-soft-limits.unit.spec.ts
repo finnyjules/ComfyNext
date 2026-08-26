@@ -62,6 +62,19 @@ describe('liquid Depth & Light soft limits', () => {
     expect(GRADIENT_FS).not.toContain('d > 0.5 ? u_flowHighlights : u_flowShadows')
   })
 
+  it('composites the shade with soft-light, not a hard multiply', () => {
+    // The owner asked for "a different blend mode"; the multiply crushed shadows
+    // straight to black (recovered shade reached 0.001, ~6.9% of the frame pure
+    // black at Depth 71 / Hi 15 / Shadows 100 / Fold 78). Soft-light of the same
+    // shade scalar over the base colour keeps the fold reading as light and shade
+    // without the black camouflage (measured 6.9% -> ~1.8% pure black, live).
+    expect(GRADIENT_FS).toContain('col = softLight(col, clamp(shade * 0.5, 0.0, 1.0));')
+    // The regression to guard: the hard multiply must not come back.
+    expect(GRADIENT_FS).not.toContain('col *= clamp(shade, 0.0, 2.0);')
+    // The soft-light helper is defined once, W3C form.
+    expect(GRADIENT_FS).toContain('vec3 softLight(vec3 b, float t)')
+  })
+
   it('Gloss keeps a real surface normal to reflect off', () => {
     expect(GRADIENT_FS).toContain('vec3 n = normalize(vec3(g, 1.0 / max(u_flowDepth, 0.05)));')
     expect(GRADIENT_FS).toContain('float spec = pow(clamp(dot(n, H), 0.0, 1.0), 48.0);')
@@ -115,5 +128,69 @@ describe('the soft limiter has the properties the fix depends on', () => {
     const d = 0.5 + 0.5 * Math.tanh(0 * TILT_GAIN)
     expect(d).toBe(0.5)
     for (const gain of [0, 0.15, 0.58, 1]) expect(1 + (d - 0.5) * 2 * gain).toBe(1)
+  })
+})
+
+/**
+ * The soft-light composite the shade now goes through (owner picked it over the
+ * hard multiply). This mirrors the GLSL `softLight(col, clamp(shade*0.5,0,1))`
+ * exactly — the W3C soft-light with a uniform grey top layer `t` — so the
+ * correctness properties are checked in TS, not only asserted as a source
+ * string. The full-frame pure-black drop (6.9% -> ~1.8%) was measured live.
+ */
+describe('the shade composites through soft-light', () => {
+  /** W3C soft-light of base channel `b` (0..1) under a uniform grey top `t` (0..1).
+   *  Byte-for-byte the GLSL branch structure in shaders.ts. */
+  const softLight = (b: number, t: number): number => {
+    const dee = b <= 0.25 ? ((16 * b - 12) * b + 4) * b : Math.sqrt(b)
+    return t <= 0.5
+      ? b - (1 - 2 * t) * b * (1 - b)
+      : b + (2 * t - 1) * (dee - b)
+  }
+  /** shade -> top-layer factor, matching the GLSL `clamp(shade * 0.5, 0, 1)`. */
+  const topFor = (shade: number) => Math.min(1, Math.max(0, shade * 0.5))
+
+  it('is an exact no-op at the neutral point (flat surface, shade = 1)', () => {
+    // shade = 1 (flat: d = 0.5, gain contributes nothing) => t = 0.5 => identity.
+    // This is THE correctness property: Depth on a flat frame must not tint it.
+    const t = topFor(1)
+    expect(t).toBe(0.5)
+    for (const b of [0, 0.05, 0.2, 0.25, 0.5, 0.73, 1]) {
+      expect(softLight(b, t)).toBe(b)
+    }
+  })
+
+  it('darkens monotonically as Shadows deepen (shade 1 -> 0)', () => {
+    // Sweep the shadow side of the shade range; every base value gets darker or
+    // equal at every step, and strictly darker where there is room to move.
+    for (const b of [0.15, 0.4, 0.6, 0.85]) {
+      let prev = Infinity
+      for (let shade = 1; shade >= 0; shade -= 0.05) {
+        const v = softLight(b, topFor(shade))
+        expect(v).toBeLessThanOrEqual(prev + 1e-12)
+        prev = v
+      }
+      // Deepest shadow is genuinely darker than neutral (no silent flattening).
+      expect(softLight(b, topFor(0))).toBeLessThan(softLight(b, topFor(1)))
+    }
+  })
+
+  it('lightens monotonically as Highlights rise (shade 1 -> 2)', () => {
+    for (const b of [0.15, 0.4, 0.6, 0.85]) {
+      let prev = -Infinity
+      for (let shade = 1; shade <= 2; shade += 0.05) {
+        const v = softLight(b, topFor(shade))
+        expect(v).toBeGreaterThanOrEqual(prev - 1e-12)
+        prev = v
+      }
+      expect(softLight(b, topFor(2))).toBeGreaterThan(softLight(b, topFor(1)))
+    }
+  })
+
+  it('never crushes a mid base to pure black the way the multiply did', () => {
+    // The multiply took shade 0.001 * base straight to ~0. Soft-light of the same
+    // deepest shadow (t = 0) leaves a mid base well clear of black.
+    expect(0.001 * 0.6).toBeLessThan(0.001)          // old multiply: ~0
+    expect(softLight(0.6, topFor(0))).toBeGreaterThan(0.2)
   })
 })

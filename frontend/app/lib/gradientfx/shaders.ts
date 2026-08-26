@@ -49,6 +49,24 @@ import { BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
  * the same kind of taste-tuned width: wide enough that no crease shows at the
  * terminator, narrow enough that Highlights and Shadows still read as two
  * separate controls.
+ *
+ * SOFT-LIGHT COMPOSITE. Even with the tilt centred and soft-limited, the final
+ * step still MULTIPLIED the base colour by `shade` (0..2), and at high Shadows
+ * that multiplier ran to ~0, crushing whole regions to pure black — the "still
+ * camouflage, still low-res" the owner saw at Depth 71 / Hi 15 / Shadows 100 /
+ * Fold 78. The owner's own words were "use a different blend mode?"; measured
+ * side-by-side (blend-compare.png), soft-light of the same `shade` scalar over
+ * the base colour dropped the pure-black fraction from 6.9% to ~1.8% at that
+ * config while leaving the base field's smoothness intact. So the composite is
+ * now `softLight(col, clamp(shade * 0.5, 0, 1))`:
+ *
+ *   - No new control. The Depth/Highlights/Shadows sliders still drive `shade`
+ *     exactly as before; only how `shade` is applied to the colour changed.
+ *   - shade in 0..2 maps to soft-light's grey top layer t in 0..1, and t = 0.5
+ *     (shade = 1, a flat surface) is soft-light's identity — Depth on a flat
+ *     frame is a byte-for-byte no-op, the key correctness property.
+ *   - Monotonic: deeper Shadows darken, higher Highlights lighten, with no cliff
+ *     (both pinned by the reference in the guard spec).
  */
 /** How far, as a fraction of the colour ramp, Depth may slide the lookup. */
 export const REFRACT_REACH = 0.25
@@ -681,6 +699,14 @@ float bandHeight(int i, vec2 q) {
 
 ${BLEND_LAYERS_GLSL}
 
+// W3C soft-light, grey top layer t (t = 0.5 is the identity). See SOFT-LIGHT note.
+vec3 softLight(vec3 b, float t) {
+  vec3 dee = mix(sqrt(b), ((16.0 * b - 12.0) * b + 4.0) * b, step(b, vec3(0.25)));
+  vec3 lo = b - (1.0 - 2.0 * t) * b * (1.0 - b);
+  vec3 hi = b + (2.0 * t - 1.0) * (dee - b);
+  return t <= 0.5 ? lo : hi;
+}
+
 void main() {
   vec2 p = v_texCoord;
   // Domain-warped coord (identity when intensity 0). Clamp to the frame so a strong
@@ -751,7 +777,8 @@ void main() {
       // Crossfade the gains — switching at d = 0.5 creased every terminator.
       float gain = mix(u_flowShadows, u_flowHighlights, smoothstep(0.3, 0.7, d));
       float shade = 1.0 + (d - 0.5) * 2.0 * gain;
-      col *= clamp(shade, 0.0, 2.0);
+      // Soft-light, not a hard multiply (which crushed shadows to black). See SOFT-LIGHT.
+      col = softLight(col, clamp(shade * 0.5, 0.0, 1.0));
     }
     if (u_flowGloss > 0.001) {
       vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));   // half-vector (viewer on +Z)
