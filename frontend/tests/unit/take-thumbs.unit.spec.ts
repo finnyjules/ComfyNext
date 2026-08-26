@@ -14,8 +14,8 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
-import { isTakeThumbStudioId, TAKE_THUMB_STUDIO_IDS, takeThumbFor, thumbDims } from '~/lib/agent/takeThumbs'
+import { describe, expect, it, vi } from 'vitest'
+import { docAspect, isTakeThumbStudioId, TAKE_THUMB_STUDIO_IDS, takeThumbFor, thumbDims, thumbDimsFor } from '~/lib/agent/takeThumbs'
 
 function takeThumbsSource(): string {
   return readFileSync(fileURLToPath(new URL('../../app/lib/agent/takeThumbs.ts', import.meta.url)), 'utf8')
@@ -143,8 +143,7 @@ describe('thumbDims — the tile carries the document\u2019s shape', () => {
     const fs = await import('node:fs')
     const src = fs.readFileSync(`${process.cwd()}/app/lib/agent/takeThumbs.ts`, 'utf8')
     const body = src.slice(src.indexOf('async function gradientThumb'), src.indexOf('async function textureThumb'))
-    expect(body).toMatch(/thumbDims/)
-    expect(body).toMatch(/aspectRatio/)
+    expect(body).toMatch(/thumbDimsFor/)
     expect(body).not.toMatch(/render\(cfg, size, size/)
   })
 })
@@ -184,5 +183,107 @@ describe('thumbDims reaches the adapters that have a shape', () => {
     // Both must say so, so the next reader does not "fix" them.
     expect(bodyOf('textureThumb')).toMatch(/square/i)
     expect(bodyOf('shaderThumb')).toMatch(/square/i)
+  })
+})
+
+
+// ── integration: REAL configs, the REAL argument shapes the surfaces pass ────
+//
+// Owner report #7 was "every tile, including yours, says couldn't draw" — the
+// adapter's null-on-throw path firing for everything. It was not reproducible at
+// HEAD (see the task report), but the episode exposed two real defects worth
+// fixing regardless: the dimension decision was duplicated inline in five
+// adapters where no test could see it, and the catch that hid the failure said
+// nothing at all. This block tests the decision against configs the studios
+// really produce — the class of bug a hand-mocked adapter cannot show.
+describe('thumbDimsFor — real configs, real argument shapes', () => {
+  it('reads the gradient document\u2019s own aspect string', async () => {
+    const { defaultConfig } = await import('~/lib/gradientfx/randomize')
+    const cfg: any = defaultConfig('#p')
+    cfg.canvas.aspect = '16:9'
+    expect(thumbDimsFor('gradient', cfg, 160)).toEqual({ w: 160, h: 90 })
+    cfg.canvas.aspect = '9:16'
+    expect(thumbDimsFor('gradient', cfg, 160)).toEqual({ w: 90, h: 160 })
+  })
+
+  it('survives every wrong-shaped aspect a persisted gradient config could carry', () => {
+    // `aspectRatio` splits a STRING. A config that ever carried a number, a
+    // null, or a nonsense label must yield a usable tile, not a thrown adapter
+    // that turns the whole strip into error tiles.
+    for (const aspect of [undefined, null, 1.7777, '', 'custom', '0:0', ':', { w: 16 }, ['16', '9']]) {
+      const dims = thumbDimsFor('gradient', { canvas: { aspect } }, 160)
+      expect(dims.w).toBeGreaterThanOrEqual(1)
+      expect(dims.h).toBeGreaterThanOrEqual(1)
+    }
+    expect(thumbDimsFor('gradient', undefined, 160)).toEqual({ w: 160, h: 160 })
+    expect(thumbDimsFor('gradient', null, 160)).toEqual({ w: 160, h: 160 })
+  })
+
+  it('takes the studio-supplied aspect for the two studios whose shape is node state', () => {
+    expect(thumbDimsFor('shape', {}, 160, 16 / 9)).toEqual({ w: 160, h: 90 })
+    expect(thumbDimsFor('vectortype', {}, 160, 16 / 9)).toEqual({ w: 160, h: 90 })
+    // …and squares them when the studio says nothing.
+    expect(thumbDimsFor('shape', {}, 160)).toEqual({ w: 160, h: 160 })
+    expect(thumbDimsFor('vectortype', {}, 160)).toEqual({ w: 160, h: 160 })
+  })
+
+  it('ignores a supplied aspect for the two studios that are genuinely square', () => {
+    expect(thumbDimsFor('texture', {}, 160, 16 / 9)).toEqual({ w: 160, h: 160 })
+    expect(thumbDimsFor('shader', {}, 160, 16 / 9)).toEqual({ w: 160, h: 160 })
+  })
+
+  it('every registered studio has a dimension answer, and it is always drawable', () => {
+    for (const id of TAKE_THUMB_STUDIO_IDS) {
+      for (const aspect of [undefined, 0, -1, Number.NaN, 1e9]) {
+        const { w, h } = thumbDimsFor(id, {}, 160, aspect as number)
+        expect(Number.isFinite(w) && w >= 1, `${id}/${aspect}`).toBe(true)
+        expect(Number.isFinite(h) && h >= 1, `${id}/${aspect}`).toBe(true)
+      }
+    }
+  })
+})
+
+describe('docAspect — what the surfaces hand over', () => {
+  it('is width over height', () => {
+    expect(docAspect(1280, 720)).toBeCloseTo(16 / 9, 5)
+  })
+
+  it('never yields something thumbDims has to rescue', () => {
+    for (const [w, h] of [[0, 0], [1024, 0], [0, 1024], [-5, 10], [Number.NaN, 100], [100, Number.NaN]]) {
+      const a = docAspect(w as number, h as number)
+      expect(Number.isFinite(a)).toBe(true)
+      expect(a).toBeGreaterThan(0)
+    }
+  })
+
+  it('is what BOTH studios with node-side dimensions actually call', async () => {
+    const fs = await import('node:fs')
+    for (const f of ['ShapeStudioSurface.vue', 'VectorTypeSurface.vue']) {
+      const src = fs.readFileSync(`${process.cwd()}/app/components/vue-canvas/${f}`, 'utf8')
+      // One shared, tested helper rather than an inline expression per surface —
+      // an inline `w / h` is exactly where a 0 or a NaN slips in unseen.
+      expect(src, f).toMatch(/aspect: \(\) => docAspect\(/)
+    }
+  })
+})
+
+describe('the adapter never fails silently', () => {
+  it('says which studio failed and why', async () => {
+    // The standing lesson, applied: a graceful fallback that says nothing turns
+    // an integration failure into a day of guessing. In node there is no
+    // `document`, so every real adapter throws for real inside its own try —
+    // this exercises the actual catch, not a stub of it.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await takeThumbFor('gradient')({}, 160)).toBeNull()
+    expect(warn).toHaveBeenCalled()
+    expect(String(warn.mock.calls.flat().join(' '))).toContain('gradient')
+    warn.mockRestore()
+  })
+
+  it('an unknown studio is not a failure and says nothing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await takeThumbFor('nope')({}, 160)).toBeNull()
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 })

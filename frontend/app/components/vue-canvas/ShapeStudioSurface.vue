@@ -38,6 +38,7 @@ import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import type { Paint } from '~/lib/compositor/paint'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
+import { docAspect } from '~/lib/agent/takeThumbs'
 import { useStudioAutosave } from '~/lib/studio/autosave'
 import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 
@@ -122,7 +123,7 @@ const shapeAgent = useStudioAgent({
     paramsOf: c => makeConfigParams(() => markIn(c as GeoStudioDoc)),
     // The canvas shape lives on the NODE, not in the doc a take carries, so the
     // tile can only be truthful if the studio hands it over.
-    aspect: () => canvasW.value / Math.max(1, canvasH.value),
+    aspect: () => docAspect(canvasW.value, canvasH.value),
   },
 })
 

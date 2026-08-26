@@ -94,6 +94,7 @@ import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
 import { makeConfigParams } from '~/lib/agent/configParams'
+import { docAspect } from '~/lib/agent/takeThumbs'
 import { mapControlSpecToDesc } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
@@ -312,7 +313,7 @@ const vtAgent = useStudioAgent({
     studio: 'vectortype',
     config: () => config.value,
     // Same as Shape: the canvas shape is node state, not config state.
-    aspect: () => canvasW.value / Math.max(1, canvasH.value),
+    aspect: () => docAspect(canvasW.value, canvasH.value),
     paramsOf: c => makeConfigParams(() => c, () => activeLayerIndex.value, 'appearance'),
   },
 })

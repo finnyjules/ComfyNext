@@ -91,6 +91,40 @@ function freshCanvas(w: number, h = w): HTMLCanvasElement {
  * Defensive about its input because `aspectRatio` reads a persisted string: a
  * zero, a NaN or an absurd ratio yields a usable canvas rather than a crash.
  */
+/** A document's width/height ratio, guaranteed finite and positive whatever the
+ *  two numbers are. The surfaces whose canvas size is NODE state (Shape, Vector
+ *  Type) hand their ratio over through this — one tested helper rather than an
+ *  inline `w / h` per surface, which is exactly where a 0 or a NaN slips in
+ *  unseen and turns a whole strip into error tiles. */
+export function docAspect(w: number, h: number): number {
+  const width = Number.isFinite(w) && w > 0 ? w : 1
+  const height = Number.isFinite(h) && h > 0 ? h : 1
+  return width / height
+}
+
+/**
+ * The tile dimensions for one studio, given the config a take carries and the
+ * aspect the studio supplied.
+ *
+ * Lives here, exported and tested, rather than inline in five adapters: the
+ * decision depends on the SHAPE of a persisted config (Gradient reads an aspect
+ * STRING that a `.split` would throw on if it were ever a number), and a throw
+ * inside an adapter is swallowed into a "couldn't draw" tile where no test can
+ * see it. Answering this question separately means it can be asked of the real
+ * configs the studios really produce.
+ */
+export function thumbDimsFor(studioId: string, config: unknown, size: number, aspect?: number): { w: number, h: number } {
+  if (studioId === 'gradient') {
+    const raw = (config as { canvas?: { aspect?: unknown } } | null | undefined)?.canvas?.aspect
+    return thumbDims(typeof raw === 'string' ? aspectRatio(raw) : 1, size)
+  }
+  // Shape and Vector Type: the studio knows, the config does not.
+  if (studioId === 'shape' || studioId === 'vectortype') return thumbDims(aspect ?? 1, size)
+  // Texture and Shader are genuinely square — see their adapters for why. A
+  // supplied aspect is ignored rather than obeyed.
+  return thumbDims(1, size)
+}
+
 export function thumbDims(aspect: number, size: number): { w: number, h: number } {
   const box = Math.max(1, Math.round(size))
   const a = Number.isFinite(aspect) && aspect > 0 ? Math.min(64, Math.max(1 / 64, aspect)) : 1
@@ -122,8 +156,8 @@ function shaderPlaceholderBase(): HTMLCanvasElement {
  */
 async function gradientThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeThumb> {
   const cfg = config as GradientConfig
-  // At the DOCUMENT's aspect, not the box's — see `thumbDims`.
-  const { w, h } = thumbDims(aspectRatio(cfg?.canvas?.aspect ?? "1:1"), size)
+  // At the DOCUMENT's aspect, not the box's — see `thumbDimsFor`.
+  const { w, h } = thumbDimsFor('gradient', config, size)
   const gpu = gradientFx.render(cfg, w, h, 0)
   const out = freshCanvas(w, h)
   out.getContext('2d')!.drawImage(gpu, 0, 0)
@@ -192,7 +226,7 @@ async function shaderThumb(config: unknown, size = DEFAULT_SIZE): Promise<TakeTh
 async function shapeThumb(config: unknown, size = DEFAULT_SIZE, aspect?: number): Promise<TakeThumb> {
   const looksLikeDoc = !!config && typeof config === 'object' && Array.isArray((config as { layers?: unknown }).layers)
   const doc: GeoStudioDoc = studioDocFromPersisted(looksLikeDoc ? { doc: config } : { config })
-  const { w, h } = thumbDims(aspect ?? 1, size)
+  const { w, h } = thumbDimsFor('shape', config, size, aspect)
   const shapes = await renderStudio(doc)
   const out = freshCanvas(w, h)
   drawToCanvas(shapes, out.getContext('2d')!, w, h, studioFramePad(doc))
@@ -212,7 +246,7 @@ async function shapeThumb(config: unknown, size = DEFAULT_SIZE, aspect?: number)
 async function vectorTypeThumb(config: unknown, size = DEFAULT_SIZE, aspect?: number): Promise<TakeThumb> {
   const cfg = mergeVectorTypeConfig(config)
   const font = await loadVariableFont(cfg.fontId)
-  const { w, h } = thumbDims(aspect ?? 1, size)
+  const { w, h } = thumbDimsFor('vectortype', config, size, aspect)
   const out = freshCanvas(w, h)
   drawVectorTypeToCanvas(out, font, cfg, vtStillTime(cfg), { width: w, height: h, background: null })
   return out
@@ -245,7 +279,13 @@ export function takeThumbFor(studioId: string): TakeThumbAdapter {
   return async (config: unknown, size = DEFAULT_SIZE, aspect?: number) => {
     try {
       return await adapter(config, size, aspect)
-    } catch {
+    } catch (e) {
+      // NEVER silent. A graceful fallback that says nothing turns an integration
+      // failure into a strip of "couldn't draw" tiles with no way to tell a
+      // missing WebGL context from a broken adapter — which is exactly how one
+      // report cost a day. The tile still degrades; it just stops being a
+      // mystery.
+      console.warn(`[takes] the ${studioId} thumbnail could not be drawn:`, e)
       return null
     }
   }
