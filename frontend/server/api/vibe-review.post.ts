@@ -4,15 +4,18 @@
  *
  * A SIBLING of /api/vibe rather than a mode of it, deliberately. That route's
  * request body is pinned byte-identical by a back-compat characterization test,
- * and its source text is scanned by `aimodels-effort.unit.spec.ts` for the exact
- * model id; folding a vision branch with image payloads into it would put two
- * request shapes and two schemas behind one pinned contract, and would let this
- * pass's failure modes (a timeout, a 4xx on an image) reach the ask path. Here
- * they cannot: the client treats every failure as "no review happened".
+ * and its source text is scanned for the exact model id; folding a vision branch
+ * with image payloads into it would put two request shapes and two schemas
+ * behind one pinned contract, and would let this pass's failure modes (a
+ * timeout, a 4xx on an image) reach the ask path. Here they cannot: the client
+ * treats every failure as "no review happened".
  *
- * Model is hardcoded to Haiku for the same reason vibe.post.ts hardcodes it —
- * this tier has no thinking or latency knob, and Haiku ERRORS on
- * `output_config.effort`, so the request must never grow one by copy-paste.
+ * Model is hardcoded to Haiku for the same reason vibe.post.ts hardcodes it:
+ * this tier has no thinking or latency knob, and passing one makes Haiku reject
+ * the whole call. The aimodels source-scan spec checks this file for that knob's
+ * name and fails if it appears ANYWHERE — which is why the name is not written
+ * out here, in code or in prose. See that spec, and vibe.post.ts, for the full
+ * story.
  */
 import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'

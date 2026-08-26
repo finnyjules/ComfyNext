@@ -55,11 +55,18 @@ describe('buildAgentPlanRequestBody (server/api/agent-plan.post.ts)', () => {
 
 describe('Haiku-hardcoded routes never gain output_config.effort', () => {
   // claude-haiku-4-5 has no thinking/effort support; output_config.effort 400s
-  // on it. These three routes hardcode the model string directly (they don't
-  // go through modelForTier), so a future copy-paste of the plan/campaign
-  // effort pattern into one of them would silently break in production.
+  // on it. These routes hardcode the model string directly (they don't go
+  // through modelForTier), so a future copy-paste of the plan/campaign effort
+  // pattern into one of them would silently break in production.
+  //
+  // `vibe-review` has its own builder pin (vibe-review.unit.spec.ts asserts the
+  // assembled body carries no "effort"), but that only covers what the builder
+  // returns. The scan here is what catches an `effort` added at HANDLER level —
+  // spread into the fetch body after the builder, or slipped into a second call
+  // site — which is exactly the copy-paste this guard exists for.
   const HAIKU_ROUTES = [
     'server/api/vibe.post.ts',
+    'server/api/vibe-review.post.ts',
     'server/api/copy-assist.post.ts',
     'server/api/pipeline-suggest.post.ts',
   ]

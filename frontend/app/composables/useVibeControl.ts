@@ -139,6 +139,12 @@ export function useVibeControl() {
         body: { apiKey: apiKey || undefined, controls, phrase, takes, current },
         timeout: timeoutMs,
       })
+      // The SERVER's parse is authoritative — the route already ran this exact
+      // function over the model's reply and returned the salvaged verdicts. This
+      // second pass is defence in depth only: it guards against a response that
+      // never reached that code (a proxy, a cache, an older deployment), and it
+      // is the same function on purpose, so the two can never drift into
+      // disagreeing about what "keep" means.
       return parseTakeReview(res, takes.length)
     } catch {
       return null
