@@ -775,6 +775,25 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     const entryView = src.captureView?.() ?? null
     const entrySummary = compose.summarize(entryConfig)
 
+    /** Say it once, loudly, and put it where it can be COUNTED. A silent
+     *  fallback is how the owner came to judge the old engine believing it was
+     *  the new one — the strip looked plausible, and nothing anywhere said which
+     *  path had built it. */
+    const fellBack = (reason: string) => {
+      console.warn(`[takes] compose-and-pick unavailable, using the direct path — ${reason}`)
+      if (opts.takes) {
+        logTakeEvent({
+          studio: opts.takes.studio,
+          prompt: phrase,
+          takeLabel: '',
+          changes: [],
+          action: 'dismiss',
+          fallback: reason,
+        })
+      }
+      return false
+    }
+
     let recipes: GradientRecipe[]
     try {
       recipes = await requestRecipes(
@@ -783,11 +802,16 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
           : phrase,
         entrySummary,
       )
-    } catch {
-      console.info('[takes] compose call failed — falling back to the direct path')
-      return false
+    } catch (e) {
+      // Surface what the SERVER said where it is available — a 405 (route not
+      // reachable), a 503 (no key) and a 502 (nothing usable came back) are
+      // three completely different problems that used to look identical.
+      const err = e as { statusCode?: number, status?: number, data?: { message?: string, statusMessage?: string } } | null
+      const status = err?.statusCode ?? err?.status
+      const detail = err?.data?.message ?? err?.data?.statusMessage ?? (e instanceof Error ? e.message : String(e))
+      return fellBack(`the recipe call failed${status ? ` (${status})` : ''}: ${detail}`)
     }
-    if (recipes.length < 2) { console.info('[takes] too few usable recipes — falling back'); return false }
+    if (recipes.length < 2) return fellBack(`only ${recipes.length} usable recipe(s) came back`)
 
     // ── build and render every candidate. Local, free, and entirely ours. ────
     const adapter = takeThumbFor(src.studio)
@@ -806,7 +830,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       const thumb = await adapter(cloneConfig(config), THUMB_SIZE, src.aspect?.())
       built.push({ recipe, config, thumb })
     }
-    if (built.length < 2) { console.info('[takes] too few candidates rendered — falling back'); return false }
+    if (built.length < 2) return fellBack(`only ${built.length} of ${recipes.length} recipes rendered`)
 
     const yoursThumb = await adapter(cloneConfig(baseSnapshot), THUMB_SIZE, src.aspect?.())
     const current = asReviewImage(yoursThumb)

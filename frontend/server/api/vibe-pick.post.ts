@@ -76,7 +76,14 @@ export default defineEventHandler(async (event) => {
     // fills the rest from its own distinctness ranking, which is deterministic
     // and ours. An empty list is a legitimate answer here — it means "we could
     // not read any of that", and the client knows what to do about it.
-    return { picks: salvageEyePicks(parsed, candidates.length) }
+    const picks = salvageEyePicks(parsed, candidates.length)
+    if (!picks.length) {
+      // Not fatal here — the client fills every slot from its own ranking — but
+      // still worth naming, because "the eye-pick never works" is otherwise
+      // indistinguishable from "the eye-pick was never called".
+      console.error('[vibe-pick] no usable picks in reply:', String(text ?? '').slice(0, 500))
+    }
+    return { picks }
   }
   catch (err: any) {
     if (err.statusCode) throw err

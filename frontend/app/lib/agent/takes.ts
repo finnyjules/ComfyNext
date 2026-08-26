@@ -778,6 +778,11 @@ export interface TakeEvent {
    *  richer than a param patch: which base look, which palette, which moods a
    *  person kept — in the same words the model chose them in. */
   recipe?: { base: string, palette: string[], mood: string[] }
+  /** Set when a flow could not run and something older answered instead. The
+   *  point is countability: "how often do real runs fall back, and why" is a
+   *  question the log should be able to answer without anyone reading a browser
+   *  console. */
+  fallback?: string
 }
 
 export const TAKE_LOG_KEY = 'sailor.takeLog.v1'

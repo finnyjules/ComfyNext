@@ -59,6 +59,13 @@ export default defineEventHandler(async (event) => {
     let parsed: unknown = null
     if (text) { try { parsed = JSON.parse(text) } catch { parsed = null } }
     const recipes = salvageRecipes(parsed)
+    if (!recipes.length) {
+      // Name it in the SERVER log, like the raw-text logging on the error path
+      // above: a parse-level rejection is just as fatal to the flow as a 4xx,
+      // and the dev terminal should say which one happened without anyone
+      // having to ask for a browser console.
+      console.error('[vibe-recipes] no usable recipes in reply:', String(text ?? '').slice(0, 500))
+    }
     // Nothing usable is a real failure here — unlike the review pass, there is no
     // "leave it as it was" to fall back to inside this route. The CLIENT degrades
     // to the old blind-generation path on any error, which is the honest place
