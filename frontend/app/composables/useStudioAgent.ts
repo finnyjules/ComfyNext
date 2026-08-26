@@ -33,11 +33,11 @@ import { describeControls, validatePatch, type DescribedControl } from '~/lib/sp
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import {
-  PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN, withSuffix,
-  chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
-  type StudioTake,
+  DIFFERS_SUFFIX, PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SUBTLE_SUFFIX, THUMB_DIFF_MIN, withSuffix,
+  checkPromise, chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
+  type PromiseCheck, type StudioTake,
 } from '~/lib/agent/takes'
-import { VARIANTS_UNSUPPORTED } from '~/lib/vibePrompt'
+import { VARIANTS_UNSUPPORTED, type PromiseDirection } from '~/lib/vibePrompt'
 import { takeThumbFor, type TakeThumb } from '~/lib/agent/takeThumbs'
 
 /** How many readings to ask for. The API accepts 2–4 and rejects anything else
@@ -65,6 +65,23 @@ export interface StudioTakeMacro {
   recontrol: (config: unknown) => ControlSpec[]
 }
 
+/**
+ * The one repair a promise check is allowed to make.
+ *
+ * Deliberately narrow. A direction is the only claim with an unambiguous local
+ * correction — "the user asked for top-to-bottom and got side-to-side" has one
+ * obvious answer, and it is a value the model already implied. A colour or a
+ * tone does not: picking one would be choosing something nobody asked for and
+ * calling it the model's idea.
+ */
+export interface StudioTakeRepair {
+  /** Candidate writes for a promised direction. Validated against the take's
+   *  post-macro vocabulary before anything is applied, so a key this studio does
+   *  not offer is dropped rather than invented; return `{}` for a direction this
+   *  studio cannot aim. */
+  directionPatch: (direction: PromiseDirection, config: unknown) => Record<string, ParamValue>
+}
+
 /** What a studio must tell us to draw take thumbnails: which adapter to use, its
  *  config root, and how to view a COPY of that config as Params. The copy is why
  *  `paramsOf` exists — a thumbnail must never be drawn by mutating the config the
@@ -90,6 +107,10 @@ export interface StudioTakeSource {
   captureView?: () => unknown
   restoreView?: (view: unknown) => void
   macro?: StudioTakeMacro
+  /** How to re-aim this studio's picture when a take's promised DIRECTION did
+   *  not come out. Omit it and a direction miss is labelled instead of fixed —
+   *  which is the right answer for a studio with no key that aims anything. */
+  repair?: StudioTakeRepair
 }
 
 /** A cheap deep copy. Every studio config this runs against is the same JSON blob
@@ -228,6 +249,8 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   /** Keys a take asked for that nothing could apply — per take, for the log and
    *  for the `(partial)` caption. */
   const takeDropped = shallowRef<Map<StudioTake, string[]>>(new Map())
+  /** How each take's promise measured against its real render. */
+  const takePromiseResults = shallowRef<Map<StudioTake, PromiseCheck[]>>(new Map())
 
   const hasTakes = computed(() => takes.value.length > 0)
   /** "≈ variations of this" is honest only when the pick actually moved a dial:
@@ -281,7 +304,10 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     // does — silent dropping is what let a sunset rationale sit over a rainbow.
     const asked = Object.keys(raw).length
     const label = dropped.length * 2 > asked ? withSuffix(rawTake.label, PARTIAL_SUFFIX) : rawTake.label
-    return { take: { label, changes, rationale: rawTake.rationale }, dropped }
+    return {
+      take: { label, changes, rationale: rawTake.rationale, ...(rawTake.promise ? { promise: rawTake.promise } : {}) },
+      dropped,
+    }
   }
 
   /**
@@ -357,6 +383,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeOriginalView = null
     macroConfigs.clear()
     takeDropped.value = new Map()
+    takePromiseResults.value = new Map()
     spreadRef = null
   }
 
@@ -377,6 +404,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       ...(visualDiff === null ? {} : { visualDiff: Number(visualDiff.toFixed(2)) }),
       ...(fromPick === null ? {} : { visualDiffFromPick: Number(fromPick.toFixed(2)) }),
       ...(t && takeDropped.value.get(t)?.length ? { droppedKeys: takeDropped.value.get(t)! } : {}),
+      ...(t && takePromiseResults.value.get(t)?.length ? { promiseResults: takePromiseResults.value.get(t)! } : {}),
     })
   }
 
@@ -417,6 +445,112 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       takeThumbs.value = new Map(takeThumbs.value).set(t, thumb)
     }
     if (spreadRef) await tightenAgainstPick(list, draw)
+    await verifyPromises(list, draw)
+  }
+
+  /** The vocabulary a take's non-macro changes were (and must be) validated
+   *  against — the swapped config's when the take carries a macro. */
+  function vocabularyFor(t: StudioTake): DescribedControl[] {
+    const src = opts.takes
+    const macro = src?.macro
+    const value = macro ? t.changes.find(c => c.key === macro.key)?.value : undefined
+    if (macro && src && typeof value === 'string') {
+      const swapped = materializeMacro(value)
+      if (swapped) return describeControls(macro.recontrol(swapped), src.paramsOf(swapped))
+    }
+    return takeDescribed.value
+  }
+
+  /**
+   * Check what each take PROMISED against what it actually rendered — the
+   * general safety net over the whole intent chain. The model can be wrong, the
+   * vocabulary can be missing a key, a preset can be mis-aimed, a renderer can
+   * surprise us; all of those end as a picture that does not match the claim,
+   * and this is the one place that notices without needing to know which.
+   *
+   * Three outcomes, in order of preference:
+   *   1. the claim holds — say nothing;
+   *   2. a DIRECTION claim broke and this studio offers something to aim with —
+   *      one local repair, kept only if the check then passes;
+   *   3. anything still broken — label the tile, warn with what was measured,
+   *      and record it. Never a second model call, and never a repair for a
+   *      colour or a tone: choosing one would be inventing an intent.
+   *
+   * A take with no promise, or one whose render failed, is skipped entirely.
+   * Missing evidence is not a broken promise.
+   */
+  async function verifyPromises(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
+    const src = opts.takes
+    if (!src) return
+    let current = list
+
+    const commit = (i: number, next: StudioTake, thumb: TakeThumb) => {
+      const old = current[i]!
+      const nextList = current.slice()
+      nextList[i] = next
+      const nextThumbs = new Map(takeThumbs.value)
+      nextThumbs.delete(old)
+      nextThumbs.set(next, thumb)
+      const nextResults = new Map(takePromiseResults.value)
+      const carried = nextResults.get(old)
+      nextResults.delete(old)
+      if (carried) nextResults.set(next, carried)
+      const nextDropped = new Map(takeDropped.value)
+      const lost = nextDropped.get(old)
+      nextDropped.delete(old)
+      if (lost) nextDropped.set(next, lost)
+      current = nextList
+      takes.value = nextList
+      takeThumbs.value = nextThumbs
+      takePromiseResults.value = nextResults
+      takeDropped.value = nextDropped
+      if (selectedTake.value === old) selectedTake.value = next
+    }
+
+    for (let i = 0; i < current.length; i++) {
+      let take = current[i]!
+      const promise = take.promise
+      if (!promise) continue
+      let results = checkPromise(thumbSignature(takeThumbs.value.get(take)), promise)
+      if (!results.length) continue // nothing measurable — not a miss
+
+      // ── one local repair, for direction only ────────────────────────────
+      const missedDirection = results.some(r => r.claim === 'direction' && !r.ok)
+      if (missedDirection && promise.direction && src.repair) {
+        const patch = validatePatch(
+          src.repair.directionPatch(promise.direction, src.config()),
+          vocabularyFor(take),
+        )
+        const entries = Object.entries(patch)
+        if (entries.length) {
+          const changes = take.changes.filter(c => !(c.key in patch))
+            .concat(entries.map(([key, value]) => ({ key, value })))
+          const candidate: StudioTake = { ...take, changes }
+          const thumb = await draw(candidate)
+          if (takes.value !== current) return // superseded while we were drawing
+          const after = checkPromise(thumbSignature(thumb), promise)
+          if (after.every(r => r.claim !== 'direction' || r.ok)) {
+            // Kept — and only now, so a repair that did not work leaves no trace.
+            commit(i, candidate, thumb)
+            take = candidate
+            results = after
+          }
+        }
+      }
+
+      const failed = results.filter(r => !r.ok)
+      takePromiseResults.value = new Map(takePromiseResults.value).set(take, results)
+      if (!failed.length) continue
+
+      for (const r of failed) {
+        console.warn(`[takes] "${take.label}" promised ${r.claim} ${JSON.stringify((promise as Record<string, unknown>)[r.claim])} — the render is ${r.measured}`)
+      }
+      // ONE suffix. `(partial)` already says the stronger thing about a take
+      // that lost half its changes, so `(differs)` does not pile on.
+      if (!take.label.includes(PARTIAL_SUFFIX.trim())) {
+        commit(i, { ...take, label: withSuffix(take.label, DIFFERS_SUFFIX) }, takeThumbs.value.get(take) ?? null)
+      }
+    }
   }
 
   /**
@@ -820,7 +954,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   return {
     busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert,
     // Four Takes
-    takes, takeThumbs, takeCurrentThumb, takeDropped, selectedTake, hasTakes, canVaryTake,
+    takes, takeThumbs, takeCurrentThumb, takeDropped, takePromiseResults, selectedTake, hasTakes, canVaryTake,
     previewTake, selectTake, keepTake, dismissTakes, abandonTakes, moreDirections, variationsOfTake,
   }
 }

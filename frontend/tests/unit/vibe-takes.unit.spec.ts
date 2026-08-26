@@ -49,6 +49,43 @@ describe('back-compat: no variants → today\'s exact shape', () => {
   })
 })
 
+describe('parseTakesResponse — salvaging a promise', () => {
+  const withPromise = (promise: unknown) => ({ takes: [
+    { label: 'a', changes: [{ key: 'depth', value: 0.4 }], rationale: 'x', promise },
+    { label: 'b', changes: [{ key: 'depth', value: 0.6 }], rationale: 'y' },
+  ] })
+
+  it('keeps a well-formed promise', () => {
+    const out = parseTakesResponse(withPromise({ colors: ['orange', 'purple'], direction: 'vertical', tone: 'dark' }))
+    expect(out.takes[0]!.promise).toEqual({ colors: ['orange', 'purple'], direction: 'vertical', tone: 'dark' })
+  })
+
+  it('drops the PROMISE, never the take, when the promise is malformed', () => {
+    for (const bad of [42, 'vertical', null, [], { direction: 'sideways' }, { tone: 'beige' }, { colors: 'orange' }]) {
+      const out = parseTakesResponse(withPromise(bad))
+      expect(out.takes).toHaveLength(2)
+      expect(out.takes[0]!.label).toBe('a')
+      expect(out.takes[0]!.changes).toEqual([{ key: 'depth', value: 0.4 }])
+      expect(out.takes[0]!.promise).toBeUndefined()
+    }
+  })
+
+  it('keeps the good claims out of a partly-bad promise', () => {
+    const out = parseTakesResponse(withPromise({ colors: ['orange'], direction: 'sideways', tone: 'dark' }))
+    expect(out.takes[0]!.promise).toEqual({ colors: ['orange'], tone: 'dark' })
+  })
+
+  it('trims a colour list to three and drops non-strings', () => {
+    const out = parseTakesResponse(withPromise({ colors: ['orange', 7, 'purple', 'pink', 'red'] }))
+    expect(out.takes[0]!.promise).toEqual({ colors: ['orange', 'purple', 'pink'] })
+  })
+
+  it('a promise with nothing usable left is dropped entirely, not left empty', () => {
+    const out = parseTakesResponse(withPromise({ colors: [], direction: 'nope' }))
+    expect(out.takes[0]!.promise).toBeUndefined()
+  })
+})
+
 describe('variants requested: prompt block', () => {
   const described = describeControls(CONTROLS, { depth: 0.7 })
 
@@ -83,7 +120,21 @@ describe('variants requested: prompt block', () => {
     const withTakes = buildVibePrompt(described, 'warmer', 'Extrude', undefined, 4)
     const blockSize = withTakes.length - base.length
     expect(blockSize).toBeGreaterThan(50)
-    expect(blockSize).toBeLessThan(900)
+    // Raised from 900 when the promise instruction was added — deliberate, and
+    // the number is stated in the report. Still a paragraph, not a wall.
+    expect(blockSize).toBeLessThan(1200)
+  })
+
+  it('asks for a promise: only what pixels show, few claims, omit when unsure', () => {
+    const block = buildVibePrompt(described, 'warmer', 'Extrude', undefined, 4)
+    expect(block).toMatch(/promise/i)
+    // The three checkable things, and nothing that implies more.
+    expect(block).toMatch(/colour|color/i)
+    expect(block).toMatch(/direction/i)
+    expect(block).toMatch(/dark|light/i)
+    // The two rules that keep a promise worth checking.
+    expect(block).toMatch(/omit|unsure|only if/i)
+    expect(block).toMatch(/see|show|look/i)
   })
 })
 
@@ -154,6 +205,31 @@ describe('parseVariants: the rejection is NAMED, not just a 400', () => {
 // A model returning 5 takes, 1 take, or a 25-char label killed the whole
 // request. These specs pin the SALVAGE posture instead: keep what's usable,
 // only give up when nothing survives.
+describe('TAKES_SCHEMA — the promise', () => {
+  const take = (TAKES_SCHEMA as any).properties.takes.items
+
+  it('offers colors / direction / tone, and nothing else', () => {
+    const promise = take.properties.promise
+    expect(promise).toBeTruthy()
+    expect(Object.keys(promise.properties).sort()).toEqual(['colors', 'direction', 'tone'])
+    expect(promise.additionalProperties).toBe(false)
+  })
+
+  it('is OPTIONAL — a take that is unsure just omits it', () => {
+    expect(take.required).not.toContain('promise')
+  })
+
+  it('constrains direction and tone by enum, and says the colour count in prose', () => {
+    const promise = take.properties.promise
+    expect(promise.properties.direction.enum).toEqual(['vertical', 'horizontal', 'radial', 'none'])
+    expect(promise.properties.tone.enum).toEqual(['dark', 'light'])
+    // Counts CANNOT be minItems/maxItems here (structured outputs) — they live
+    // in the description, the same pattern `takes` itself uses.
+    expect(promise.properties.colors.description).toMatch(/1|one/i)
+    expect(promise.properties.colors.description).toMatch(/3|three/i)
+  })
+})
+
 describe('parseTakesResponse: server-side count/shape validation', () => {
   const good = (n: number) => ({
     takes: Array.from({ length: n }, (_, i) => ({
@@ -179,6 +255,31 @@ describe('parseTakesResponse: server-side count/shape validation', () => {
     const takes = good(2)
     takes.takes[0].changes[0].value = 99 // out of the 0..1 slider range
     expect(parseTakesResponse(takes).takes[0]!.changes[0]!.value).toBe(99)
+  })
+})
+
+describe('TAKES_SCHEMA — the promise', () => {
+  const take = (TAKES_SCHEMA as any).properties.takes.items
+
+  it('offers colors / direction / tone, and nothing else', () => {
+    const promise = take.properties.promise
+    expect(promise).toBeTruthy()
+    expect(Object.keys(promise.properties).sort()).toEqual(['colors', 'direction', 'tone'])
+    expect(promise.additionalProperties).toBe(false)
+  })
+
+  it('is OPTIONAL — a take that is unsure just omits it', () => {
+    expect(take.required).not.toContain('promise')
+  })
+
+  it('constrains direction and tone by enum, and says the colour count in prose', () => {
+    const promise = take.properties.promise
+    expect(promise.properties.direction.enum).toEqual(['vertical', 'horizontal', 'radial', 'none'])
+    expect(promise.properties.tone.enum).toEqual(['dark', 'light'])
+    // Counts CANNOT be minItems/maxItems here (structured outputs) — they live
+    // in the description, the same pattern `takes` itself uses.
+    expect(promise.properties.colors.description).toMatch(/1|one/i)
+    expect(promise.properties.colors.description).toMatch(/3|three/i)
   })
 })
 

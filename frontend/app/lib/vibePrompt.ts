@@ -65,6 +65,25 @@ export const TAKES_SCHEMA = {
             },
           },
           rationale: { type: 'string', description: 'One short sentence explaining this take' },
+          promise: {
+            type: 'object',
+            description: 'OPTIONAL, and only what a still picture can show. Two or three checkable claims about how this take will LOOK once rendered; omit the whole object, or any field, when unsure. Never a claim about motion, texture or mood.',
+            properties: {
+              colors: {
+                type: 'array',
+                description: 'The 1 to 3 colours that will dominate the picture, as common words: red, orange, yellow, green, teal, cyan, blue, purple, magenta, pink, white, black, grey.',
+                items: { type: 'string' },
+              },
+              direction: {
+                type: 'string',
+                description: 'How the picture reads: "vertical" (top to bottom), "horizontal" (side to side), "radial" (out from the centre), or "none" (no dominant direction).',
+                enum: ['vertical', 'horizontal', 'radial', 'none'],
+              },
+              tone: { type: 'string', description: 'Whether the picture is overall dark or light.', enum: ['dark', 'light'] },
+            },
+            required: [],
+            additionalProperties: false,
+          },
         },
         required: ['label', 'changes', 'rationale'],
         additionalProperties: false,
@@ -76,7 +95,66 @@ export const TAKES_SCHEMA = {
 }
 
 export interface VibeChange { key: string, value: string | number }
-export interface VibeTake { label: string, changes: VibeChange[], rationale: string }
+
+/** The directions a checker can measure off a still frame. */
+export const PROMISE_DIRECTIONS = ['vertical', 'horizontal', 'radial', 'none'] as const
+export type PromiseDirection = typeof PROMISE_DIRECTIONS[number]
+export const PROMISE_TONES = ['dark', 'light'] as const
+export type PromiseTone = typeof PROMISE_TONES[number]
+/** Colour words the hue-bucket checker can name. Shared with the checker so the
+ *  schema's prose and the measurement can never drift apart. */
+export const PROMISE_COLORS = [
+  'red', 'orange', 'yellow', 'green', 'teal', 'cyan', 'blue', 'purple', 'magenta', 'pink',
+  'white', 'black', 'grey',
+] as const
+export type PromiseColor = typeof PROMISE_COLORS[number]
+
+/**
+ * What a take CLAIMS its picture will look like — checkable against the real
+ * thumbnail, unlike the prose rationale beside it. Every field optional: the
+ * model is told to omit a claim rather than guess one, because an unchecked
+ * claim is worth more than a wrong one.
+ */
+export interface TakePromise {
+  colors?: string[]
+  direction?: PromiseDirection
+  tone?: PromiseTone
+}
+
+export interface VibeTake { label: string, changes: VibeChange[], rationale: string, promise?: TakePromise }
+
+/** The most colour claims a promise may carry — more than three "dominant"
+ *  colours is not a claim about dominance any more. */
+const MAX_PROMISE_COLORS = 3
+
+/**
+ * Salvage a promise the same way the rest of this function salvages a take:
+ * keep every claim that is well-formed, drop the ones that are not, and return
+ * `undefined` when nothing usable is left.
+ *
+ * The asymmetry is deliberate and load-bearing: a bad promise must never cost
+ * the take. A take is a real proposal the user can look at and keep; the promise
+ * is only our means of checking it. Dropping the take because its self-report
+ * was malformed would throw away the thing of value to protect the audit of it.
+ */
+function salvagePromise(raw: unknown): TakePromise | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const { colors, direction, tone } = raw as Record<string, unknown>
+  const out: TakePromise = {}
+  if (Array.isArray(colors)) {
+    const clean = colors.filter((c): c is string => typeof c === 'string' && !!c.trim())
+      .map(c => c.trim().toLowerCase())
+      .slice(0, MAX_PROMISE_COLORS)
+    if (clean.length) out.colors = clean
+  }
+  if (typeof direction === 'string' && (PROMISE_DIRECTIONS as readonly string[]).includes(direction)) {
+    out.direction = direction as PromiseDirection
+  }
+  if (typeof tone === 'string' && (PROMISE_TONES as readonly string[]).includes(tone)) {
+    out.tone = tone as PromiseTone
+  }
+  return Object.keys(out).length ? out : undefined
+}
 
 /**
  * The marker on the 400 this route raises for ITS OWN `variants` field
@@ -181,7 +259,8 @@ export function parseTakesResponse(raw: unknown): TakesSalvage {
     }
     const trimmedLabel = typeof rawLabel === 'string' ? rawLabel.trim() : ''
     const label = trimmedLabel ? truncateLabel(trimmedLabel) : synthesizeLabel(rationale, i)
-    candidates.push({ label, changes: cleanChanges, rationale })
+    const promise = salvagePromise((t as any).promise)
+    candidates.push({ label, changes: cleanChanges, rationale, ...(promise ? { promise } : {}) })
   })
 
   if (!candidates.length) return { takes: [], reason: 'no take in the response had a usable shape' }
@@ -197,7 +276,9 @@ export function parseTakesResponse(raw: unknown): TakesSalvage {
  *  (APPROXIMATION_HONESTY_GUIDANCE in lib/agent/studioTune.ts — approximate,
  *  then say so) rather than duplicating its full clause text here. */
 function buildTakesBlock(variants: number): string {
-  return `MULTIPLE TAKES (${variants}): propose ${variants} genuinely different readings of the request, not ${variants} nudges of one idea — each take must differ from the OTHERS on a named dimension (e.g. warmer vs cooler, tighter vs looser, bolder vs quieter), never numeric jitter of the same idea restated. Give each take a short angle-name label, ≤24 characters (e.g. "warmer", "high contrast") — a name, not a sentence. If a whole-look control is offered (one that sets the base STYLE rather than nudging a value), answer a request for a new look with takes that each pick a DIFFERENT one — nudging colours cannot change a base look. If the request names a look these controls can't fully reach, follow this agent's honesty convention: label the closest take "closest: <the requested look>", say in its rationale that it only approximates the request, and keep the remaining takes genuinely distinct from each other and from it.`
+  return `MULTIPLE TAKES (${variants}): propose ${variants} genuinely different readings of the request, not ${variants} nudges of one idea — each take must differ from the OTHERS on a named dimension (e.g. warmer vs cooler, tighter vs looser, bolder vs quieter), never numeric jitter of the same idea restated. Give each take a short angle-name label, ≤24 characters (e.g. "warmer", "high contrast") — a name, not a sentence. If a whole-look control is offered (one that sets the base STYLE rather than nudging a value), answer a request for a new look with takes that each pick a DIFFERENT one — nudging colours cannot change a base look. If the request names a look these controls can't fully reach, follow this agent's honesty convention: label the closest take "closest: <the requested look>", say in its rationale that it only approximates the request, and keep the remaining takes genuinely distinct from each other and from it.
+
+PROMISE (optional): 2-3 claims about what the render will SHOW — dominant colours (1-3), direction (vertical/horizontal/radial/none), dark or light. Each is CHECKED against the real picture, so claim only what you are sure the pixels will show and omit anything you are unsure of.`
 }
 
 /** Build the user prompt: the effect, its AI-editable controls (with ranges,

@@ -137,6 +137,21 @@ const gradientAgent = useStudioAgent({
     // one-layer preset permanently moves the user's selection to layer 0.
     captureView: () => activeLayer.value,
     restoreView: (v) => { activeLayer.value = Math.min(Number(v) || 0, config.value.layers.length - 1) },
+    // The ONE repair a broken promise may make here. Gradient is the only one of
+    // the four studios that offers a key which aims the whole picture: flow.angle
+    // for a field layout, layer.ramp.angle for a ramp one. Both are written and
+    // whichever the current layout does not offer is dropped by validation, so
+    // nothing is invented. 90° reads top-to-bottom, 0° side-to-side (measured
+    // against the studio, not assumed). radial/none get no patch — this studio
+    // has no key that produces them on demand, so those are labelled instead.
+    repair: {
+      directionPatch: (dir) => {
+        const angle = dir === 'vertical' ? 90 : dir === 'horizontal' ? 0 : null
+        const patch: Record<string, string | number> = {}
+        if (angle !== null) { patch['flow.angle'] = angle; patch['layer.ramp.angle'] = angle }
+        return patch
+      },
+    },
     macro: {
       key: 'preset',
       apply: name => buildGradientPreset(name),

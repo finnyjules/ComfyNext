@@ -102,3 +102,53 @@ above**.
   (render determinism, size, error tile); strip interaction tests (hover restore,
   keep commit, yours-undo, esc).
 - Repo hygiene as this week: foreign WIP intact, own hunks, vue-tsc baseline, TDD.
+
+---
+
+## Addition (2026-08-25): Take promises — the model says what it did, we check the pixels
+
+*Approved by Julien ("let's do 2") after the sideways-sunset report.*
+
+### In simple terms
+
+A take's rationale is prose: it can describe a sunset while the picture is a
+rainbow, and nothing notices. So each take may now also carry a **promise** — two
+or three claims about what its picture will LOOK like, in terms a machine can
+measure. When the thumbnail lands we measure it. A direction that came out wrong
+gets one local repair attempt; anything still off gets an honest label on the
+tile. No second model call, ever.
+
+This is the general safety net for the whole intent chain, not a fix for one bug:
+the model can be wrong, the vocabulary can be missing a key, a preset can be
+mis-aimed, a renderer can surprise us — and all of those end the same way, as a
+picture that does not match what was claimed. It would have caught the sideways
+sunset with no diagnosis at all.
+
+### Scope
+
+7. **Promise.** Each take may carry `promise: { colors?, direction?, tone? }` —
+   at most three claims, only ever about what a still frame can show: one to
+   three common colour words, a direction (`vertical` / `horizontal` / `radial` /
+   `none`), and `dark` / `light`. Omitted when the model is unsure; a malformed
+   promise is DROPPED and the take kept (never the reverse).
+8. **Checkers.** Pure functions over the same 32² downsample the visual-diff
+   guard already uses: a hue-bucket histogram for colours, row-vs-column mean
+   change for direction (centre-vs-edge for `radial`, both-low for `none`), mean
+   luminance with a dead zone for tone. A render that failed is *skipped*, never
+   failed — no evidence is not a broken promise.
+9. **One repair, then honesty.** A missed DIRECTION gets a single deterministic
+   local repair: write the direction keys that studio actually offers, validated
+   against the take's post-macro vocabulary, re-render, and keep the repair only
+   if the check now passes — otherwise revert it whole. Colour and tone misses
+   are never repaired: choosing a value the model did not ask for is inventing.
+   Anything still failing gets `(differs)` appended to the tile, a console warning
+   naming take/claim/measured, and `promiseResults` on the pick-log event.
+10. **One suffix.** A take can be both degraded and mismatched; the tile shows at
+    most one suffix, `(partial)` winning over `(differs)` — a take that lost half
+    its changes is already saying the stronger thing.
+
+### Out of scope
+
+A second model call to re-ask for a take that failed its own promise; promises on
+the single-tune path; anything the checkers cannot measure from a still (motion,
+texture "feel", typography).

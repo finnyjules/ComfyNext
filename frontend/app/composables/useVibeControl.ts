@@ -2,6 +2,7 @@ import type { ControlSpec, Params, ParamValue } from '~/lib/spacetype/effect'
 import type { DescribedControl } from '~/lib/spacetype/controlDescriptor'
 import { describeControls, validatePatch } from '~/lib/spacetype/controlDescriptor'
 import type { StudioTake } from '~/lib/agent/takes'
+import type { TakePromise } from '~/lib/vibePrompt'
 
 /** What a multi-take ask came back with. Exactly one of `takes` (two or more
  *  survived validation) or `patch` is useful — `patch` is set when the server
@@ -80,7 +81,7 @@ export function useVibeControl() {
     if (!described.length) throw new Error('This effect has no AI-adjustable controls.')
 
     const res = await $fetch<{
-      takes?: { label: string; changes: { key: string; value: ParamValue }[]; rationale?: string }[]
+      takes?: { label: string; changes: { key: string; value: ParamValue }[]; rationale?: string; promise?: TakePromise }[]
       changes?: { key: string; value: ParamValue }[]
       rationale?: string
     }>('/api/vibe', {
@@ -95,6 +96,10 @@ export function useVibeControl() {
           label: t.label,
           changes: (t.changes ?? []).map(c => ({ key: c.key, value: c.value })),
           rationale: t.rationale ?? '',
+          // The route already salvaged this (a malformed promise is dropped, the
+          // take kept); pass it through untouched so the checkers see exactly
+          // what the model claimed.
+          ...(t.promise ? { promise: t.promise } : {}),
         })),
       }
     }

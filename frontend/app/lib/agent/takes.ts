@@ -24,6 +24,7 @@
 import type { DescribedControl } from '~/lib/spacetype/controlDescriptor'
 import { validatePatch } from '~/lib/spacetype/controlDescriptor'
 import type { ParamValue } from '~/lib/spacetype/effect'
+import type { PromiseDirection, TakePromise } from '~/lib/vibePrompt'
 
 /** A take as the client handles it: the server's `VibeTake` widened to
  *  `ParamValue`, because `validatePatch` coerces a `switch` change to a real
@@ -32,6 +33,10 @@ export interface StudioTake {
   label: string
   changes: { key: string, value: ParamValue }[]
   rationale: string
+  /** What this take CLAIMS its picture will show — checked against the real
+   *  thumbnail once it renders. Absent when the model was unsure, and absent on
+   *  a parametric neighbour (a spread promises nothing of its own). */
+  promise?: TakePromise
 }
 
 // ─── seeded randomness ───────────────────────────────────────────────────────
@@ -320,6 +325,13 @@ export const RESPREAD_AMPLIFY = 2
  *  Honest rather than hidden: the tile IS nearly the same picture. */
 export const SUBTLE_SUFFIX = ' (subtle)'
 
+/** Appended to a take whose rendered picture broke a claim its own promise
+ *  made, after the one repair attempt. Never shown alongside PARTIAL_SUFFIX —
+ *  see `withSuffix`'s callers: a take that lost half its changes is already
+ *  saying the stronger thing about itself, and two parenthetical apologies on
+ *  one 52px tile is noise, not honesty. */
+export const DIFFERS_SUFFIX = ' (differs)'
+
 /** Appended to a take that lost more than half of what it asked for — the model
  *  named keys this studio cannot apply. Same honesty as SUBTLE_SUFFIX: the tile
  *  admits it is only part of the idea, instead of a rationale describing an
@@ -388,6 +400,254 @@ export function thumbDistance(a: ComparableThumb, b: ComparableThumb): number | 
   return pixelDistance(thumbSignature(a), thumbSignature(b))
 }
 
+
+// ─── take promises: measuring what a picture actually shows ──────────────────
+//
+// A rationale is prose — it can describe a sunset over a picture of a rainbow,
+// and nothing notices. A PROMISE is the same intent stated in terms these
+// functions can measure against the real thumbnail. Everything below is pure
+// maths over the SAME 32² RGBA downsample `thumbSignature` produces for the
+// visual-diff guard, so a promise costs one buffer we already had.
+//
+// The governing rule, everywhere: NO EVIDENCE IS NOT A MISS. A render that
+// failed, a fully transparent picture, a colour word we cannot name — all skip
+// the claim rather than fail it. Labelling a tile "(differs)" because we could
+// not look at it would be the same dishonesty in the other direction.
+
+/** Fraction of the picture a promised colour must own (with neighbours) to
+ *  count as dominant. 12%: low enough that a real accent colour in a four-stop
+ *  ramp passes, high enough that a stray sliver does not. */
+export const COLOR_SHARE_MIN = 0.12
+/** Below this mean per-channel change, an axis is flat — no direction claim can
+ *  be made from it either way. On the 0..255 scale `pixelDistance` uses. */
+export const DIRECTION_MIN_ENERGY = 1.5
+/** How much one axis must beat the other to be called THE direction. 1.6 keeps
+ *  an isotropic-but-busy field (marble) honestly undirected. */
+export const DIRECTION_RATIO = 1.6
+/** Centre-vs-edge mean difference above which a picture reads as radial. */
+export const RADIAL_MIN = 8
+/** Half-width of the luminance band where a picture is neither dark nor light,
+ *  and so fails NEITHER claim. */
+export const TONE_DEAD_ZONE = 0.08
+
+/** Alpha below this is empty canvas, not a colour — Shape and Vector Type draw
+ *  on transparency, and counting their background as black would make every one
+ *  of their takes "mostly black". */
+const ALPHA_FLOOR = 32
+/** Below this CHROMA (max-min channel, 0..1) a pixel has no hue worth naming;
+ *  it is white, grey or black by luminance instead.
+ *
+ *  Chroma, not HSL saturation, and the difference matters: HSL divides by
+ *  `1-|2L-1|`, which collapses toward zero at the ends of the range, so a
+ *  near-white #fafafc reports a saturation of 0.25 and would be named by a hue
+ *  it does not visibly have. Chroma stays proportional to what the eye sees. */
+const ACHROMATIC_CHROMA = 0.1
+
+/** Hue wheel, in the order the eye walks it — adjacency comes from this order,
+ *  so the table is the single source for both naming and tolerance. */
+const HUE_BUCKETS: { name: string, from: number, to: number }[] = [
+  { name: 'red', from: 345, to: 15 }, // wraps
+  { name: 'orange', from: 15, to: 45 },
+  { name: 'yellow', from: 45, to: 70 },
+  { name: 'green', from: 70, to: 160 },
+  { name: 'teal', from: 160, to: 185 },
+  { name: 'cyan', from: 185, to: 200 },
+  { name: 'blue', from: 200, to: 255 },
+  { name: 'purple', from: 255, to: 285 },
+  { name: 'magenta', from: 285, to: 320 },
+  { name: 'pink', from: 320, to: 345 },
+]
+
+/** Who counts as "close enough" to whom. The chromatic ring is circular; grey
+ *  sits between white and black, which are NOT neighbours of each other. */
+const NEIGHBOURS: Record<string, string[]> = (() => {
+  const out: Record<string, string[]> = {}
+  HUE_BUCKETS.forEach((b, i) => {
+    const prev = HUE_BUCKETS[(i - 1 + HUE_BUCKETS.length) % HUE_BUCKETS.length]!
+    const next = HUE_BUCKETS[(i + 1) % HUE_BUCKETS.length]!
+    out[b.name] = [prev.name, next.name]
+  })
+  out.white = ['grey']
+  out.grey = ['white', 'black']
+  out.black = ['grey']
+  return out
+})()
+
+/** Every name `measureColors` can produce, and so every name a promise can be
+ *  checked against. Anything else is unmeasurable, not wrong. */
+export const MEASURABLE_COLORS: string[] = [...HUE_BUCKETS.map(b => b.name), 'white', 'grey', 'black']
+
+function hueOf(r: number, g: number, b: number): { hue: number, chroma: number, lum: number } {
+  const R = r / 255, G = g / 255, B = b / 255
+  const max = Math.max(R, G, B), min = Math.min(R, G, B)
+  const d = max - min
+  const lum = (max + min) / 2
+  let hue = 0
+  if (d !== 0) {
+    if (max === R) hue = 60 * (((G - B) / d) % 6)
+    else if (max === G) hue = 60 * ((B - R) / d + 2)
+    else hue = 60 * ((R - G) / d + 4)
+  }
+  return { hue: (hue + 360) % 360, chroma: d, lum }
+}
+
+function nameOf(r: number, g: number, b: number): string {
+  const { hue, chroma, lum } = hueOf(r, g, b)
+  if (chroma < ACHROMATIC_CHROMA) return lum > 0.85 ? 'white' : lum < 0.15 ? 'black' : 'grey'
+  for (const b2 of HUE_BUCKETS) {
+    if (b2.from > b2.to) { if (hue >= b2.from || hue < b2.to) return b2.name } // the wrap-around bucket
+    else if (hue >= b2.from && hue < b2.to) return b2.name
+  }
+  return 'grey'
+}
+
+export interface ColorMeasure {
+  /** name → fraction of the OPAQUE pixels. */
+  shares: Record<string, number>
+  /** How many pixels were opaque enough to count. 0 ⇒ nothing measurable. */
+  total: number
+}
+
+/** The picture's colour histogram, by name. */
+export function measureColors(sig: Uint8ClampedArray): ColorMeasure {
+  const counts: Record<string, number> = {}
+  let total = 0
+  for (let i = 0; i < sig.length; i += 4) {
+    if (sig[i + 3]! < ALPHA_FLOOR) continue
+    const name = nameOf(sig[i]!, sig[i + 1]!, sig[i + 2]!)
+    counts[name] = (counts[name] ?? 0) + 1
+    total++
+  }
+  const shares: Record<string, number> = {}
+  if (total) for (const [k, v] of Object.entries(counts)) shares[k] = v / total
+  return { shares, total }
+}
+
+export interface DirectionMeasure {
+  direction: PromiseDirection
+  vertical: number
+  horizontal: number
+  centreEdge: number
+}
+
+/**
+ * Which way the picture reads. `vertical`/`horizontal` come from the same
+ * row-to-row vs column-to-column mean change measured live on the real studio;
+ * `radial` from centre-vs-edge; `none` when no axis dominates AND the picture is
+ * not radial, which is the honest answer for something busy but undirected.
+ */
+export function measureDirection(sig: Uint8ClampedArray, size = THUMB_DIFF_SIZE): DirectionMeasure {
+  const at = (x: number, y: number) => (y * size + x) * 4
+  let vert = 0, horiz = 0, n = 0
+  for (let y = 0; y < size - 1; y++) {
+    for (let x = 0; x < size - 1; x++) {
+      const a = at(x, y), down = at(x, y + 1), right = at(x + 1, y)
+      for (let k = 0; k < 3; k++) {
+        vert += Math.abs(sig[a + k]! - sig[down + k]!)
+        horiz += Math.abs(sig[a + k]! - sig[right + k]!)
+      }
+      n += 3
+    }
+  }
+  const vertical = n ? vert / n : 0
+  const horizontal = n ? horiz / n : 0
+
+  // Centre disc vs outer ring, on the same buffer.
+  const c = (size - 1) / 2, maxR = Math.hypot(c, c)
+  let inSum = [0, 0, 0], inN = 0, outSum = [0, 0, 0], outN = 0
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = at(x, y), d = Math.hypot(x - c, y - c) / maxR
+      if (d < 0.35) { for (let k = 0; k < 3; k++) inSum[k]! += sig[i + k]!; inN++ }
+      else if (d > 0.75) { for (let k = 0; k < 3; k++) outSum[k]! += sig[i + k]!; outN++ }
+    }
+  }
+  let centreEdge = 0
+  if (inN && outN) {
+    for (let k = 0; k < 3; k++) centreEdge += Math.abs(inSum[k]! / inN - outSum[k]! / outN)
+    centreEdge /= 3
+  }
+
+  const isVertical = vertical >= DIRECTION_MIN_ENERGY && vertical >= horizontal * DIRECTION_RATIO
+  const isHorizontal = horizontal >= DIRECTION_MIN_ENERGY && horizontal >= vertical * DIRECTION_RATIO
+  const direction: PromiseDirection = isVertical
+    ? 'vertical'
+    : isHorizontal
+      ? 'horizontal'
+      : centreEdge >= RADIAL_MIN ? 'radial' : 'none'
+  return { direction, vertical, horizontal, centreEdge }
+}
+
+export interface ToneMeasure { tone: 'dark' | 'light' | 'mid', luminance: number }
+
+/** Mean perceived luminance, 0..1, with a middle band that belongs to neither
+ *  claim — a mid-grey picture is not evidence against "dark" OR "light". */
+export function measureTone(sig: Uint8ClampedArray): ToneMeasure {
+  let sum = 0, n = 0
+  for (let i = 0; i < sig.length; i += 4) {
+    if (sig[i + 3]! < ALPHA_FLOOR) continue
+    sum += (0.299 * sig[i]! + 0.587 * sig[i + 1]! + 0.114 * sig[i + 2]!) / 255
+    n++
+  }
+  const luminance = n ? sum / n : 0.5
+  const tone = luminance < 0.5 - TONE_DEAD_ZONE ? 'dark' : luminance > 0.5 + TONE_DEAD_ZONE ? 'light' : 'mid'
+  return { tone, luminance }
+}
+
+export type PromiseClaim = 'colors' | 'direction' | 'tone'
+export interface PromiseCheck {
+  claim: PromiseClaim
+  ok: boolean
+  /** What the picture actually showed, for the warning and the log. */
+  measured: string
+}
+
+/**
+ * Check a take's promise against its rendered thumbnail's signature.
+ *
+ * Returns one result per CHECKABLE claim — a claim we cannot measure (an unknown
+ * colour word, a picture that is entirely transparent, no signature at all)
+ * produces no result rather than a failure.
+ */
+export function checkPromise(sig: Uint8ClampedArray | null, promise: TakePromise, size = THUMB_DIFF_SIZE): PromiseCheck[] {
+  if (!sig || !sig.length) return []
+  const out: PromiseCheck[] = []
+
+  if (promise.colors?.length) {
+    const { shares, total } = measureColors(sig)
+    const known = promise.colors.filter(c => MEASURABLE_COLORS.includes(c))
+    if (total > 0 && known.length) {
+      const scoreOf = (name: string) =>
+        (shares[name] ?? 0) + (NEIGHBOURS[name] ?? []).reduce((s, nb) => s + (shares[nb] ?? 0) * 0.5, 0)
+      const misses = known.filter(c => scoreOf(c) < COLOR_SHARE_MIN)
+      const top = Object.entries(shares).sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ')
+      out.push({ claim: 'colors', ok: misses.length === 0, measured: top || 'nothing' })
+    }
+  }
+
+  if (promise.direction) {
+    const m = measureDirection(sig, size)
+    out.push({
+      claim: 'direction',
+      ok: m.direction === promise.direction,
+      measured: `${m.direction} (v ${m.vertical.toFixed(1)} / h ${m.horizontal.toFixed(1)} / centre ${m.centreEdge.toFixed(1)})`,
+    })
+  }
+
+  if (promise.tone) {
+    const m = measureTone(sig)
+    // The dead zone belongs to both claims: `mid` never fails either.
+    out.push({
+      claim: 'tone',
+      ok: m.tone === 'mid' || m.tone === promise.tone,
+      measured: `${m.tone} (${m.luminance.toFixed(2)})`,
+    })
+  }
+
+  return out
+}
+
 // ─── the pick log ────────────────────────────────────────────────────────────
 
 export type TakeAction = 'keep' | 'dismiss' | 'switch'
@@ -415,6 +675,9 @@ export interface TakeEvent {
   /** Keys the take asked for that nothing could apply. Present only when
    *  non-empty; the third time silent key-dropping cost a day, it became data. */
   droppedKeys?: string[]
+  /** How the take's own promise measured against its real render. Taste data
+   *  (which claims a person keeps despite a miss) and diagnostics in one. */
+  promiseResults?: PromiseCheck[]
 }
 
 export const TAKE_LOG_KEY = 'sailor.takeLog.v1'
