@@ -203,6 +203,19 @@ describe('the material-texture dials — frosted / textured / deep / flat', () =
     expect(f.flow.gloss).toBe(MOOD_DIALS.frosted!['flow.gloss'])
   })
 
+  it('frosted pushes Flow → Detail to the schema max — the crystalline icy bite', () => {
+    // Owner refinement: high-frequency Detail is the fine crystalline bite, and it
+    // is frosted-specific — the other three dials leave Detail alone.
+    const detailMax = rangeOf.get('flow.detail')!.max!
+    const f = marble(['frosted'])
+    expect(MOOD_DIALS.frosted!['flow.detail']).toBe(detailMax)   // pinned at the ceiling
+    expect(f.flow.detail).toBe(detailMax)                        // and it lands
+    expect(f.flow.detail).toBeGreaterThan(base.flow.detail)      // raised vs the base
+    for (const m of ['textured', 'deep', 'flat']) {
+      expect(MOOD_DIALS[m], `${m} must not touch flow.detail`).not.toHaveProperty('flow.detail')
+    }
+  })
+
   it('the menu offers all four, and salvage keeps a recipe naming them', () => {
     const menu = moodMenu()
     for (const m of NEW) expect(menu, m).toContain(m)
