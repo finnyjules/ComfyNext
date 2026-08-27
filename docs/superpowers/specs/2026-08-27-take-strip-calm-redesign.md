@@ -44,6 +44,10 @@ Design converged through visual brainstorming with the owner (mockups in `.super
 
 ### Actions — split by scope
 
+> **AMENDED 2026-08-27:** the ≈ Variations per-card button was REMOVED after live use (commit 50e31e310) — it did not work well and was disabled on the whole compose flow anyway. Cards now carry **Keep only**; the bar (Cancel + Re-roll) is unchanged. Everything below about Variations is superseded.
+
+
+
 Per-take actions live on the card; whole-strip actions live on the bar.
 
 - **On the card (revealed on hover/focus/selected):** `≈ Variations` and `Keep`, in a bottom action row over a subtle dark scrim (bottom gradient so buttons stay legible over any gradient).
