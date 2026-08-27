@@ -70,4 +70,6 @@ And the grey-box rung is secretly the bridge again: the same blockout that lets 
 
 Not with the flashy half. The load-bearing mechanic — *dive into a living clip, edit the real studio, pop back, nothing frozen* — is proven first with the cheapest material: one procedural studio, live and editable in place, on the timeline that already ships. Then the same seam carries symbols (change once, update everywhere), then every other studio, then the AI shot. The bridge arrives not as a launch but as the day both halves are standing on the same floor.
 
+**Elements rides this order, deliberately not first** (decided 2026-08-27). The Elements gallery — our answer to Butter's blocks, adapted to our frame with brand-kit taste on arrival — is firmly part of the strategy: it's the casual front door, the drop-it-and-it's-already-good gesture. But it's a *door*, and doors are worth more once the house behind them is standing. The spec is approved and waits behind the timeline mechanic; when Elements lands, it lands as ready-made living things that inherit everything the spine has by then — including, eventually, a place on the timeline.
+
 First step: [specs/2026-08-27-timeline-live-studio-clip-editing-design.md](superpowers/specs/2026-08-27-timeline-live-studio-clip-editing-design.md).
