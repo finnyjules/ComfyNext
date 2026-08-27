@@ -23,9 +23,9 @@ function mountStrip(over: Record<string, unknown> = {}) {
 }
 
 const tiles = (w: any) => w.findAll('[data-testid="take-tile"]')
-// The per-card actions (Keep/Variations) are DOM siblings of the tile button,
-// not descendants of it (a button cannot nest inside a button) — so tests
-// that need to reach them scope through the wrapping cell, not the tile.
+// The per-card action (Keep) is a DOM sibling of the tile button, not a
+// descendant of it (a button cannot nest inside a button) — so tests that
+// need to reach it scope through the wrapping cell, not the tile.
 const cells = (w: any) => w.findAll('[data-testid="take-cell"]')
 const base = () => ({ takes: TAKES, thumbs: thumbsFor(TAKES) })
 
@@ -86,8 +86,8 @@ describe('TakeStrip — layout', () => {
 describe('TakeStrip — emits', () => {
   it('hovering a take emits hover(take); leaving it emits hover(null)', async () => {
     // Hover is cell-scoped (not tile-scoped) so reaching for the per-card
-    // Keep/Variations buttons never reverts the preview — see the
-    // "held while reaching for its actions" test below.
+    // Keep button never reverts the preview — see the "held while reaching
+    // for its actions" test below.
     const w = mountStrip()
     await cells(w)[1]!.trigger('mouseenter')
     expect(w.emitted('hover')![0]).toEqual([TAKES[1]])
@@ -188,7 +188,7 @@ describe('TakeStrip — action bar', () => {
 })
 
 describe('TakeStrip — gating', () => {
-  // Per-card Keep/Variations disabled-state coverage lives in "per-card actions" below.
+  // Per-card Keep disabled-state coverage lives in "per-card actions" below.
 
   it('busy marks the strip busy', async () => {
     const w = mountStrip({ selected: TAKES[0], busy: true })
@@ -203,11 +203,10 @@ describe('TakeStrip — gating', () => {
 })
 
 describe('TakeStrip — per-card actions', () => {
-  it('each take has its own Keep and Variations', () => {
+  it('each take has its own Keep', () => {
     const w = mount(TakeStrip, { props: base() })
     for (const cell of cells(w)) {
       expect(cell.find('[data-testid="take-keep"]').exists()).toBe(true)
-      expect(cell.find('[data-testid="take-variations"]').exists()).toBe(true)
     }
   })
   it('Keep on a card selects that take then keeps it', async () => {
@@ -216,20 +215,9 @@ describe('TakeStrip — per-card actions', () => {
     expect(w.emitted('select')![0]).toEqual([w.props('takes')[1]])
     expect(w.emitted('keep')).toHaveLength(1)
   })
-  it('Variations on a card emits variationsOf(thatTake)', async () => {
-    const w = mount(TakeStrip, { props: base() })
-    await cells(w)[2]!.get('[data-testid="take-variations"]').trigger('click')
-    expect(w.emitted('variationsOf')![0]).toEqual([w.props('takes')[2]])
-  })
-  it('Variations is disabled when canVary is false; Keep is not', () => {
-    const w = mount(TakeStrip, { props: { ...base(), canVary: false } })
-    expect(cells(w)[0]!.get('[data-testid="take-variations"]').attributes('disabled')).toBeDefined()
-    expect(cells(w)[0]!.get('[data-testid="take-keep"]').attributes('disabled')).toBeUndefined()
-  })
   it('busy disables every card action', () => {
     const w = mount(TakeStrip, { props: { ...base(), busy: true } })
     expect(cells(w)[0]!.get('[data-testid="take-keep"]').attributes('disabled')).toBeDefined()
-    expect(cells(w)[0]!.get('[data-testid="take-variations"]').attributes('disabled')).toBeDefined()
   })
   it('takes carry no on-tile text label', () => {
     const w = mount(TakeStrip, { props: base() })
@@ -238,14 +226,14 @@ describe('TakeStrip — per-card actions', () => {
     for (const tile of tiles(w))
       expect(tile.find('.take-label').exists()).toBe(false)
   })
-  it('a card’s Keep/Variations are revealed when that take is selected (not just on hover)', () => {
+  it('a card’s Keep is revealed when that take is selected (not just on hover)', () => {
     const w = mount(TakeStrip, { props: { ...base(), selected: TAKES[0] } })
     const overlay = cells(w)[0]!.get('[data-testid="take-keep"]').element.parentElement as HTMLElement
     expect(overlay.className).toContain('!opacity-100')
   })
   it('the preview holds while reaching for a card’s Keep button — hover is cell-scoped, not tile-scoped', async () => {
-    // Regression for the flicker bug: Keep/Variations sit on top of the tile
-    // via absolute positioning but are DOM SIBLINGS of it (buttons can't
+    // Regression for the flicker bug: Keep sits on top of the tile
+    // via absolute positioning but is a DOM SIBLING of it (buttons can't
     // nest). If hover/leave lived on the tile button, moving off it onto the
     // overlaid Keep button would fire the tile's mouseleave right as the user
     // reaches for it, reverting the live preview mid-click. Hover now lives

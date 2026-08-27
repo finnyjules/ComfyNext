@@ -12,6 +12,15 @@
 // exactly the error-tile path, and is asserted as such), and no pointer is real
 // (per the house rule, synthetic events prove nothing about hover). Task 5's
 // live pass owns both.
+//
+// The ONE exception: the "pick log" describe block's visualDiff tests need a
+// genuinely comparable pair of thumbnails to prove `logTake` writes a real
+// number rather than always omitting the field. Rather than faking `document`
+// (which would change what every OTHER test's real, WebGL-less adapter throws
+// on), those two takeThumbFor/thumbDistance seams below are patched to notice
+// one marker property, `__fakeShade` — present only in that block's own fixture
+// — and fall through to the real implementation for everything else, so no
+// other test in this file is affected.
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 
 const fetchMock = vi.fn()
@@ -20,6 +29,31 @@ vi.mock('ofetch', () => ({ $fetch: (...args: unknown[]) => fetchMock(...args) })
 // as free identifiers; in a plain vitest module those resolve off globalThis.
 ;(globalThis as any).$fetch = (...args: unknown[]) => fetchMock(...args)
 ;(globalThis as any).useLocalSettings = () => ({ getLocalSetting: () => 'test-key' })
+
+vi.mock('~/lib/agent/takeThumbs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('~/lib/agent/takeThumbs')>()
+  return {
+    ...real,
+    takeThumbFor: (studioId: string) => {
+      const realAdapter = real.takeThumbFor(studioId)
+      return async (config: unknown, size?: number, aspect?: number) => {
+        const shade = (config as any)?.__fakeShade
+        if (typeof shade === 'number') return { __shade: shade } as any
+        return realAdapter(config, size, aspect)
+      }
+    },
+  }
+})
+vi.mock('~/lib/agent/takes', async (importOriginal) => {
+  const real = await importOriginal<typeof import('~/lib/agent/takes')>()
+  const isFake = (t: unknown): t is { __shade: number } =>
+    !!t && typeof t === 'object' && typeof (t as any).__shade === 'number'
+  return {
+    ...real,
+    thumbDistance: (a: unknown, b: unknown) =>
+      isFake(a) && isFake(b) ? Math.abs(a.__shade - b.__shade) : real.thumbDistance(a as any, b as any),
+  }
+})
 
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
@@ -45,7 +79,7 @@ const TAKES = [
   { label: 'warmer', changes: [{ key: 'hue', value: 40 }], rationale: 'pushes amber' },
   { label: 'softer', changes: [{ key: 'softness', value: 0.8 }], rationale: 'softer edges' },
   { label: 'grainy', changes: [{ key: 'grain', value: 0.6 }], rationale: 'adds tooth' },
-  // Changes nothing numeric — the "≈ variations" button must grey out for it.
+  // Changes nothing numeric — an enum-only take.
   { label: 'loud', changes: [{ key: 'mood', value: 'loud' }], rationale: 'turns it up' },
 ]
 
@@ -252,63 +286,7 @@ describe('useStudioAgent — keep commits through the existing path', () => {
   })
 })
 
-describe('useStudioAgent — the two buttons', () => {
-  it('≈ variations spreads locally around the pick — no second model call', async () => {
-    fetchMock.mockResolvedValue({ takes: TAKES })
-    const { agent } = makeAgent()
-    await agent.ask('dreamier')
-    const callsAfterAsk = fetchMock.mock.calls.length
-
-    agent.selectTake(agent.takes.value[0])
-    expect(agent.canVaryTake.value).toBe(true)
-    agent.variationsOfTake(agent.takes.value[0])
-
-    expect(fetchMock.mock.calls.length).toBe(callsAfterAsk)
-    expect(agent.takes.value).toHaveLength(4)
-    expect(agent.takes.value.map((t: StudioTake) => t.label)).not.toContain('warmer')
-    expect(agent.selectedTake.value).toBeNull()
-  })
-
-  it('greys ≈ variations when the pick moved nothing numeric', async () => {
-    fetchMock.mockResolvedValue({ takes: TAKES })
-    const { agent } = makeAgent()
-    await agent.ask('dreamier')
-
-    agent.selectTake(agent.takes.value[3]) // the enum-only take
-    expect(agent.canVaryTake.value).toBe(false)
-    const list = agent.takes.value
-    agent.variationsOfTake(agent.takes.value[3])
-    expect(agent.takes.value).toBe(list) // refused, rather than spreading unrelated sliders
-  })
-
-  it('spreading clears the selection AND the preview it was showing', async () => {
-    // Without this the strip would say "nothing selected" while the studio still
-    // showed the take that was selected a moment ago.
-    fetchMock.mockResolvedValue({ takes: TAKES })
-    const { agent, config } = makeAgent()
-    await agent.ask('dreamier')
-    const before = JSON.stringify(config)
-
-    agent.selectTake(agent.takes.value[0])
-    agent.variationsOfTake(agent.takes.value[0])
-
-    expect(agent.selectedTake.value).toBeNull()
-    expect(JSON.stringify(config)).toBe(before)
-  })
-
-  it('a spread neighbour still restores byte-identically', async () => {
-    fetchMock.mockResolvedValue({ takes: TAKES })
-    const { agent, config } = makeAgent()
-    await agent.ask('dreamier')
-    const before = JSON.stringify(config)
-
-    agent.selectTake(agent.takes.value[0])
-    agent.variationsOfTake(agent.takes.value[0])
-    agent.previewTake(agent.takes.value[0])
-    agent.previewTake(null)
-    expect(JSON.stringify(config)).toBe(before)
-  })
-
+describe('useStudioAgent — ↻ different directions', () => {
   it('↻ different directions refetches with variants and a different phrase', async () => {
     fetchMock.mockResolvedValue({ takes: TAKES })
     const { agent } = makeAgent()
@@ -382,6 +360,51 @@ describe('useStudioAgent — the pick log', () => {
     agent.selectTake(agent.takes.value[0])
     agent.selectTake(null)
     expect(readTakeLog().at(-1)).toMatchObject({ action: 'switch', takeLabel: 'yours', changes: [] })
+  })
+
+  // Migrated from the deleted `take-variations-visual.unit.spec.ts` (its
+  // variations/spread coverage went with the feature; these two prove the
+  // SHARED, non-spread `visualDiff` logging path, which nothing else here
+  // exercises). See the module-header note above for the `__fakeShade` seam.
+  it('writes a visualDiff score alongside the decision', async () => {
+    const VISUAL_CONTROLS: ControlSpec[] = [
+      ...CONTROLS,
+      { key: '__fakeShade', label: 'Fake shade', kind: 'slider', min: 0, max: 255, step: 1, default: 0 },
+    ]
+    // "yours" renders shade 40; the picked take renders shade 200 — visualDiff
+    // is the plain difference between the two, the same maths `pixelDistance`
+    // does over real pixels (covered for real elsewhere; this test is about
+    // `logTake` writing the number at all, not about the pixel maths itself).
+    const config = { ...startConfig(), __fakeShade: 40 } as Record<string, unknown>
+    const params = makeConfigParams(() => config)
+    const agent = useStudioAgent({
+      controls: () => VISUAL_CONTROLS,
+      params,
+      label: () => 'Test studio',
+      takes: { studio: 'gradient', config: () => config, paramsOf: (c: unknown) => makeConfigParams(() => c) },
+    } as any)
+    fetchMock.mockResolvedValue({
+      takes: [
+        { label: 'warmer', changes: [{ key: 'hue', value: 40 }, { key: '__fakeShade', value: 200 }], rationale: 'pushes amber' },
+        { label: 'softer', changes: [{ key: 'softness', value: 0.8 }, { key: '__fakeShade', value: 90 }], rationale: 'softer edges' },
+      ],
+    })
+    await agent.ask('dreamier')
+    await settle()
+
+    agent.selectTake(agent.takes.value[0])
+    const ev = readTakeLog().at(-1)!
+    expect(ev.action).toBe('switch')
+    expect(ev.visualDiff).toBe(160) // |200 − 40|
+  })
+
+  it('omits the field rather than logging a fake 0 when it cannot be measured', async () => {
+    fetchMock.mockResolvedValue({ takes: TAKES })
+    const { agent } = makeAgent()
+    await agent.ask('dreamier')
+    // No settle: the thumbnails have not landed, so there is nothing to compare.
+    agent.selectTake(agent.takes.value[0])
+    expect(readTakeLog().at(-1)!.visualDiff).toBeUndefined()
   })
 })
 

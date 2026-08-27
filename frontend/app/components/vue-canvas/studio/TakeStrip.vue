@@ -14,8 +14,7 @@
  *   • hover = preview (the parent renders the take live and restores on leave);
  *     click = select; keep commits; dismiss / Escape restores and closes.
  *   • ↻ Re-roll (different directions) sits on the whole-strip bar, always on.
- *     Keep and ≈ Variations live per-card instead — revealed on hover/focus/
- *     selection — since each names the take it acts on, not "the" selection.
+ *     Keep lives per-card instead — revealed on hover/focus/selection.
  *   • a take whose thumbnail failed shows an error tile and stays selectable —
  *     only the picture failed, not the config. A take with NO entry in the map
  *     yet is a different thing: still drawing (the strip goes up the instant the
@@ -44,10 +43,7 @@ const props = withDefaults(defineProps<{
   /** True while the model is looking at these four pictures and deciding whether
    *  to fix any of them. A hint, never a block: every tile stays usable. */
   reviewing?: boolean
-  /** False when the selected take moved nothing a "±" could be taken around —
-   *  the host decides (it owns the controls); the strip just greys the button. */
-  canVary?: boolean
-}>(), { current: null, selected: null, busy: false, reviewing: false, canVary: true })
+}>(), { current: null, selected: null, busy: false, reviewing: false })
 
 const emit = defineEmits<{
   /** Preview this take live, or (null) go back to the original. */
@@ -57,7 +53,6 @@ const emit = defineEmits<{
   keep: []
   dismiss: []
   moreDirections: []
-  variationsOf: [take: VibeTake]
 }>()
 
 function srcOf(t: Thumb): string | null {
@@ -161,10 +156,6 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
                       'bg-gradient-to-t from-black/85 to-transparent',
                       'group-hover:opacity-100 group-focus-within:opacity-100',
                       selected === t ? '!opacity-100' : '']">
-          <StudioButton data-testid="take-variations" variant="secondary" class="pointer-events-auto"
-                        :disabled="busy || !canVary" @click.stop="emit('variationsOf', t)">
-            ≈ Variations
-          </StudioButton>
           <StudioButton data-testid="take-keep" variant="primary" class="pointer-events-auto"
                         :disabled="busy" @click.stop="emit('select', t); emit('keep')">
             Keep
@@ -173,7 +164,7 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
       </div>
     </div>
 
-    <!-- ⑤ actions: two whole-strip controls. Keep/Variations live per-card, above. -->
+    <!-- ⑤ actions: two whole-strip controls. Keep lives per-card, above. -->
     <div data-testid="take-actions" class="flex items-center gap-2">
       <StudioButton data-testid="take-dismiss" variant="subtle" :disabled="busy" @click="emit('dismiss')">
         Cancel

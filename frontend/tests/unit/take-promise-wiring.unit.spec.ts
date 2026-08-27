@@ -899,24 +899,6 @@ describe('the model looks at its own takes', () => {
     await flush()
     expect(agent.reviewingTakes.value).toBe(false)
   })
-
-  it('never reviews a parametric spread — that is our maths, not the model\u2019s', async () => {
-    reviewReply([{ verdict: 'keep' }, { verdict: 'keep' }], { takes: [
-      { label: 'one', changes: [{ key: 'angle', value: 90 }], rationale: 'a' },
-      { label: 'two', changes: [{ key: 'angle', value: 30 }], rationale: 'b' },
-    ] })
-    const { agent } = makeAgent()
-    await agent.ask('a wash')
-    await flush()
-    const before = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes('vibe-review')).length
-
-    agent.selectTake(agent.takes.value[0])
-    agent.variationsOfTake(agent.takes.value[0])
-    await flush()
-
-    const after = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes('vibe-review')).length
-    expect(after).toBe(before)
-  })
 })
 
 describe('the review can never make things worse', () => {

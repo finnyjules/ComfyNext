@@ -3,13 +3,15 @@
  *
  * Two jobs, both pure-ish and both deliberately free of studio knowledge:
  *
- *  1. `spreadAroundTake` — the "≈ variations of this" button. It makes NO second
- *     model call. Given the controls the studio offered, the config values it
- *     started from, and the take the user picked, it moves the 2–3 dials that
- *     take moved most and hands back four parametric neighbours with honest,
- *     generated captions ("Softness +", "Angle −"). Seeded, so the same pick
- *     re-rolled twice gives the same four neighbours (house rule: hash of the
- *     inputs, never Math.random).
+ *  1. `spreadAroundTake` — the shared parametric-neighbour engine that keeps a
+ *     round of takes visually distinct. It makes NO second model call. Given
+ *     the controls the studio offered, the config values it started from, and
+ *     a take, it moves the 2–3 dials that take moved most and hands back four
+ *     parametric neighbours with honest, generated captions ("Softness +",
+ *     "Angle −"). Seeded, so the same take re-spread twice gives the same four
+ *     neighbours (house rule: hash of the inputs, never Math.random).
+ *     `separateDuplicates` in `useStudioAgent.ts` calls this directly, on every
+ *     model round, to pull apart take tiles that render as duplicates.
  *
  *  2. Visual distinctness — `thumbSignature`/`pixelDistance`. Configs being
  *     provably different is not the promise; the four PICTURES being different
@@ -353,13 +355,6 @@ export const THUMB_DIFF_MIN = 6
  */
 export const TAKE_DISTINCT_MIN = 20
 
-/** How much wider the ONE re-spread attempt reaches. */
-export const RESPREAD_AMPLIFY = 2
-
-/** Appended to a variation that stayed too close even after the wider re-spread.
- *  Honest rather than hidden: the tile IS nearly the same picture. */
-export const SUBTLE_SUFFIX = ' (subtle)'
-
 /** Appended to a MODEL take whose picture could not be told apart from another
  *  take's, after the one local re-spread. Lowest of the three honesty suffixes:
  *  a take that lost half its changes, or broke a claim it made itself, is saying
@@ -385,9 +380,8 @@ export function hasHonestySuffix(label: string): boolean {
 export const DIFFERS_SUFFIX = ' (differs)'
 
 /** Appended to a take that lost more than half of what it asked for — the model
- *  named keys this studio cannot apply. Same honesty as SUBTLE_SUFFIX: the tile
- *  admits it is only part of the idea, instead of a rationale describing an
- *  intent nothing carried out. */
+ *  named keys this studio cannot apply. The tile admits it is only part of the
+ *  idea, instead of a rationale describing an intent nothing carried out. */
 export const PARTIAL_SUFFIX = ' (partial)'
 
 /** The strip's tile-label budget (`caption` above targets the same number). */

@@ -33,14 +33,12 @@ function takeAgent(calls: string[], over: Record<string, unknown> = {}) {
     takeThumbs: ref(new Map()),
     takeCurrentThumb: ref(null),
     selectedTake: ref(null),
-    canVaryTake: ref(false),
     previewTake: vi.fn(),
     selectTake: vi.fn(),
     keepTake: vi.fn(),
     dismissTakes: vi.fn(),
     abandonTakes: vi.fn(() => { calls.push('abandon') }),
     moreDirections: vi.fn(),
-    variationsOfTake: vi.fn(),
     ...over,
   }
 }

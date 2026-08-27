@@ -90,11 +90,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <TakeStrip
               :takes="agent.takes.value" :thumbs="agent.takeThumbs.value"
               :current="agent.takeCurrentThumb.value" :selected="agent.selectedTake.value"
-              :busy="agent.busy.value" :can-vary="agent.canVaryTake.value"
+              :busy="agent.busy.value"
               :reviewing="agent.reviewingTakes?.value"
               @hover="agent.previewTake" @select="agent.selectTake"
               @keep="agent.keepTake" @dismiss="agent.dismissTakes"
-              @more-directions="agent.moreDirections" @variations-of="agent.variationsOfTake"
+              @more-directions="agent.moreDirections"
             />
           </div>
           <div v-if="agent || $slots.agentBar" class="mt-3 mb-3 w-full max-w-[640px] self-center shrink-0">

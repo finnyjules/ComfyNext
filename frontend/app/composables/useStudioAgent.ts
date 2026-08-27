@@ -33,10 +33,10 @@ import { describeControls, validatePatch, type DescribedControl } from '~/lib/sp
 import { buildReviewPrompt, buildReviewSchema, parseReviewResponse } from '~/lib/agent/protocol'
 import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import {
-  DIFFERS_SUFFIX, PARTIAL_SUFFIX, RESPREAD_AMPLIFY, SIMILAR_SUFFIX, SUBTLE_SUFFIX,
-  TAKE_DISTINCT_MIN, THUMB_DIFF_MIN,
+  DIFFERS_SUFFIX, PARTIAL_SUFFIX, SIMILAR_SUFFIX,
+  TAKE_DISTINCT_MIN,
   hasHonestySuffix, seededIndex, withSuffix,
-  checkPromise, chooseSpreadKeys, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
+  checkPromise, logTakeEvent, spreadAroundTake, thumbDistance, thumbSignature, pixelDistance,
   type PromiseCheck, type StudioTake,
 } from '~/lib/agent/takes'
 import { VARIANTS_UNSUPPORTED, type PromiseDirection } from '~/lib/vibePrompt'
@@ -260,11 +260,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     return built ?? null
   }
   let takeRound = 0
-  /** Set only while the strip is showing a parametric SPREAD (not model takes):
-   *  the take it spread around, its thumbnail, and the seed — everything the
-   *  render-aware re-spread below needs. Cleared for a model round, which has
-   *  nothing to be "too close to". */
-  let spreadRef: { take: StudioTake, thumb: TakeThumb, seed: string } | null = null
 
   /** Keys a take asked for that nothing could apply — per take, for the log and
    *  for the `(partial)` caption. */
@@ -278,14 +273,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   const reviewingTakes = ref(false)
 
   const hasTakes = computed(() => takes.value.length > 0)
-  /** "≈ variations of this" is honest only when the pick actually moved a dial:
-   *  spreading unrelated sliders around a colour-only take would be four
-   *  neighbours of something the user never asked about. */
-  const canVaryTake = computed(() => {
-    const t = selectedTake.value
-    if (!t) return false
-    return chooseSpreadKeys(takeDescribed.value, takeBase.value, t).length > 0
-  })
 
   /**
    * Turn ONE raw model take into the take the rest of the system handles:
@@ -417,7 +404,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takePromiseResults.value = new Map()
     takeVerdicts.value = new Map()
     reviewingTakes.value = false
-    spreadRef = null
   }
 
   function logTake(action: 'keep' | 'dismiss' | 'switch', t: StudioTake | null) {
@@ -425,9 +411,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     // How different this take LOOKED from the current design. Free to collect
     // and the only way THUMB_DIFF_MIN ever stops being a guess.
     const visualDiff = t ? thumbDistance(takeThumbs.value.get(t), takeCurrentThumb.value) : null
-    // …and, for a spread tile, the distance the GUARD actually gates on. Logging
-    // only the vs-yours number would calibrate a threshold nothing measures.
-    const fromPick = t && spreadRef ? thumbDistance(takeThumbs.value.get(t), spreadRef.thumb) : null
     logTakeEvent({
       studio: opts.takes.studio,
       prompt: lastPhrase.value,
@@ -435,7 +418,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       changes: t?.changes ?? [],
       action,
       ...(visualDiff === null ? {} : { visualDiff: Number(visualDiff.toFixed(2)) }),
-      ...(fromPick === null ? {} : { visualDiffFromPick: Number(fromPick.toFixed(2)) }),
       ...(t && takeDropped.value.get(t)?.length ? { droppedKeys: takeDropped.value.get(t)! } : {}),
       ...(t && takePromiseResults.value.get(t)?.length ? { promiseResults: takePromiseResults.value.get(t)! } : {}),
       ...(t && takeVerdicts.value.get(t) ? { reviewVerdict: takeVerdicts.value.get(t)! } : {}),
@@ -483,16 +465,12 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
       if (takes.value !== list) return // superseded by a re-roll or a dismiss
       takeThumbs.value = new Map(takeThumbs.value).set(t, thumb)
     }
-    // The see-first loop, for MODEL rounds only: a parametric spread is our own
-    // maths, and there is nothing for the model to have an opinion about.
-    if (!spreadRef) await reviewOwnTakes(list, draw)
-    if (spreadRef) await tightenAgainstPick(list, draw)
+    // The see-first loop: give the model a chance to catch its own mistakes.
+    await reviewOwnTakes(list, draw)
     // The checkers still run, and still run LAST: they were the judge, they are
     // now the backstop. Nothing they used to catch stops being caught.
     await verifyPromises(takes.value, draw)
-    // Model takes only: a spread has just been tightened against its parent by
-    // the pass above, and re-separating it here would fight that.
-    if (!spreadRef) await separateDuplicates(takes.value, draw)
+    await separateDuplicates(takes.value, draw)
   }
 
   /**
@@ -856,7 +834,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeOriginalConfig = cloneConfig(entryConfig)
     takeOriginalView = entryView
     takeCurrentThumb.value = yoursThumb
-    spreadRef = null
 
     /**
      * Put four on screen. Called twice: once immediately on OUR distinctness
@@ -1073,12 +1050,9 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
   async function verifyPromises(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
     const src = opts.takes
     if (!src) return
-    // Resync rather than trust the argument. `tightenAgainstPick` runs first and
+    // Resync rather than trust the argument. `reviewOwnTakes` runs first and
     // may have replaced whole slots, so `list` can already be a stale array —
     // and writing through a stale one would resurrect the tiles it replaced.
-    // Unreachable today only because a parametric spread carries no promise
-    // (pinned by a spec); depending on that from here would be depending on a
-    // property of a different function.
     if (takes.value !== list) return
     let current = takes.value
 
@@ -1151,111 +1125,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     }
   }
 
-  /**
-   * The honest half of "≈ variations": the four configs being provably
-   * different is not the promise — the four PICTURES being different is.
-   *
-   * Two passes, because there are two ways to disappoint. First each tile is
-   * compared with the take it spread AROUND (a variation indistinguishable from
-   * its own parent is not a variation). Then the four are compared with EACH
-   * OTHER — which is what the owner actually complained about, and what a
-   * vs-parent check alone can miss: four tiles can each sit far from the parent
-   * and still be crowded together.
-   *
-   * Either way the remedy is the same and is bounded: ONE re-spread of that slot
-   * at RESPREAD_AMPLIFY the amplitude with a different rotation seed. A slot that
-   * has already had its retry, and is still too close, is kept (it moved further,
-   * so it is the better of the two) with `(subtle)` appended and then left alone —
-   * saying so beats four tiles that quietly claim to be alternatives, and it is
-   * what stops the pairwise pass chasing a pair it cannot separate.
-   *
-   * A pair that cannot be measured (a data-URL thumb, no canvas, a render that
-   * failed) is left alone — `null` means "can't tell", never "identical", so it
-   * never triggers a re-spread and never stamps `(subtle)`.
-   */
-  async function tightenAgainstPick(list: StudioTake[], draw: (t: StudioTake) => Promise<TakeThumb>) {
-    const ref = spreadRef
-    if (!ref) return
-    const { take: refTake, seed: refSeed, thumb: refThumb } = ref
-    let current = list
-    /** Slots that have used their one re-spread. */
-    const retried = new Set<number>()
-    /** Slots already labelled `(subtle)` — the pairwise pass must stop picking
-     *  them, or it would loop on a pair no amplitude can separate. */
-    const conceded = new Set<number>()
-
-    const sigOf = (i: number) => thumbSignature(takeThumbs.value.get(current[i]!))
-
-    function commitSlot(i: number, next: StudioTake, thumb: TakeThumb) {
-      const old = current[i]!
-      const nextList = current.slice()
-      nextList[i] = next
-      const nextThumbs = new Map(takeThumbs.value)
-      nextThumbs.delete(old)
-      nextThumbs.set(next, thumb)
-      current = nextList
-      takes.value = nextList
-      takeThumbs.value = nextThumbs
-      if (selectedTake.value === old) selectedTake.value = next
-    }
-
-    /** Redraw slot `i` from a wider spread. False ⇒ superseded, stop entirely. */
-    async function widen(i: number): Promise<boolean> {
-      const wider = spreadAroundTake(
-        takeDescribed.value, takeBase.value, refTake, `${refSeed}~wider`,
-        { amplitudeScale: RESPREAD_AMPLIFY },
-      )[i]
-      retried.add(i)
-      if (!wider) return true
-      const thumb = await draw(wider)
-      if (takes.value !== current) return false
-      commitSlot(i, wider, thumb)
-      return true
-    }
-
-    function concede(i: number) {
-      conceded.add(i)
-      const t = current[i]!
-      if (t.label.endsWith(SUBTLE_SUFFIX)) return
-      commitSlot(i, { ...t, label: withSuffix(t.label, SUBTLE_SUFFIX) }, takeThumbs.value.get(t) ?? null)
-    }
-
-    // ① each tile against the take it spread around
-    const refSig = thumbSignature(refThumb)
-    if (refSig) {
-      for (let i = 0; i < current.length; i++) {
-        const d = pixelDistance(sigOf(i), refSig)
-        if (d === null || d >= THUMB_DIFF_MIN) continue
-        if (!await widen(i)) return
-        const d2 = pixelDistance(sigOf(i), refSig)
-        if (d2 !== null && d2 < THUMB_DIFF_MIN) concede(i)
-      }
-    }
-
-    // ② the four against each other. Each iteration takes the closest measurable
-    // pair whose LATER slot is still movable, and either widens it or concedes
-    // it — so every slot is touched at most twice and the loop always ends.
-    const closestPair = () => {
-      const sigs = current.map((_, i) => sigOf(i))
-      let best: { j: number, d: number } | null = null
-      for (let a = 0; a < sigs.length; a++) {
-        for (let b = a + 1; b < sigs.length; b++) {
-          if (conceded.has(b)) continue
-          const d = pixelDistance(sigs[a]!, sigs[b]!)
-          if (d === null || d >= THUMB_DIFF_MIN) continue
-          if (!best || d < best.d) best = { j: b, d }
-        }
-      }
-      return best
-    }
-    for (let guard = 0; guard < current.length * 2; guard++) {
-      const pair = closestPair()
-      if (!pair) break
-      if (retried.has(pair.j)) { concede(pair.j); continue }
-      if (!await widen(pair.j)) return
-    }
-  }
-
   /** Show a list of takes. The live config MUST equal the original when this is
    *  called — that is what makes the capture below the real prior value. */
   function setTakes(list: StudioTake[]) {
@@ -1309,7 +1178,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     takeOriginalView = opts.takes?.captureView?.() ?? null
     takeCurrentThumb.value = null
     takeDropped.value = finalized.dropped
-    spreadRef = null
     setTakes(finalized.takes)
   }
 
@@ -1382,21 +1250,6 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
    *  unrecorded (the pick log never sees the rejection). */
   function abandonTakes() {
     if (hasTakes.value) dismissTakes()
-  }
-
-  /** "≈ variations of this" — four parametric neighbours, computed here. No
-   *  model call, and none of the honesty problems a fake one would have. */
-  function variationsOfTake(t: StudioTake) {
-    if (busy.value || !opts.takes) return
-    if (!chooseSpreadKeys(takeDescribed.value, takeBase.value, t).length) return
-    const seed = `${lastPhrase.value}#${++takeRound}`
-    const next = spreadAroundTake(takeDescribed.value, takeBase.value, t, seed)
-    if (!next.length) return
-    restoreTakeOriginal()
-    // Captured BEFORE setTakes clears the thumb map — this is what the four new
-    // tiles have to look different FROM.
-    spreadRef = { take: t, thumb: takeThumbs.value.get(t) ?? null, seed }
-    setTakes(next)
   }
 
   /** "↻ different directions" — a fresh ask, pushed away from what came back
@@ -1581,7 +1434,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     busy, error, notice, review, reviewing, changes, hasProposal, hovered, ask, acceptChange, rejectChange, reroll, keep, revert,
     // Four Takes
     takes, takeThumbs, takeCurrentThumb, takeDropped, takePromiseResults, takeVerdicts, reviewingTakes,
-    selectedTake, hasTakes, canVaryTake,
-    previewTake, selectTake, keepTake, dismissTakes, abandonTakes, moreDirections, variationsOfTake,
+    selectedTake, hasTakes,
+    previewTake, selectTake, keepTake, dismissTakes, abandonTakes, moreDirections,
   }
 }
