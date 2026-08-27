@@ -128,7 +128,6 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
         <button data-testid="take-tile" type="button"
                 :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
                 :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
-                :title="t.rationale"
                 :class="[TILE, 'h-[96px] w-full',
                          selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
                 @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
@@ -142,6 +141,20 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
             couldn’t draw
           </span>
         </button>
+        <!-- styled description tooltip: supplementary weight, above its own card;
+             replaces the native title (the unstyled OS box) with something on-brand
+             that fades in after a short pause so it never fights the reveal buttons. -->
+        <div v-if="t.rationale" data-testid="take-tip"
+             :class="['pointer-events-none absolute bottom-[calc(100%+10px)] left-1/2 z-10 w-[210px] -translate-x-1/2',
+                      'rounded-[8px] border border-white/15 bg-[#161a21] px-2.5 py-2',
+                      'text-[11.5px] leading-normal text-white/70 shadow-[0_8px_24px_rgba(0,0,0,0.45)]',
+                      'opacity-0 transition-opacity duration-150 delay-[350ms]',
+                      'group-hover:opacity-100 group-focus-within:opacity-100',
+                      selected === t ? '!opacity-100 !delay-0' : '']">
+          {{ t.rationale }}
+          <span class="absolute -bottom-[5px] left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45
+                       border-b border-r border-white/15 bg-[#161a21]" />
+        </div>
         <!-- per-card actions: always in the DOM (tests need them addressable),
              revealed on hover / focus-within / when this take is selected. -->
         <div :class="['pointer-events-none absolute inset-x-0 bottom-0 flex justify-end gap-1.5 p-1.5 opacity-0 transition',

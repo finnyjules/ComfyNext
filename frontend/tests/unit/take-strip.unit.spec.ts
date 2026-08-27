@@ -343,6 +343,17 @@ describe('TakeStrip — the see-first hint', () => {
   })
 })
 
+describe('TakeStrip — description tooltip', () => {
+  it('each take has a styled tooltip with its rationale, and no native title', () => {
+    const w = mount(TakeStrip, { props: base() })
+    const first = tiles(w)[0]!
+    // native title is gone (was the unstyled OS box)
+    expect(first.attributes('title')).toBeUndefined()
+    expect(w.findAll('[data-testid="take-tip"]')).toHaveLength(w.props('takes').length)
+    expect(w.findAll('[data-testid="take-tip"]')[0]!.text()).toBe(w.props('takes')[0]!.rationale)
+  })
+})
+
 describe('TakeStrip — presentation only', () => {
   it('imports nothing but its own button (no studio, config or fetch knowledge)', async () => {
     const fs = await import('node:fs')
