@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { defaultsFromControls, type ControlSpec, type Params, type SpaceTypeEffect } from '../effect'
 import { buildReel, reelScroll, type Cell, type Timing } from '../slotGeometry'
 import { layoutChars } from '../charLayout'
-import { normalizeFill, fillIsTextured, fillShaderTexture, fillTiling, fillPrimary, type Fill } from '../fills'
+import { normalizeFill, fillIsTextured, fillShaderTexture, fillTiling, fillPrimary, fillAlpha, type Fill } from '../fills'
 import { fillIsShader } from '../fillTile'
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
@@ -28,7 +28,10 @@ const controls: ControlSpec[] = [
   { key: 'fillerDensity', label: 'Filler amount', kind: 'slider', min: 0, max: 12, step: 1, default: 4, group: 'Type' },
   // Color
   { key: 'wordFill', label: 'Word fill', kind: 'fillList', default: defaultFillsFor(1, 'slot'), group: 'Color' },
-  { key: 'slotFill', label: 'Slot fill', kind: 'fillList', default: '[{"type":"solid","a":"#15221F","b":"#000000","textColor":"#ffffff","angle":45,"density":8}]', group: 'Color' },
+  // Per-slot tile backgrounds — the fills cycle across slots. `textField: false` hides the dead
+  // "Text" picker (a slot background renders no text; the glyph is painted by wordFill). Set a
+  // fill's colour alpha (8-digit hex) below 1 for a translucent/transparent slot.
+  { key: 'slotFill', label: 'Slot fill', kind: 'fillList', default: '[{"type":"solid","a":"#15221F","b":"#000000","textColor":"#ffffff","angle":45,"density":8}]', group: 'Color', textField: false },
   // Stroke
   { key: 'frameWidth', label: 'Frame', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0, group: 'Stroke' },
   { key: 'frameColor', label: 'Frame color', kind: 'color', default: '#000000', group: 'Stroke', showIf: { key: 'frameWidth', notEquals: 0 } },
@@ -68,6 +71,19 @@ function resolveFill(raw: unknown, fallback: Fill): Fill {
     } catch { /* fall through */ }
   }
   return fallback
+}
+
+/** Parse a fillList param into an ARRAY of Fills (tolerant of a bare object or []). Used for
+ *  slotFill, whose rows cycle across slots. Always returns at least one fill. */
+function resolveFills(raw: unknown, fallback: Fill): Fill[] {
+  if (typeof raw === 'string' && raw) {
+    try {
+      const v = JSON.parse(raw)
+      if (Array.isArray(v) && v.length) return v.map(normalizeFill)
+      if (v && typeof v === 'object') return [normalizeFill(v)]
+    } catch { /* fall through */ }
+  }
+  return [fallback]
 }
 
 const WHITE_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
@@ -184,7 +200,11 @@ export const slotEffect: SpaceTypeEffect = {
     const sizeScale = n(params, 'typeSize') / 180
 
     const wf = resolveFill(params.wordFill, WHITE_FILL)
-    const sf = resolveFill(params.slotFill, DARK_SLOT_FILL)
+    // Per-slot tile backgrounds — cycle across slots (slot j → slotFills[j % n]); each honors its
+    // own colour alpha for translucent/transparent slots.
+    const slotFills = resolveFills(params.slotFill, DARK_SLOT_FILL)
+    const frameW = n(params, 'frameWidth')
+    const frameCol = new three.Color(str(params, 'frameColor'))
     const wfTextured = fillIsTextured(wf)
     let wordFillMap: THREE.Texture | null = null
     if (wfTextured) {
@@ -225,34 +245,44 @@ export const slotEffect: SpaceTypeEffect = {
         depthWrite: false,
       })
 
-      // Slot background quad (behind the reel).
-      const bgGeo = new three.PlaneGeometry(W, H, 1, 1)
-      const bgMat = new three.MeshBasicMaterial({
-        map: fillIsTextured(sf) ? fillShaderTexture(three, sf) : null,
-        color: fillIsTextured(sf) ? new three.Color('#ffffff') : fillPrimary(three, sf),
-        side: three.DoubleSide,
-        transparent: true,
-        depthWrite: false,
-      })
-      const frameW = n(params, 'frameWidth')
-      if (frameW > 0) {
-        const frameCol = new three.Color(str(params, 'frameColor'))
-        bgMat.onBeforeCompile = (shader) => {
-          shader.uniforms.uFrameW = { value: frameW }
-          shader.uniforms.uFrameCol = { value: frameCol }
-          shader.vertexShader = 'varying vec2 vBgUv;\n' + shader.vertexShader
-            .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvBgUv = uv;')
-          shader.fragmentShader = ('uniform float uFrameW;\nuniform vec3 uFrameCol;\nvarying vec2 vBgUv;\n' + shader.fragmentShader)
-            .replace('#include <dithering_fragment>', `#include <dithering_fragment>
-              {
-                float b = min(min(vBgUv.x, 1.0 - vBgUv.x), min(vBgUv.y, 1.0 - vBgUv.y));
-                if (b < uFrameW * 0.5) gl_FragColor.rgb = uFrameCol;
-              }`)
+      // Slot background quad (behind the reel), using this slot's cycled fill. A fully transparent
+      // fill with no frame draws nothing (the aperture shows through); otherwise the fill area gets
+      // its colour alpha and any frame border stays opaque.
+      const sf = slotFills[j % slotFills.length]!
+      const sfAlpha = fillAlpha(sf)
+      let bg: THREE.Mesh | null = null
+      if (sfAlpha > 0.003 || frameW > 0) {
+        const bgGeo = new three.PlaneGeometry(W, H, 1, 1)
+        const sfTextured = fillIsTextured(sf)
+        const bgMat = new three.MeshBasicMaterial({
+          map: sfTextured ? fillShaderTexture(three, sf) : null,
+          color: sfTextured ? new three.Color('#ffffff') : fillPrimary(three, sf),
+          side: three.DoubleSide,
+          transparent: true,
+          depthWrite: false,
+          // No frame: a plain uniform opacity is enough. With a frame, opacity stays 1 and the
+          // shader applies uFillAlpha per-pixel so the border can stay opaque over a see-through fill.
+          opacity: frameW > 0 ? 1 : sfAlpha,
+        })
+        if (frameW > 0) {
+          bgMat.onBeforeCompile = (shader) => {
+            shader.uniforms.uFrameW = { value: frameW }
+            shader.uniforms.uFrameCol = { value: frameCol }
+            shader.uniforms.uFillAlpha = { value: sfAlpha }
+            shader.vertexShader = 'varying vec2 vBgUv;\n' + shader.vertexShader
+              .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvBgUv = uv;')
+            shader.fragmentShader = ('uniform float uFrameW;\nuniform vec3 uFrameCol;\nuniform float uFillAlpha;\nvarying vec2 vBgUv;\n' + shader.fragmentShader)
+              .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+                {
+                  float b = min(min(vBgUv.x, 1.0 - vBgUv.x), min(vBgUv.y, 1.0 - vBgUv.y));
+                  if (b < uFrameW * 0.5) { gl_FragColor.rgb = uFrameCol; gl_FragColor.a = 1.0; }
+                  else { gl_FragColor.a *= uFillAlpha; }
+                }`)
+          }
         }
+        bg = new three.Mesh(bgGeo, bgMat)
+        bg.position.z = -0.01
       }
-
-      const bg = new three.Mesh(bgGeo, bgMat)
-      bg.position.z = -0.01
 
       const mesh = new three.Mesh(geo, material)
       mesh.userData.tex = alphaTex
@@ -306,7 +336,7 @@ export const slotEffect: SpaceTypeEffect = {
       const py = -(rowIdx - (rows - 1) / 2) * (H + gap)
       const cell = new three.Group()
       cell.position.set(px, py, 0)
-      cell.add(bg)
+      if (bg) cell.add(bg)
       cell.add(mesh)
       root.add(cell)
 

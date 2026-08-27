@@ -244,6 +244,17 @@ let syncingFills = false
 function fillKey(): string | null {
   return effect.value.controls.find(c => c.kind === 'fillList' && c.key !== WORD_FILL_KEY)?.key ?? null
 }
+// The array fillList control (the one `fills` is bound to), and whether its per-row "Text"
+// (textColor) picker should render. Effects can opt out via `textField: false` for pure
+// background/paint fills where textColor is a dead control (e.g. slot's slot backgrounds).
+function arrayFillControl(): ControlSpec | undefined {
+  const k = fillKey()
+  return k ? effect.value.controls.find(c => c.key === k) : undefined
+}
+function fillShowsTextColor(): boolean {
+  const c = arrayFillControl()
+  return !(c && c.kind === 'fillList' && c.textField === false)
+}
 function pullFills() {
   const k = fillKey()
   if (!k) return
@@ -527,10 +538,11 @@ function swatchDesc(i: number, field: FillSwatchField, label: string): StudioCon
 // the packed fills value. Regenerated from the live `fills` array each call.
 function fillSwatchControls(): StudioControlDesc[] {
   const out: StudioControlDesc[] = []
+  const showText = fillShowsTextColor()
   fills.forEach((f, i) => {
     out.push(swatchDesc(i, 'a', fillNeedsB(f) ? 'Color 1' : 'Fill'))
     if (fillNeedsB(f)) out.push(swatchDesc(i, 'b', 'Color 2'))
-    out.push(swatchDesc(i, 'textColor', 'Text'))
+    if (showText) out.push(swatchDesc(i, 'textColor', 'Text'))
   })
   return out
 }
@@ -1994,6 +2006,7 @@ async function exportWebEmbed() {
                         @go-to-collection="goToCollection"
                       />
                       <StudioColorField
+                        v-if="fillShowsTextColor()"
                         label="Text"
                         :model-value="f.textColor"
                         :bound="boundColumnFor(swatchKey(i, 'textColor'))"
@@ -2016,7 +2029,7 @@ async function exportWebEmbed() {
                   </div>
                   <button type="button" @click="addFill"
                           class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
-                  <p class="text-[10px] leading-relaxed text-white/35">Fills apply top-to-bottom and repeat if there are more slots than fills. <span class="text-white/50">Text</span> is the type colour for that fill.</p>
+                  <p class="text-[10px] leading-relaxed text-white/35">Fills apply top-to-bottom and repeat if there are more slots than fills.<template v-if="fillShowsTextColor()"> <span class="text-white/50">Text</span> is the type colour for that fill.</template></p>
                 </div>
               </template>
               <template v-else-if="c.kind === 'contentList'">

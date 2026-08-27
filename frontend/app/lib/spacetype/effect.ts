@@ -84,7 +84,10 @@ export type ControlSpec = (
   | { key: string; label: string; kind: 'textList'; default: string; group: string }
   // A list of "fills" (per-slot colour recipes: solid / gradient / grid / noise). Stored as one
   // JSON string in params; the surface renders a type dropdown + dependent colour pickers per row.
-  | { key: string; label: string; kind: 'fillList'; default: string; group: string }
+  // `textField: false` hides the per-row "Text" (textColor) picker for effects whose fill is a
+  // pure paint/background with no separate text layer (e.g. slot's slot backgrounds), where
+  // textColor would render as a dead control.
+  | { key: string; label: string; kind: 'fillList'; default: string; group: string; textField?: boolean }
   // An ordered list of gradient stops (`[{pos,color},…]`). Stored as JSON text for
   // the same reason `fillList` is — `ParamValue` is scalar — and normalized back to
   // an array by the single `cleanStops` in ~/lib/shaderfx/params.ts, which accepts
