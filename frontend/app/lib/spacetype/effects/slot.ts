@@ -106,7 +106,13 @@ function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: n
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   for (let i = 0; i < cells.length; i++) {
     const cell = cells[i]!
-    const y0 = i * CELL_PX
+    // Paint cell i BOTTOM-up: the CanvasTexture keeps three's default flipY=true, so
+    // texture V∈[k/n,(k+1)/n] samples the canvas row (n-1-k). Painting cell i at row
+    // (n-1-i) makes `alphaTex.offset.y = k/n` (update()) display LOGICAL cell k — i.e.
+    // the aperture rests on land cell m*stride, not its mirror image. Same convention as
+    // textTexture.ts's `cy = (n-1-k)*rowH`. Glyphs stay upright (flipY is the natural
+    // canvas→UV mapping); only the row's V-position is reflected.
+    const y0 = (cells.length - 1 - i) * CELL_PX
     if (cell.kind === 'blank') continue
     if (cell.kind === 'shape') { drawShapeToken(ctx, cell.value, 0, y0, canvas.width, CELL_PX); continue }
     // text: rasterize glyph atlas (white), draw contained + centered in the cell
@@ -244,7 +250,10 @@ export const slotEffect: SpaceTypeEffect = {
         shader.uniforms.uCellFrac = uniforms.uCellFrac
         shader.vertexShader = ('uniform float uCurve;\nvarying vec2 vSlotUv;\n' + shader.vertexShader)
           .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvSlotUv = uv;')
-          .replace('#include <begin_vertex>', '#include <begin_vertex>\n\ttransformed.z += -uCurve * cos((uv.y - 0.5) * 3.14159) * 0.5 + uCurve * 0.5;')
+          // Drum: center (uv.y=0.5) stays frontmost (Δz=0); top/bottom edges RECEDE (Δz=-0.5·uCurve).
+          // A real reel drum curves away at its edges — and this matches the edge-dim shading below
+          // (dimmer = further), which the earlier +z form contradicted by bulging edges toward the camera.
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\n\ttransformed.z += uCurve * (cos((uv.y - 0.5) * 3.14159) - 1.0) * 0.5;')
         shader.fragmentShader = ('uniform float uBlur;\nuniform float uEdge;\nuniform float uDim;\nuniform float uCellFrac;\nuniform float uCurve;\nvarying vec2 vSlotUv;\n' + shader.fragmentShader)
           // Multi-tap vertical blur of the alphaMap coverage, span scaled to one cell.
           .replace('#include <alphamap_fragment>', `
