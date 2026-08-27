@@ -82,14 +82,21 @@ export const TILT_GAIN = 0.5
  * "low-res" jaggies — then the Depth emboss (a finite-difference NORMAL of the
  * field) amplifies exactly those high frequencies. The fix is standard filtered
  * fbm: measure each octave's cells-per-pixel footprint with `fwidth` of the
- * sample coord and fade its amplitude out as the footprint crosses the Nyquist
- * band [LO, HI], so a sub-pixel octave contributes nothing instead of aliasing.
+ * sample coord and fade its amplitude out as the footprint crosses the band
+ * [LO, HI], so a sub-pixel octave contributes nothing instead of aliasing.
  *
- * Below LO an octave is fully resolved and passes through UNCHANGED, so low-
- * Detail or zoomed-in looks render identically to before — the fade only ever
- * touches octaves that were already aliasing. The base octave (k=0, the fold
- * SHAPE) is never faded, so the visible fold structure can never be smoothed
- * away; only the fine texture that would alias is band-limited. fwidth is core
+ * LO/HI sit ABOVE the 0.5 cells/pixel Nyquist limit on purpose: the fade only
+ * BEGINS once an octave's footprint passes LO=0.70, so every octave the display
+ * can still resolve (footprint ≤ Nyquist, and the whole margin up to 0.70) is
+ * passed through UNCHANGED and stays crisp — an earlier [0.40, 0.80] band
+ * started fading below Nyquist and ate resolvable fold detail, reading as
+ * "blurry". An octave is only fully removed once its footprint exceeds HI=1.40,
+ * i.e. firmly sub-pixel (its noise cells more than a pixel apart), where it can
+ * only alias. A measured sweep vs a 4× supersample put the sharp-but-grit-free
+ * sweet spot here (ground-truth sharpness ~18.6 against the crisp ~21.0 target).
+ * The base octave (k=0, the fold SHAPE) is never faded, so the visible fold
+ * structure can never be smoothed away; only the fine texture that would alias
+ * once sub-pixel is band-limited. fwidth is core
  * in GLSL ES 3.00 (this is a `#version 300 es` / WebGL2 shader), so no extension
  * guard is needed. Taste-tuned like REFRACT_REACH / TILT_GAIN; measured against
  * the 4× supersample as the quality target.
@@ -101,8 +108,8 @@ export const TILT_GAIN = 0.5
  * OWN hard features — ink's vein triangle-wave creases resolve into visible
  * straight seams otherwise (measured on the shipped ink preset).
  */
-export const FBM_AA_LO = 0.40   // cells-per-pixel below which an octave is kept whole
-export const FBM_AA_HI = 0.80   // and above which it is fully faded (≈ past Nyquist)
+export const FBM_AA_LO = 0.70   // cells-per-pixel below which an octave is kept whole (above Nyquist 0.5)
+export const FBM_AA_HI = 1.40   // and above which it is fully faded (footprint > 1.4 → firmly sub-pixel)
 
 export const GRADIENT_VS = `#version 300 es
 out vec2 v_texCoord;

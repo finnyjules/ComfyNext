@@ -265,10 +265,64 @@ describe('gradientfx shader has flow stage', () => {
     expect(GRADIENT_FS).toMatch(/float fbm5f[\s\S]*?smoothstep\(/)
     expect(GRADIENT_FS).toContain(FBM_AA_LO.toFixed(4))
     expect(GRADIENT_FS).toContain(FBM_AA_HI.toFixed(4))
+    // Re-pin the measured sweet spot: the fade begins above Nyquist 0.5 (LO=0.70)
+    // so resolvable fold octaves are never touched, and only fully removes an
+    // octave once its footprint > 1.40 (firmly sub-pixel). Retuned from 0.40/0.80,
+    // which faded below Nyquist and read as blurry.
+    expect(FBM_AA_LO).toBe(0.70)
+    expect(FBM_AA_HI).toBe(1.40)
+    expect(GRADIENT_FS).toContain('0.7000')
+    expect(GRADIENT_FS).toContain('1.4000')
     // The band must be a real rolloff window (LO fully-resolved < HI aliased-out),
     // and the whole thing lives inside a WebGL2 shader where fwidth is core.
     expect(FBM_AA_LO).toBeLessThan(FBM_AA_HI)
     expect(GRADIENT_FS.startsWith('#version 300 es')).toBe(true)
+  })
+
+  it('the octave weight w(fw,k) = 1 - smoothstep(LO, HI, fw*2^k) has the properties the shader relies on', async () => {
+    const { FBM_AA_LO, FBM_AA_HI } = await import('~/lib/gradientfx/shaders')
+    // TS mirror of the GLSL octave rolloff, so the behaviour (not just the string
+    // constant) is pinned. Matches fbm5f: footprint = fw * exp2(k), w = 1 for k==0,
+    // else 1 - smoothstep(LO, HI, footprint).
+    const smoothstep = (e0: number, e1: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
+      return t * t * (3 - 2 * t)
+    }
+    const w = (fw: number, k: number) =>
+      k === 0 ? 1 : 1 - smoothstep(FBM_AA_LO, FBM_AA_HI, fw * 2 ** k)
+
+    // (a) an octave whose footprint fw*2^k < LO gets w==1 — resolvable octaves untouched.
+    for (let k = 1; k < 6; k++) {
+      const fw = (FBM_AA_LO * 0.99) / 2 ** k // footprint just under LO
+      expect(w(fw, k)).toBe(1)
+    }
+
+    // (b) w is monotonic non-increasing as footprint grows (fix k, sweep fw upward).
+    let prev = Infinity
+    for (const fw of [0.01, 0.05, 0.1, 0.2, 0.4, 0.7, 1.0, 1.4, 2.0, 4.0]) {
+      const wk = w(fw, 3)
+      expect(wk).toBeLessThanOrEqual(prev + 1e-12)
+      prev = wk
+    }
+
+    // (c) w → 1 as footprint → 0 (filtered fbm collapses to the unfiltered identity
+    // at fine resolution — every octave passes through whole).
+    for (let k = 1; k < 6; k++) expect(w(1e-6, k)).toBeCloseTo(1, 10)
+
+    // (d) mean-preservation: with sum += amp*w*noise; tot += amp*w and the sum/tot
+    // normalization, a field of constant-mean octaves returns that mean regardless of
+    // the weights — weighting can never shift the mean, only band-limit the variance.
+    const mean = 0.375
+    const amps = [0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625]
+    const footprints = [0.02, 0.09, 0.35, 0.8, 1.6, 3.2] // spans below-LO through above-HI
+    let sum = 0, tot = 0
+    for (let k = 0; k < 6; k++) {
+      const wk = w(footprints[k], k)
+      sum += amps[k] * wk * mean
+      tot += amps[k] * wk
+    }
+    expect(tot).toBeGreaterThan(0)
+    expect(sum / tot).toBeCloseTo(mean, 12)
   })
 
   it('band-limits the emboss/refraction NORMAL, but the veins/ripple sample the raw field', () => {
