@@ -127,6 +127,7 @@ function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: n
   return canvas
 }
 
+interface SlotUniforms { uBlur: { value: number }; uCurve: { value: number }; uEdge: { value: number }; uDim: { value: number }; uCellFrac: { value: number } }
 interface SlotMesh { mesh: THREE.Mesh; alphaTex: THREE.CanvasTexture; cellCount: number; slotIndex: number }
 interface SlotState { slots: SlotMesh[]; messageCount: number; stride: number; slotCount: number }
 
@@ -214,6 +215,45 @@ export const slotEffect: SpaceTypeEffect = {
       const mesh = new three.Mesh(geo, material)
       mesh.userData.tex = alphaTex
 
+      const uniforms = {
+        uBlur: { value: 0 }, uCurve: { value: 0 }, uEdge: { value: n(params, 'edgeFalloff') },
+        uDim: { value: 0 }, uCellFrac: { value: 1 / cells.length },
+      }
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uBlur = uniforms.uBlur
+        shader.uniforms.uCurve = uniforms.uCurve
+        shader.uniforms.uEdge = uniforms.uEdge
+        shader.uniforms.uDim = uniforms.uDim
+        shader.uniforms.uCellFrac = uniforms.uCellFrac
+        shader.vertexShader = ('uniform float uCurve;\nvarying vec2 vSlotUv;\n' + shader.vertexShader)
+          .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvSlotUv = uv;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\n\ttransformed.z += -uCurve * cos((uv.y - 0.5) * 3.14159) * 0.5 + uCurve * 0.5;')
+        shader.fragmentShader = ('uniform float uBlur;\nuniform float uEdge;\nuniform float uDim;\nuniform float uCellFrac;\nuniform float uCurve;\nvarying vec2 vSlotUv;\n' + shader.fragmentShader)
+          // Multi-tap vertical blur of the alphaMap coverage, span scaled to one cell.
+          .replace('#include <alphamap_fragment>', `
+            {
+              float span = uBlur * uCellFrac * 0.9;
+              float a = 0.0;
+              a += texture2D( alphaMap, vAlphaMapUv + vec2(0.0, -span) ).g;
+              a += texture2D( alphaMap, vAlphaMapUv + vec2(0.0, -span*0.5) ).g;
+              a += texture2D( alphaMap, vAlphaMapUv ).g;
+              a += texture2D( alphaMap, vAlphaMapUv + vec2(0.0, span*0.5) ).g;
+              a += texture2D( alphaMap, vAlphaMapUv + vec2(0.0, span) ).g;
+              diffuseColor.a *= a / 5.0;
+            }`)
+          .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+            {
+              // Drum neighbour dim: fade brightness away from the slot's vertical center.
+              float drum = 1.0 - uCurve * abs(vSlotUv.y - 0.5) * 1.4;
+              // Aperture edge falloff: soft top/bottom.
+              float edge = smoothstep(0.0, uEdge * 0.5 + 0.001, vSlotUv.y) * smoothstep(0.0, uEdge * 0.5 + 0.001, 1.0 - vSlotUv.y);
+              float m = clamp(drum, 0.0, 1.0) * mix(1.0, edge, step(0.001, uEdge)) * (1.0 - uDim);
+              gl_FragColor.rgb *= m;
+              gl_FragColor.a *= (uEdge > 0.001 ? edge : 1.0);
+            }`)
+      }
+      ;(mesh.userData as Record<string, unknown>).uniforms = uniforms
+
       const col = j % cols
       const rowIdx = Math.floor(j / cols)
       const gap = n(params, 'slotGap') * H
@@ -244,10 +284,22 @@ export const slotEffect: SpaceTypeEffect = {
       overshoot: n(params, 'overshoot'),
     }
     const dir = str(params, 'direction') === 'down' ? -1 : 1
+    const reelShape = str(params, 'reelShape')
+    const curve = reelShape === 'drum' ? n(params, 'curveAmount') : 0
+    const edge = n(params, 'edgeFalloff')
+    const blurMax = n(params, 'blur')
+    const dimMax = n(params, 'spinDim')
     for (const s of st.slots) {
-      const { offset } = reelScroll(t01, s.slotIndex, timing)
+      const { offset, speed } = reelScroll(t01, s.slotIndex, timing)
       // offset in cells → V fraction of the strip; RepeatWrapping handles the seam.
       s.alphaTex.offset.y = (dir * offset / s.cellCount) % 1
+      const u = (s.mesh.userData as { uniforms?: SlotUniforms }).uniforms
+      if (u) {
+        u.uBlur.value = speed * blurMax
+        u.uCurve.value = curve
+        u.uEdge.value = edge
+        u.uDim.value = speed * dimMax
+      }
     }
   },
 }
