@@ -9,7 +9,7 @@
  * studios (and, later, the canvas node) without a fork.
  *
  * Semantics settled with the owner:
- *   • "yours" is pinned first with a divider — every take is compared against
+ *   • "current" is pinned first with a divider — every take is compared against
  *     what you already have, and clicking it is one-tap undo (select(null)).
  *   • hover = preview (the parent renders the take live and restores on leave);
  *     click = select; keep commits; dismiss / Escape restores and closes.
@@ -37,7 +37,7 @@ const props = withDefaults(defineProps<{
   /** Keyed by the take OBJECT, never by index — the strip must not care how the
    *  parent orders or re-rolls the list. */
   thumbs: Map<VibeTake, Thumb>
-  /** Thumbnail of the config the user already had ("yours"). */
+  /** Thumbnail of the config the user already had ("current"). */
   current?: Thumb
   selected?: VibeTake | null
   busy?: boolean

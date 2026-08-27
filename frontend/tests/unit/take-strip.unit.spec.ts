@@ -183,6 +183,7 @@ describe('TakeStrip — action bar', () => {
   it('busy disables both bar controls', () => {
     const w = mount(TakeStrip, { props: { ...base(), busy: true } })
     expect(w.get('[data-testid="take-reroll"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-testid="take-dismiss"]').attributes('disabled')).toBeDefined()
   })
 })
 

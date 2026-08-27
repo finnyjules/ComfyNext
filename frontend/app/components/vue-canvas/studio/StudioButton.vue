@@ -13,7 +13,7 @@ const CLS: Record<string, string> = {
   subtle: 'text-white/55 enabled:hover:text-white/85',
   // neutral: white contrast treatment for a whole-strip primary action that
   // must not read as the app's action-blue accent (take-strip Re-roll).
-  neutral: 'bg-white text-[#14171d] font-semibold shadow-[0_1px_4px_rgba(0,0,0,0.3)] hover:bg-white/90',
+  neutral: 'bg-white text-[#14171d] font-semibold shadow-[0_1px_4px_rgba(0,0,0,0.3)] enabled:hover:bg-white/90',
 }
 </script>
 
