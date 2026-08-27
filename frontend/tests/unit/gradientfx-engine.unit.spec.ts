@@ -255,6 +255,32 @@ describe('gradientfx shader has flow stage', () => {
     // the quintic (Perlin) fade polynomial, not the cubic one
     expect(GRADIENT_FS).toContain('f * (f * 6.0 - 15.0) + 10.0')
   })
+
+  it('the fold fbm is derivative-filtered (band-limited) so sub-pixel octaves fade, not alias', async () => {
+    const { FBM_AA_LO, FBM_AA_HI } = await import('~/lib/gradientfx/shaders')
+    // fbm5f (the filtered variant) must measure the per-pixel footprint with fwidth
+    // and roll each octave off across the taste-tuned Nyquist band — embedded from
+    // the constants, not hand-typed (same contract as REFRACT_REACH / TILT_GAIN).
+    expect(GRADIENT_FS).toMatch(/float fbm5f[\s\S]*?fwidth\(/)
+    expect(GRADIENT_FS).toMatch(/float fbm5f[\s\S]*?smoothstep\(/)
+    expect(GRADIENT_FS).toContain(FBM_AA_LO.toFixed(4))
+    expect(GRADIENT_FS).toContain(FBM_AA_HI.toFixed(4))
+    // The band must be a real rolloff window (LO fully-resolved < HI aliased-out),
+    // and the whole thing lives inside a WebGL2 shader where fwidth is core.
+    expect(FBM_AA_LO).toBeLessThan(FBM_AA_HI)
+    expect(GRADIENT_FS.startsWith('#version 300 es')).toBe(true)
+  })
+
+  it('band-limits the emboss/refraction NORMAL, but the veins/ripple sample the raw field', () => {
+    // The filtered field feeds the finite-difference normals (flowHeightAA); the
+    // directly-sampled veins/ripple must keep the unfiltered flowHeight, or the
+    // dither that was hiding ink's vein seams is stripped and they alias into lines.
+    expect(GRADIENT_FS).toContain('float flowHeightAA')
+    expect(GRADIENT_FS).toMatch(/float flowHeightAA[\s\S]*?fbm5f\(sp, u_flowDetail\)/)
+    // veins read h0 = flowHeight(p) (unfiltered), the emboss reads flowHeightAA
+    expect(GRADIENT_FS).toContain('float h  = flowHeightAA(p);')
+    expect(GRADIENT_FS).toContain('float ph = flowHeight(p) * TAU;')  // ripple stays raw
+  })
 })
 
 describe('gradientfx focus / soft-focus post stage', () => {

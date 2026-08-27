@@ -73,6 +73,37 @@ export const REFRACT_REACH = 0.25
 /** Scales the fold's tilt-toward-the-light before the tanh that shapes it. */
 export const TILT_GAIN = 0.5
 
+/**
+ * Derivative-filtered ("band-limited") fbm — the fold field's anti-aliasing.
+ *
+ * The liquid fold height is an fbm; its finest octaves shrink to sub-pixel
+ * value-noise cells at high Fold scale × high Detail (the frosted look runs
+ * Detail 6 / Fold 86), and point-sampling them aliases into the blocky
+ * "low-res" jaggies — then the Depth emboss (a finite-difference NORMAL of the
+ * field) amplifies exactly those high frequencies. The fix is standard filtered
+ * fbm: measure each octave's cells-per-pixel footprint with `fwidth` of the
+ * sample coord and fade its amplitude out as the footprint crosses the Nyquist
+ * band [LO, HI], so a sub-pixel octave contributes nothing instead of aliasing.
+ *
+ * Below LO an octave is fully resolved and passes through UNCHANGED, so low-
+ * Detail or zoomed-in looks render identically to before — the fade only ever
+ * touches octaves that were already aliasing. The base octave (k=0, the fold
+ * SHAPE) is never faded, so the visible fold structure can never be smoothed
+ * away; only the fine texture that would alias is band-limited. fwidth is core
+ * in GLSL ES 3.00 (this is a `#version 300 es` / WebGL2 shader), so no extension
+ * guard is needed. Taste-tuned like REFRACT_REACH / TILT_GAIN; measured against
+ * the 4× supersample as the quality target.
+ *
+ * Applied through `fbm5f` on the EMBOSS/REFRACTION NORMAL path only (the finite
+ * differences that amplify the sub-pixel octaves into the blocky look). The
+ * directly-sampled veins/ripple keep the unfiltered `fbm5`: band-limiting the
+ * height they read only removes the high-frequency dither that was hiding their
+ * OWN hard features — ink's vein triangle-wave creases resolve into visible
+ * straight seams otherwise (measured on the shipped ink preset).
+ */
+export const FBM_AA_LO = 0.40   // cells-per-pixel below which an octave is kept whole
+export const FBM_AA_HI = 0.80   // and above which it is fully faded (≈ past Nyquist)
+
 export const GRADIENT_VS = `#version 300 es
 out vec2 v_texCoord;
 void main() {
@@ -229,6 +260,28 @@ float fbm5(vec2 p, float oct) {
   }
   return tot > 0.0 ? sum / tot : 0.0;
 }
+// Derivative-filtered ("band-limited") fbm5 — see FBM_AA_LO/HI. Fades each octave
+// as its value-noise cells drop below the pixel grid, so sub-pixel folds stop
+// aliasing instead of being point-sampled. Used ONLY where a finite-difference
+// NORMAL reads the field (the Depth/Gloss emboss and refraction), because that
+// differencing is what amplifies the sub-pixel octaves into the blocky look; the
+// direct-sampled veins/ripple keep the unfiltered fbm5 above (band-limiting them
+// only strips the dither hiding their own hard features). fwidth is uniform-safe
+// here — every call site sits in uniform (uniform-gated) control flow.
+float fbm5f(vec2 p, float oct) {
+  float sum = 0.0, amp = 0.5, tot = 0.0;
+  vec2 fwv = fwidth(p);
+  float fw = max(fwv.x, fwv.y);   // octave-0 cells-per-pixel footprint
+  for (int k = 0; k < 6; k++) {
+    if (float(k) >= oct) break;
+    // exp2(k) tracks the octave frequency (p doubles each step). k==0 is the fold
+    // SHAPE and is never faded, so relief is band-limited, not lost.
+    float footprint = fw * exp2(float(k));
+    float w = k == 0 ? 1.0 : 1.0 - smoothstep(${FBM_AA_LO.toFixed(4)}, ${FBM_AA_HI.toFixed(4)}, footprint);
+    sum += amp * w * vnoise5(p); tot += amp * w; p *= 2.0; amp *= 0.5;
+  }
+  return tot > 0.0 ? sum / tot : 0.0;
+}
 // Domain-warp the sample coord (Inigo-Quilez fbm-of-fbm). No-op when intensity is 0.
 vec2 applyFlow(vec2 p) {
   if (u_flowIntensity <= 0.0) return p;
@@ -271,6 +324,18 @@ float flowHeight(vec2 p) {
     sp += (w - 0.5) * u_flowAnimAmt;
   }
   return fbm5(sp, u_flowDetail);
+}
+// Band-limited fold height for the finite-difference NORMALS only (Depth/Gloss
+// emboss + refraction). Same field as flowHeight, sampled through fbm5f so the
+// emboss stops aliasing the sub-pixel octaves into the blocky "low-res" look
+// while the veins/ripple keep reading the unfiltered flowHeight. See fbm5f.
+float flowHeightAA(vec2 p) {
+  vec2 sp = p * u_flowFoldScale; sp.x *= u_aspect;
+  if (u_flowAnimAmt > 0.0) {
+    vec2 w = vec2(fbm5(sp + u_flowAnim1, u_flowDetail), fbm5(sp - u_flowAnim2, u_flowDetail));
+    sp += (w - 0.5) * u_flowAnimAmt;
+  }
+  return fbm5f(sp, u_flowDetail);
 }
 
 vec3 rgb2hsl(vec3 c) {
@@ -460,11 +525,15 @@ vec4 computeLayer(int i, vec2 p) {
     // below (computed once, and only when something actually needs it).
     bool needH = (u_flowVeins > 0.0 || u_flowDepth > 0.001 || u_flowRefract > 0.0);
     bool needG = (u_flowDepth > 0.001 || u_flowRefract > 0.0);
-    float h0 = needH ? flowHeight(p) : 0.0;
+    float h0 = needH ? flowHeight(p) : 0.0;   // unfiltered — the veins read this directly
     vec2 g = vec2(0.0);
     if (needG) {
+      // Refraction bends the ramp through the fold NORMAL (a finite difference), so
+      // it reads the band-limited field — computed from its own filtered base, not
+      // h0, so the difference stays consistent.
       float e = 1.5 / u_resolution.y;
-      g = vec2(flowHeight(p + vec2(e, 0.0)) - h0, flowHeight(p + vec2(0.0, e)) - h0) / e;
+      float hA = flowHeightAA(p);
+      g = vec2(flowHeightAA(p + vec2(e, 0.0)) - hA, flowHeightAA(p + vec2(0.0, e)) - hA) / e;
     }
 
     float t = dot(pc, dir) + 0.5;
@@ -759,9 +828,9 @@ void main() {
   // Blinn-Phong sheen on the fold normal for an oily/glossy liquid look.
   if (u_layout[0] > 3.5 && u_layout[0] < 4.5 && (u_flowDepth > 0.001 || u_flowGloss > 0.001)) {
     float e = 1.5 / u_resolution.y;
-    float h  = flowHeight(p);
-    float hx = flowHeight(p + vec2(e, 0.0));
-    float hy = flowHeight(p + vec2(0.0, e));
+    float h  = flowHeightAA(p);
+    float hx = flowHeightAA(p + vec2(e, 0.0));
+    float hy = flowHeightAA(p + vec2(0.0, e));
     // Frequency-compensate the slope: the fold gradient scales with u_flowFoldScale,
     // so low fold scales embossed flat/soft ("blurry") while only the top of the
     // range looked crisp. Normalize to that top (max u_flowFoldScale = 7.0) so Depth
