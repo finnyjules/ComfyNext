@@ -101,9 +101,12 @@ then **spin + settle** to message `m+1` over the rest, staggered across slots by
 
 **Color**
 - `wordFill` — `fillList` (one global fill, ring-style; parsed by a `resolveFill` that
-  tolerates a bare object or `[fill]`). Default is a **bare solid Fill JSON object** exactly
-  like `ring.ts`'s `wordFill` (NOT `defaultFillsFor`, which serializes an array).
-- `slotFill` — `fillList` (one fill), slot background. Default a bare solid dark Fill object.
+  tolerates a bare object or `[fill]`). **First `fillList` control ⇒ its default MUST be
+  `defaultFillsFor(1,'slot')`** (a 1-element seeded-palette array) so the palette guard passes
+  cleanly — `resolveFill` reads `v[0]`. (ring/cornerpin/shutter/loft override with custom
+  defaults and already "fail" that soft guard on main; slot will not add a 5th red.)
+- `slotFill` — `fillList` (one fill), slot background. Second `fillList`, so the palette guard
+  does not check it; default a bare `[{solid dark}]` array. Parsed by the same `resolveFill`.
 
 **Stroke**
 - `frameWidth` — `slider` 0..0.4, default 0.
@@ -154,9 +157,11 @@ slotAspect, frameWidth) is structural.
   sign.
 - **Sections guard**: existing `tests/unit/spacetype-sections.unit.spec.ts` must still pass
   (all groups are in `SPACE_TYPE_SECTIONS`).
-- **Palette guard**: read `tests/unit/spacetype-palette.unit.spec.ts` first and match what it
-  asserts. `ring.ts`'s single-fill `wordFill` uses a bare solid object and passes, so mirror
-  ring; only a `fillList` array control (if any) would need `defaultFillsFor(n,'slot')`.
+- **Palette guard** (`tests/unit/spacetype-palette.unit.spec.ts`): checks the FIRST `fillList`
+  control's default `=== defaultFillsFor(JSON.parse(default).length, id)`. Baseline: 4
+  pre-existing reds on main (ring, cornerpin, shutter, loft) from intentional overrides — NOT
+  regressions. `slot`'s `wordFill` uses `defaultFillsFor(1,'slot')` so slot passes and adds no
+  red. Re-verify this baseline before/after so the 4 aren't mistaken for slot regressions.
 - **Typecheck**: `npx vue-tsc --noEmit` clean at the effect's own types (baseline-anchored).
 - **Live**: verify in the Expressive Studio via the dev-server browser — the effect renders,
   reels spin, land staggered, rotate messages, and the loop is seamless.
