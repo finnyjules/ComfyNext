@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildReel, type ReelParams } from '~/lib/spacetype/slotGeometry'
+import { reelScroll, settleTime, type Timing } from '~/lib/spacetype/slotGeometry'
 
 const base: ReelParams = {
   messages: 'MAKE IT REAL\nSHIP TODAY',
@@ -56,5 +57,51 @@ describe('buildReel', () => {
     const r = buildReel({ ...base, fillerDensity: 0 })
     expect(r.stride).toBe(1)
     expect(r.cells[0]).toHaveLength(2)
+  })
+})
+
+const T: Timing = { messageCount: 2, stride: 4, slotCount: 3, hold: 0.4, stagger: 0.5, overshoot: 0.3 }
+const L = T.messageCount * T.stride // strip length = 8
+
+describe('reelScroll', () => {
+  it('is seamless: offset at t01=0 equals offset as t01→1 (mod strip length)', () => {
+    for (let j = 0; j < T.slotCount; j++) {
+      const a = reelScroll(0, j, T).offset
+      const b = reelScroll(0.999999, j, T).offset
+      const d = Math.min(Math.abs(a - b), L - Math.abs(a - b))
+      expect(d).toBeLessThan(0.02)
+    }
+  })
+
+  it('holds message 0 at the start of the loop (offset 0, ~0 speed)', () => {
+    const r = reelScroll(0.05, 0, T) // within hold sub-phase of segment 0
+    expect(r.offset).toBeCloseTo(0, 5)
+    expect(r.speed).toBeLessThan(0.02)
+  })
+
+  it('lands slot j on integer cell offsets after settling', () => {
+    // End of segment 0 (t01≈0.499): every slot has settled onto message 1's land cell (offset 4).
+    // (At t01≈0.999 the reel has already wrapped toward message 0's land cell, offset→0.)
+    const r = reelScroll(0.499, 1, T)
+    expect(r.offset).toBeCloseTo(4, 1)
+  })
+
+  it('offset is continuous across the internal segment boundary', () => {
+    const before = reelScroll(0.4999, 0, T).offset
+    const after = reelScroll(0.5001, 0, T).offset
+    // near cell 4 on both sides (end of seg0 settles to 4; start of seg1 holds at 4)
+    expect(Math.abs(before - after)).toBeLessThan(0.1)
+  })
+
+  it('staggers landings left-to-right: settleTime increases with slot index', () => {
+    expect(settleTime(0, 3, 0.4, 0.5)).toBeLessThanOrEqual(settleTime(1, 3, 0.4, 0.5))
+    expect(settleTime(1, 3, 0.4, 0.5)).toBeLessThanOrEqual(settleTime(2, 3, 0.4, 0.5))
+    // last slot always settles at u=1
+    expect(settleTime(2, 3, 0.4, 0.5)).toBeCloseTo(1, 5)
+  })
+
+  it('stagger 0 makes every slot settle at u=1', () => {
+    expect(settleTime(0, 3, 0.4, 0)).toBeCloseTo(1, 5)
+    expect(settleTime(1, 3, 0.4, 0)).toBeCloseTo(1, 5)
   })
 })

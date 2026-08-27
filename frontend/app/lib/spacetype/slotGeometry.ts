@@ -122,3 +122,59 @@ export function buildReel(p: ReelParams): Reel {
 
   return { slotCount, messageCount, stride, cells }
 }
+
+export interface Timing {
+  messageCount: number
+  stride: number
+  slotCount: number
+  hold: number
+  stagger: number
+  overshoot: number
+}
+
+/** Overshoot easing: 0 at p=0, 1 at p=1, overshoots above 1 near the end when s>0 (settles exactly). */
+export function easeOutBack(p: number, s: number): number {
+  const c1 = s
+  const c3 = c1 + 1
+  const q = p - 1
+  return 1 + c3 * q * q * q + c1 * q * q
+}
+
+/** Local-segment settle time (u∈[hold,1]) for a slot: larger slot index ⇒ later ⇒ left-to-right cascade.
+ *  stagger 0 ⇒ all settle at u=1; stagger 1 ⇒ slot j settles proportionally to (j+1)/slotCount. */
+export function settleTime(slot: number, slotCount: number, hold: number, stagger: number): number {
+  const frac = slotCount > 0 ? (slot + 1) / slotCount : 1
+  const lerped = 1 - stagger * (1 - frac) // 1 at stagger 0, frac at stagger 1
+  return hold + (1 - hold) * lerped
+}
+
+export function reelScroll(t01: number, slot: number, T: Timing): { offset: number; speed: number } {
+  const M = Math.max(1, T.messageCount)
+  const St = Math.max(1, T.stride)
+  const L = M * St
+  const tt = ((t01 % 1) + 1) % 1
+  const m = Math.min(M - 1, Math.floor(tt * M))
+  const u = tt * M - m
+  const Pm = m * St
+  const h = Math.min(0.95, Math.max(0, T.hold))
+  const uLand = settleTime(slot, Math.max(1, T.slotCount), h, Math.min(1, Math.max(0, T.stagger)))
+
+  let p: number
+  if (u <= h) p = 0
+  else if (u >= uLand) p = 1
+  else p = (u - h) / Math.max(1e-4, uLand - h)
+
+  const s = Math.min(1, Math.max(0, T.overshoot)) * 1.70158
+  const e = easeOutBack(p, s)
+  const offsetRaw = Pm + St * e
+  const offset = ((offsetRaw % L) + L) % L
+
+  let speed = 0
+  if (p > 0 && p < 1) {
+    const q = p - 1
+    const dedp = 3 * (s + 1) * q * q + 2 * s * q
+    const vCells = Math.abs((St * dedp) / Math.max(1e-4, uLand - h))
+    speed = Math.min(1, vCells / (St * 3))
+  }
+  return { offset, speed }
+}
