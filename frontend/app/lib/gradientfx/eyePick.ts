@@ -38,21 +38,33 @@ export const EYE_PICK_SCHEMA = {
   additionalProperties: false,
 }
 
-export function buildEyePickPrompt(phrase: string, names: string[]): string {
-  const list = names.map((n, i) => `${i + 1}. ${n}`).join('\n')
+/**
+ * The prompt carries NO candidate names. That is deliberate: the earlier version
+ * listed each candidate's recipe name ("1. Molten Rust") beside its image, which
+ * primed the model to echo the intended name instead of describing the render —
+ * so a rust name sat over a blue/purple picture and the label lied. The model is
+ * given only the count and told to judge the pixels; the label it returns is
+ * therefore about what it SAW, not about a word we handed it.
+ *
+ * `candidateCount` (not a name list) also lets the prompt state the numbering
+ * unambiguously: the current design is image one (reference only), so candidate
+ * `k` is the (k+1)-th image, and `salvageEyePicks` subtracts the same one.
+ */
+export function buildEyePickPrompt(phrase: string, candidateCount: number): string {
   return `The user asked for: "${phrase}"
 
-The first image is the user's CURRENT design, for reference only — do not pick it.
-The images after it are candidates, numbered in this order:
+You are shown ${candidateCount + 1} images.
+The FIRST image is the user's CURRENT design — reference only, NOT a candidate. Do not pick it.
+The remaining ${candidateCount} images are the candidates, numbered 1 to ${candidateCount} in the order shown (candidate 1 is the image right after the current design).
 
-${list}
+You are given NO names and NO descriptions — judge ONLY what you SEE in each picture. Describe the pixels, not any idea of what they were meant to be.
 
-Look at the pictures and choose the best FOUR candidates. A good four:
+Choose the best FOUR candidates. A good four:
 - each reads as "${phrase}" to someone who just sees the picture
 - are clearly different from EACH OTHER, not four shades of one idea
 - are clearly different from the user's current design — there is no point offering them what they already have
 
-Return four picks, best first, each with the candidate's number, a short name, and one sentence naming what you SAW in it.`
+Return four picks, best first, each with the candidate's number (1 to ${candidateCount}), a short name you give it from what you see, and one sentence naming what you SAW in it.`
 }
 
 /**

@@ -18,6 +18,7 @@
 import type { GradientConfig } from './types'
 import { LOOK_NAMES, lookMenu } from './lookDescriptors'
 import { buildGradientPreset } from './presets'
+import { recolorMeshPoints } from './mesh'
 
 // ── mood dials ───────────────────────────────────────────────────────────────
 //
@@ -224,6 +225,17 @@ export function materializeRecipe(
       const idx = Math.min(recipe.palette.length - 1, Math.round(t * (recipe.palette.length - 1)))
       stops[i]!.color = recipe.palette[idx]!
     }
+  }
+
+  // The mesh layout renders its colour from layer.mesh.points (renderer.ts →
+  // u_meshCol), NOT from color.stops — so recolouring the stops alone left a
+  // mesh-base recipe rendering the base's stale default point colours while its
+  // palette (and its label) claimed something else: the owner's "Molten Rust"
+  // that came out blue/purple. Recolour the points from the SAME palette we just
+  // laid on the stops, reusing the studio's own recolour path. Positions and
+  // count are preserved; a base with no mesh is untouched (the check is additive).
+  if (layer?.mesh?.points?.length && stops?.length) {
+    layer.mesh.points = recolorMeshPoints(layer.mesh.points, stops, `${seed ?? ''}#meshcol`)
   }
 
   // Moods last, so a mood can override what the base chose — that is what the

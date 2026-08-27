@@ -33,16 +33,28 @@ describe('EYE_PICK_SCHEMA', () => {
 })
 
 describe('buildEyePickPrompt', () => {
-  const p = buildEyePickPrompt('a dreamy sunset', ['dusk', 'ember', 'cool dusk'])
+  const p = buildEyePickPrompt('a dreamy sunset', 3)
 
-  it('numbers the candidates from one, in order', () => {
-    expect(p).toContain('1. dusk')
-    expect(p).toContain('3. cool dusk')
+  it('states the candidate count and numbers them 1..N', () => {
+    expect(p).toContain('3')
+    expect(p.toLowerCase()).toMatch(/1 to 3|numbered 1/)
   })
 
-  it('says the first image is the user’s and must not be picked', () => {
+  it('labels the first image as the current design, reference only, not a candidate', () => {
     expect(p.toLowerCase()).toMatch(/current design/)
-    expect(p.toLowerCase()).toMatch(/do not pick it/)
+    expect(p.toLowerCase()).toMatch(/do not pick it|not a candidate/)
+    // The offset the current image creates is made explicit so index N ↔ the Nth
+    // candidate image is unambiguous.
+    expect(p.toLowerCase()).toMatch(/after the current|remaining .* candidates/)
+  })
+
+  it('tells the model to judge PIXELS, and sends NO recipe names to echo', () => {
+    // The owner-facing half of the bug: a name like "Molten Rust" beside a
+    // blue/purple picture primed the model to describe the NAME, not the render.
+    // The prompt must carry no names and must say to describe what is seen.
+    expect(p).not.toContain('dusk')
+    expect(p).not.toContain('ember')
+    expect(p.toLowerCase()).toMatch(/only what you see|judge only|no names|what you saw|describe the pixels/)
   })
 
   it('asks for four, different from each other AND from what they have', () => {

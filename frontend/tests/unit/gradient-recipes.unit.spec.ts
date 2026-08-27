@@ -37,6 +37,8 @@ import { GRADIENT_PRESET_NAMES } from '~/lib/gradientfx/presets'
 import { LAYOUTS, cloneConfig, type GradientConfig } from '~/lib/gradientfx/types'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
 import { gradientAgentControls } from '~/lib/gradientfx/agentControls'
+import { measureColors } from '~/lib/agent/takes'
+import { hexToRgb } from '~/lib/gradientfx/ramp'
 
 const own = () => defaultConfig('#own') as GradientConfig
 const recipe = (over: Partial<any> = {}) => ({
@@ -415,6 +417,82 @@ describe('materializeRecipe — our code does the translating', () => {
       const [r] = salvageRecipes({ recipes: [recipe({ base })] })
       expect(materializeRecipe(r!, own(), cloneConfig, '#s'), base).toBeTruthy()
     }
+  })
+})
+
+describe('the palette reaches the RENDER on every base — not just the stops', () => {
+  // The owner-reported bug: a "Molten Rust" recipe on the `mesh` base rendered
+  // blue/purple, because the mesh layout draws its colour from layer.mesh.points
+  // (renderer.ts → u_meshCol) and materializeRecipe only ever recoloured
+  // layer.color.stops. The palette — and the label — said rust; the pixels did
+  // not. These specs pin the general invariant: whatever colour source a base's
+  // LAYOUT actually renders from must carry the recipe's palette.
+  const RUST = ['#7a2e12', '#b5502a', '#d98a4f'] // dark-brown → rust → tan (warm)
+  const GREEN = ['#0a3d0a', '#2ea82e', '#7fe07f'] // one unambiguous hue band
+
+  /** Pack colours into a 1px-per-colour signature and name the dominant one with
+   *  the SAME measurement the descriptors and the promise checker use. */
+  const dominantColorName = (hexes: string[]): string => {
+    const sig = new Uint8ClampedArray(hexes.length * 4)
+    hexes.forEach((h, i) => {
+      const c = hexToRgb(h)
+      sig[i * 4] = c.r; sig[i * 4 + 1] = c.g; sig[i * 4 + 2] = c.b; sig[i * 4 + 3] = 255
+    })
+    const { shares } = measureColors(sig)
+    return Object.entries(shares).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'none'
+  }
+
+  /** The colours the RENDERER will actually read for this config's layout — the
+   *  mesh points for a mesh layout, the ramp stops for everything else. */
+  const renderSourceColors = (cfg: GradientConfig): string[] => {
+    const L0: any = cfg.layers?.[0]
+    if (cfg.canvas?.layout === 'mesh') return (L0?.mesh?.points ?? []).map((p: any) => p.color)
+    return (L0?.color?.stops ?? []).map((s: any) => s.color)
+  }
+
+  it('a mesh-base recipe colours the mesh POINTS from the palette', () => {
+    const cfg = materializeRecipe(recipe({ base: 'mesh', palette: RUST }), own(), cloneConfig, '#s')!
+    expect(cfg.canvas.layout).toBe('mesh')
+    const pts = (cfg.layers[0] as any).mesh.points.map((p: any) => p.color)
+    expect(pts.length).toBeGreaterThan(0)
+    // Warm, not the base's peach/pink/indigo defaults.
+    expect(['red', 'orange']).toContain(dominantColorName(pts))
+    for (const stale of ['#6a5cde', '#7768f7', '#d195e3']) expect(pts).not.toContain(stale)
+  })
+
+  it('the mesh points are drawn ACROSS the palette, not a single flat colour', () => {
+    // The mesh scatter-samples the ramp (like meshConfig itself), so it should
+    // span the palette's range rather than collapse to one stop.
+    const cfg = materializeRecipe(recipe({ base: 'mesh', palette: GREEN }), own(), cloneConfig, '#s')!
+    const pts = (cfg.layers[0] as any).mesh.points.map((p: any) => p.color)
+    expect(new Set(pts).size).toBeGreaterThan(1)
+    expect(dominantColorName(pts)).toBe('green')
+  })
+
+  it('EVERY offered base renders its palette hue — the invariant that would have caught mesh', () => {
+    // Give each base a strongly-hued palette and confirm the colour source its
+    // layout renders from is that hue. A future base that ignores the palette
+    // (the mesh bug, in a new guise) fails HERE.
+    for (const base of LOOK_NAMES) {
+      const cfg = materializeRecipe(recipe({ base, palette: GREEN }), own(), cloneConfig, `#s-${base}`)!
+      expect(dominantColorName(renderSourceColors(cfg)), `${base} ignored the palette`).toBe('green')
+    }
+  })
+
+  it('leaves the stops path exactly as it was — the mesh recolour is additive', () => {
+    // A non-mesh base with no mesh layer keeps its stops-only behaviour, and no
+    // mesh object is invented on it.
+    const cfg = materializeRecipe(recipe({ base: 'lava', palette: RUST }), own(), cloneConfig, '#s')!
+    const stops = cfg.layers[0]!.color.stops.map(s => s.color)
+    expect(stops[0]).toBe('#7a2e12')
+    expect(stops[stops.length - 1]).toBe('#d98a4f')
+    expect((cfg.layers[0] as any).mesh).toBeUndefined()
+  })
+
+  it('is still deterministic with the mesh recolour in the path', () => {
+    const a = materializeRecipe(recipe({ base: 'mesh', palette: RUST }), own(), cloneConfig, '#same')
+    const b = materializeRecipe(recipe({ base: 'mesh', palette: RUST }), own(), cloneConfig, '#same')
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b))
   })
 })
 

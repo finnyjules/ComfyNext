@@ -52,7 +52,11 @@ export default defineEventHandler(async (event) => {
   }))
   const current = requireString(body?.current, 'current', MAX_IMAGE_CHARS)
 
-  const prompt = buildEyePickPrompt(phrase, candidates.map(c => c.name))
+  // No names reach the model — only the count. The candidate `name` fields are
+  // still accepted on the wire (the client's fallback label uses the recipe
+  // name), but they are deliberately kept OUT of the vision prompt so the model
+  // describes what it sees rather than echoing a name that may not match.
+  const prompt = buildEyePickPrompt(phrase, candidates.length)
 
   await meterAssist(event)
 
