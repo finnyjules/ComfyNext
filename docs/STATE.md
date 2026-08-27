@@ -31,6 +31,23 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
+### Motion — the living timeline: vision + first spec — DESIGNED 2026-08-27 (not built)
+
+Motion promoted from wedge to program. Vision: [MOTION.md](MOTION.md) — **everything on the
+timeline is alive until you say it's done**; a clip is a window onto something still running;
+design-motion and AI video are two materials on ONE timeline, so the bridge (designed motion
+over generated film) is a consequence, not a feature. Audit finding that drove it: motion is
+five fragmented systems (pure eval core · shipped NLE Timeline · per-studio clocks · Frame LCM
+reconciler · Shot Director prompt-compiler), unified only at the eval + frame-pull seams.
+Direction: build on the **shipped Timeline** (it already embeds Space Type/Motion as clips,
+golden-tested, live-preview) — NOT by growing the Frame node. First spec committed:
+`superpowers/specs/2026-08-27-timeline-live-studio-clip-editing-design.md` — dive into a Space
+Type clip, edit the full studio in place, write back, stay live (a state-source adapter; detach
+model now, symbols = spec 2). Butter.video assessed: their block entry gesture (lands already
+moving, dials not keyframes) is the declared bar for our timeline front door; their p5.js
+block ecosystem named a structural risk. **Elements queues behind this program by decision
+(2026-08-27)** — the door ships after the house stands. Next: implementation plan for the spec.
+
 ### Four takes — the agent proposes four versions before committing — LANDED 2026-08-25 (Milestone A)
 
 Designed live with Julien via the visual-companion mockups (system C: canvas-shaped,
