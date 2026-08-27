@@ -194,13 +194,39 @@ describe('the material-texture dials — frosted / textured / deep / flat', () =
     expect(f.post.grain).toBe(false)
   })
 
-  it('frosted actually lands relief + grain + a raised fold scale on the config', () => {
+  it('frosted actually lands grain + a raised fold scale + matte gloss on the config', () => {
     // The exact failure the redesign fixes: the frost turns without hand-tuning.
     const f = marble(['frosted'])
-    expect(f.relief.relief).toBe(MOOD_DIALS.frosted!['relief.relief'])
     expect(f.post.grain).toBe(true)
     expect(f.flow.foldScale).toBe(MOOD_DIALS.frosted!['flow.foldScale'])
     expect(f.flow.gloss).toBe(MOOD_DIALS.frosted!['flow.gloss'])
+  })
+
+  it('no material dial carries relief.relief — it is dead cargo through the compose path', () => {
+    // relief.relief renders only on BANDED layouts (shaders.ts gates it on
+    // u_layout < 3.5), and the recipe menu withholds every banded layout, so it
+    // would render on NO base the menu can offer. Removed from frosted/textured;
+    // this guards against it — or any banded-only key — creeping back in.
+    for (const mood of NEW) {
+      expect(MOOD_DIALS[mood], `${mood} must not set relief.relief`).not.toHaveProperty('relief.relief')
+    }
+  })
+
+  it('every material-dial key is a post.* or flow.* key that renders on a LIQUID base', () => {
+    // Documentation-style pin: these are liquid-surface dials. Every key they
+    // write must be either post.* (grain — renders on all layouts) or a flow.*
+    // key that is applicable when the base is liquid. A future edit that adds a
+    // key rendering on NO offered base (like the removed relief.relief, banded-
+    // only) fails HERE. Built from the schema's own liquid control set.
+    const liquidKeys = new Set<string>()
+    const liquid: any = defaultConfig('#p'); liquid.canvas.layout = 'liquid'
+    for (const c of gradientAgentControls(liquid, { includePreset: true })) liquidKeys.add(c.key)
+    for (const mood of NEW) {
+      for (const key of Object.keys(MOOD_DIALS[mood]!)) {
+        expect(key, `${mood}/${key} namespace`).toMatch(/^(post|flow)\./)
+        expect(liquidKeys, `${mood}/${key} must render on a liquid base`).toContain(key)
+      }
+    }
   })
 
   it('frosted pushes Flow → Detail to the schema max — the crystalline icy bite', () => {
@@ -271,6 +297,16 @@ describe('buildRecipesPrompt', () => {
 
   it('asks for variety of BASE, not just of colour', () => {
     expect(p.toLowerCase()).toMatch(/vary the base|not only the colours/)
+  })
+
+  it('steers the material moods to a liquid-family base', () => {
+    // frosted/textured/deep/flat set isLiquid-gated keys — on a non-liquid base
+    // the texture silently no-ops, so the prompt must tell the model to pair them
+    // with a liquid base.
+    const low = p.toLowerCase()
+    expect(low).toMatch(/frosted/)
+    expect(low).toMatch(/liquid/)
+    expect(low).toMatch(/liquid-surface|liquid-family|liquid base|liquid family/)
   })
 })
 
