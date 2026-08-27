@@ -65,6 +65,7 @@ function resolveFill(raw: unknown, fallback: Fill): Fill {
 }
 
 const WHITE_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
+const DARK_SLOT_FILL: Fill = { type: 'solid', a: '#15221F', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
 
 // Cell height in reel-canvas px; width derived from slotAspect. Supersample-ish for crisp glyphs.
 const CELL_PX = 128
@@ -97,7 +98,7 @@ function drawShapeToken(ctx: CanvasRenderingContext2D, id: string, x: number, y:
 }
 
 /** Paint one slot's cell strip as a tall WHITE-mask canvas (one cell per CELL_PX row). */
-function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: number, hasWght: boolean, tracking: number): HTMLCanvasElement {
+function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: number, hasWght: boolean, tracking: number, sizeScale: number): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(2, Math.round(cellW))
   canvas.height = Math.max(2, cells.length * CELL_PX)
@@ -116,8 +117,8 @@ function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: n
     })
     const img = layout.texture.image as HTMLCanvasElement
     const pad = CELL_PX * 0.14
-    const maxW = canvas.width - pad * 2
-    const maxH = CELL_PX - pad * 2
+    const maxW = (canvas.width - pad * 2) * sizeScale
+    const maxH = (CELL_PX - pad * 2) * sizeScale
     const scale = Math.min(maxW / img.width, maxH / img.height)
     const dw = img.width * scale, dh = img.height * scale
     ctx.drawImage(img, (canvas.width - dw) / 2, y0 + (CELL_PX - dh) / 2, dw, dh)
@@ -134,7 +135,7 @@ export const slotEffect: SpaceTypeEffect = {
   label: 'Slot',
   controls,
   // Live: motion/look/placement that update() reads each frame — no structural rebuild.
-  liveKeys: ['direction', 'stagger', 'overshoot', 'hold', 'blur', 'spinDim', 'edgeFalloff', 'curveAmount', 'slotGap', 'reelShape', 'scale', 'rotateX', 'rotateY', 'rotateZ'],
+  liveKeys: ['direction', 'stagger', 'overshoot', 'hold', 'blur', 'spinDim', 'edgeFalloff', 'curveAmount', 'reelShape', 'scale', 'rotateX', 'rotateY', 'rotateZ'],
   // The whole message rotation is authored as ONE seamless loop (see reelScroll) — single loop.
   loopRates() { return [1] },
 
@@ -155,9 +156,10 @@ export const slotEffect: SpaceTypeEffect = {
     const hasWght = fontHasWeightAxis(family)
     const weight = n(params, 'typeWeight')
     const tracking = n(params, 'tracking')
+    const sizeScale = n(params, 'typeSize') / 180
 
     const wf = resolveFill(params.wordFill, WHITE_FILL)
-    const sf = resolveFill(params.slotFill, { type: 'solid', a: '#15221F', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 })
+    const sf = resolveFill(params.slotFill, DARK_SLOT_FILL)
     const wfTextured = fillIsTextured(wf)
     let wordFillMap: THREE.Texture | null = null
     if (wfTextured) {
@@ -180,7 +182,7 @@ export const slotEffect: SpaceTypeEffect = {
     for (let j = 0; j < reel.slotCount; j++) {
       const cells = reel.cells[j]!
       const cellW = CELL_PX * aspect
-      const canvas = paintReelCanvas(cells, cellW, family, weight, hasWght, tracking)
+      const canvas = paintReelCanvas(cells, cellW, family, weight, hasWght, tracking, sizeScale)
       const alphaTex = new three.CanvasTexture(canvas)
       alphaTex.wrapS = three.ClampToEdgeWrapping
       alphaTex.wrapT = three.RepeatWrapping
