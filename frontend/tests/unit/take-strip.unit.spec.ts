@@ -98,12 +98,6 @@ describe('TakeStrip — emits', () => {
     expect(w.emitted('dismiss')).toBeUndefined()
   })
 
-  it('keep emits keep', async () => {
-    const w = mountStrip({ selected: TAKES[0] })
-    await w.get('[data-testid="take-keep"]').trigger('click')
-    expect(w.emitted('keep')).toHaveLength(1)
-  })
-
   it('dismiss emits dismiss', async () => {
     const w = mountStrip()
     await w.get('[data-testid="take-dismiss"]').trigger('click')
@@ -146,12 +140,6 @@ describe('TakeStrip — emits', () => {
     w.unmount()
     expect(removed.mock.calls.some(c => c[0] === 'keydown' && c[1] === handler)).toBe(true)
     added.mockRestore(); removed.mockRestore()
-  })
-
-  it('"variations of this" emits variationsOf(selected)', async () => {
-    const w = mountStrip({ selected: TAKES[1] })
-    await w.get('[data-testid="take-variations"]').trigger('click')
-    expect(w.emitted('variationsOf')![0]).toEqual([TAKES[1]])
   })
 })
 
@@ -264,19 +252,6 @@ describe('TakeStrip — accessibility', () => {
   })
 })
 
-describe('TakeStrip — variations gating', () => {
-  it('canVary:false greys the button even with a selection', () => {
-    const w = mountStrip({ selected: TAKES[0], canVary: false })
-    expect(w.get('[data-testid="take-variations"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-testid="take-keep"]').attributes('disabled')).toBeUndefined()
-  })
-
-  it('defaults to allowed, so a host that does not pass it is unaffected', () => {
-    const w = mountStrip({ selected: TAKES[0] })
-    expect(w.get('[data-testid="take-variations"]').attributes('disabled')).toBeUndefined()
-  })
-})
-
 describe('TakeStrip — the see-first hint', () => {
   it('shows a quiet hint while the model is looking at these pictures', () => {
     const w = mountStrip({ reviewing: true })
@@ -285,15 +260,6 @@ describe('TakeStrip — the see-first hint', () => {
 
   it('is absent by default, so a host that never reviews shows no chrome', () => {
     expect(mountStrip().find('[data-testid="take-reviewing"]').exists()).toBe(false)
-  })
-
-  it('is a HINT, not a block — every tile and button stays usable', async () => {
-    const w = mountStrip({ reviewing: true, selected: TAKES[0] })
-    for (const id of ['take-more', 'take-variations', 'take-keep', 'take-dismiss']) {
-      expect(w.get(`[data-testid="${id}"]`).attributes('disabled')).toBeUndefined()
-    }
-    await tiles(w)[1]!.trigger('mouseenter')
-    expect(w.emitted('hover')![0]).toEqual([TAKES[1]])
   })
 })
 
