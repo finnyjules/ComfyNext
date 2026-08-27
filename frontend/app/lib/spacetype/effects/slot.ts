@@ -73,8 +73,14 @@ function resolveFill(raw: unknown, fallback: Fill): Fill {
 const WHITE_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
 const DARK_SLOT_FILL: Fill = { type: 'solid', a: '#15221F', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
 
-// Cell height in reel-canvas px; width derived from slotAspect. Supersample-ish for crisp glyphs.
-const CELL_PX = 128
+// Target cell height in reel-canvas px. This is the alphaMap's resolution PER CELL, and the
+// aperture magnifies one cell to fill the (super-sampled) slot on screen — so too low a value
+// makes the glyph mask's texel grid visible as jagged/aliased edges. 384 keeps char-mode glyphs
+// crisp even when a slot is shown large. paintReelCanvas clamps it down per-canvas when a long
+// reel (many messages × filler) would otherwise exceed the max texture height.
+const CELL_PX = 384
+// Cap a reel canvas's height so cells.length × cellPx never exceeds a broadly-safe texture size.
+const MAX_REEL_TEX_H = 8192
 
 /** Draw a white geometric shape token centered in [0,0,w,h]. */
 function drawShapeToken(ctx: CanvasRenderingContext2D, id: string, x: number, y: number, w: number, h: number): void {
@@ -103,11 +109,17 @@ function drawShapeToken(ctx: CanvasRenderingContext2D, id: string, x: number, y:
   ctx.restore()
 }
 
-/** Paint one slot's cell strip as a tall WHITE-mask canvas (one cell per CELL_PX row). */
-function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: number, hasWght: boolean, tracking: number, sizeScale: number): HTMLCanvasElement {
+/** Paint one slot's cell strip as a tall WHITE-mask canvas (one cell per row).
+ *  `aspect` = slot width/height; the per-cell pixel size is derived here (clamped for long
+ *  reels) so canvas WIDTH and HEIGHT share the same cellPx and glyphs keep their aspect. */
+function paintReelCanvas(cells: Cell[], aspect: number, family: string, weight: number, hasWght: boolean, tracking: number, sizeScale: number): HTMLCanvasElement {
+  // Clamp the cell resolution so a long reel canvas stays within MAX_REEL_TEX_H. 96 floor keeps
+  // even an extreme reel legible.
+  const cellPx = Math.max(96, Math.min(CELL_PX, Math.floor(MAX_REEL_TEX_H / Math.max(1, cells.length))))
+  const cellW = cellPx * aspect
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(2, Math.round(cellW))
-  canvas.height = Math.max(2, cells.length * CELL_PX)
+  canvas.height = Math.max(2, cells.length * cellPx)
   const ctx = canvas.getContext('2d')!
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   for (let i = 0; i < cells.length; i++) {
@@ -118,22 +130,22 @@ function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: n
     // the aperture rests on land cell m*stride, not its mirror image. Same convention as
     // textTexture.ts's `cy = (n-1-k)*rowH`. Glyphs stay upright (flipY is the natural
     // canvas→UV mapping); only the row's V-position is reflected.
-    const y0 = (cells.length - 1 - i) * CELL_PX
+    const y0 = (cells.length - 1 - i) * cellPx
     if (cell.kind === 'blank') continue
-    if (cell.kind === 'shape') { drawShapeToken(ctx, cell.value, 0, y0, canvas.width, CELL_PX); continue }
+    if (cell.kind === 'shape') { drawShapeToken(ctx, cell.value, 0, y0, canvas.width, cellPx); continue }
     // text: rasterize glyph atlas (white), draw contained + centered in the cell
     const layout = layoutChars({
       text: cell.value, fontFamily: family, fontWeight: hasWght ? weight : 400,
-      fontSizePx: CELL_PX * 0.7, tracking, scaleX: 1, color: '#ffffff',
+      fontSizePx: cellPx * 0.7, tracking, scaleX: 1, color: '#ffffff',
       axes: hasWght ? { wght: weight } : undefined,
     })
     const img = layout.texture.image as HTMLCanvasElement
-    const pad = CELL_PX * 0.14
+    const pad = cellPx * 0.14
     const maxW = (canvas.width - pad * 2) * sizeScale
-    const maxH = (CELL_PX - pad * 2) * sizeScale
+    const maxH = (cellPx - pad * 2) * sizeScale
     const scale = Math.min(maxW / img.width, maxH / img.height)
     const dw = img.width * scale, dh = img.height * scale
-    ctx.drawImage(img, (canvas.width - dw) / 2, y0 + (CELL_PX - dh) / 2, dw, dh)
+    ctx.drawImage(img, (canvas.width - dw) / 2, y0 + (cellPx - dh) / 2, dw, dh)
     layout.texture.dispose()
   }
   return canvas
@@ -194,9 +206,10 @@ export const slotEffect: SpaceTypeEffect = {
     const slots: SlotMesh[] = []
     for (let j = 0; j < reel.slotCount; j++) {
       const cells = reel.cells[j]!
-      const cellW = CELL_PX * aspect
-      const canvas = paintReelCanvas(cells, cellW, family, weight, hasWght, tracking, sizeScale)
+      const canvas = paintReelCanvas(cells, aspect, family, weight, hasWght, tracking, sizeScale)
       const alphaTex = new three.CanvasTexture(canvas)
+      // Max anisotropy keeps the mask crisp at the drum's oblique tilt; clamped to GPU caps on upload.
+      alphaTex.anisotropy = 16
       alphaTex.wrapS = three.ClampToEdgeWrapping
       alphaTex.wrapT = three.RepeatWrapping
       alphaTex.repeat.set(1, 1 / cells.length)         // show one cell
