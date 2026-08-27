@@ -95,7 +95,7 @@ onBeforeUnmount(() => {
   emit('dismiss')
 })
 
-const TILE = 'group relative h-[52px] overflow-hidden rounded-[5px] border transition enabled:cursor-pointer'
+const TILE = 'group relative overflow-hidden rounded-[5px] border transition enabled:cursor-pointer'
 const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-1 pt-3 text-left text-[10px] leading-none text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]'
 </script>
 
@@ -103,18 +103,21 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
   <div data-testid="take-strip" :aria-busy="busy ? 'true' : 'false'"
        class="flex flex-col gap-2 rounded-[8px] border border-white/10 bg-white/[0.03] p-2">
     <div data-testid="take-row" class="flex items-stretch gap-[5px]" @mouseleave="onHover(null)">
-      <!-- ① yours — the anchor, and the undo -->
-      <button data-testid="take-yours" type="button" aria-label="yours"
-              :data-selected="selected ? 'false' : 'true'"
-              :aria-pressed="selected ? 'false' : 'true'"
-              :class="[TILE, 'w-[76px] shrink-0 border-dashed',
-                       selected ? 'border-white/25 hover:border-white/45' : 'border-white/55']"
-              @mouseenter="onHover(null)" @focus="onHover(null)" @blur="onHover(null)"
-              @click="emit('select', null)">
-        <img v-if="currentSrc" :src="currentSrc" alt="" class="h-full w-full object-cover">
-        <span v-else class="block h-full w-full bg-white/[0.06]" />
-        <span :class="TAG">yours</span>
-      </button>
+      <!-- ① current — the anchor, and the undo -->
+      <div class="flex w-[76px] shrink-0 flex-col gap-1.5">
+        <button data-testid="take-current" type="button" aria-label="current"
+                :data-selected="selected ? 'false' : 'true'"
+                :aria-pressed="selected ? 'false' : 'true'"
+                :class="[TILE, 'h-[96px] w-full opacity-80',
+                         selected ? 'border-white/12 hover:border-white/25' : 'border-white/20']"
+                @mouseenter="onHover(null)" @focus="onHover(null)" @blur="onHover(null)"
+                @click="emit('select', null)">
+          <img v-if="currentSrc" :src="currentSrc" alt="" class="h-full w-full object-cover">
+          <span v-else class="block h-full w-full bg-white/[0.06]" />
+        </button>
+        <span data-testid="take-current-mark"
+              class="text-center text-[10px] uppercase tracking-[0.06em] text-white/35">current</span>
+      </div>
 
       <div data-testid="take-divider" class="my-0.5 w-px shrink-0 bg-white/10" />
 
@@ -123,7 +126,7 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
               :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
               :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
               :title="t.rationale"
-              :class="[TILE, 'min-w-0 flex-1',
+              :class="[TILE, 'h-[96px] min-w-0 flex-1',
                        selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
               @mouseenter="onHover(t)" @mouseleave="onHover(null)"
               @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">

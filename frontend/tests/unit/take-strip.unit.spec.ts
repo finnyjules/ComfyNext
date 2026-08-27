@@ -26,11 +26,12 @@ const tiles = (w: any) => w.findAll('[data-testid="take-tile"]')
 const base = () => ({ takes: TAKES, thumbs: thumbsFor(TAKES) })
 
 describe('TakeStrip — layout', () => {
-  it('pins "yours" first, then a divider, then the takes in order', () => {
+  it('pins "current" first, then a divider, then the takes in order', () => {
     const w = mountStrip()
     const row = w.get('[data-testid="take-row"]')
     const kids = Array.from(row.element.children) as HTMLElement[]
-    expect(kids[0]!.getAttribute('data-testid')).toBe('take-yours')
+    // The current cell is a tile+marker wrapper now, not the bare tile.
+    expect(kids[0]!.querySelector('[data-testid="take-current"]')).toBeTruthy()
     expect(kids[1]!.getAttribute('data-testid')).toBe('take-divider')
     expect(kids.slice(2).map(k => k.getAttribute('data-testid'))).toEqual(Array(4).fill('take-tile'))
   })
@@ -61,12 +62,19 @@ describe('TakeStrip — layout', () => {
   it('marks the selected take, and only it', () => {
     const w = mountStrip({ selected: TAKES[2] })
     expect(tiles(w).map((t: any) => t.attributes('data-selected'))).toEqual(['false', 'false', 'true', 'false'])
-    expect(w.get('[data-testid="take-yours"]').attributes('data-selected')).toBe('false')
+    expect(w.get('[data-testid="take-current"]').attributes('data-selected')).toBe('false')
   })
 
-  it('with nothing selected, "yours" reads as the current selection', () => {
+  it('with nothing selected, "current" reads as the current selection', () => {
     const w = mountStrip()
-    expect(w.get('[data-testid="take-yours"]').attributes('data-selected')).toBe('true')
+    expect(w.get('[data-testid="take-current"]').attributes('data-selected')).toBe('true')
+  })
+
+  it('the current cell shows a "current" marker and no on-tile label', () => {
+    const w = mount(TakeStrip, { props: base() })
+    expect(w.get('[data-testid="take-current-mark"]').text()).toBe('current')
+    // no dashed border anywhere
+    expect(w.html()).not.toContain('border-dashed')
   })
 })
 
@@ -79,9 +87,9 @@ describe('TakeStrip — emits', () => {
     expect(w.emitted('hover')![1]).toEqual([null])
   })
 
-  it('hovering "yours" emits hover(null) — the original look', async () => {
+  it('hovering "current" emits hover(null) — the original look', async () => {
     const w = mountStrip()
-    await w.get('[data-testid="take-yours"]').trigger('mouseenter')
+    await w.get('[data-testid="take-current"]').trigger('mouseenter')
     expect(w.emitted('hover')![0]).toEqual([null])
   })
 
@@ -91,9 +99,9 @@ describe('TakeStrip — emits', () => {
     expect(w.emitted('select')![0]).toEqual([TAKES[3]])
   })
 
-  it('clicking "yours" emits select(null) — reselect the original, strip stays open', async () => {
+  it('clicking "current" emits select(null) — reselect the original, strip stays open', async () => {
     const w = mountStrip({ selected: TAKES[0] })
-    await w.get('[data-testid="take-yours"]').trigger('click')
+    await w.get('[data-testid="take-current"]').trigger('click')
     expect(w.emitted('select')![0]).toEqual([null])
     expect(w.emitted('dismiss')).toBeUndefined()
   })
@@ -205,19 +213,19 @@ describe('TakeStrip — accessibility', () => {
   it('every tile reports its own pressed state', () => {
     const w = mountStrip({ selected: TAKES[2] })
     expect(tiles(w).map((t: any) => t.attributes('aria-pressed'))).toEqual(['false', 'false', 'true', 'false'])
-    expect(w.get('[data-testid="take-yours"]').attributes('aria-pressed')).toBe('false')
+    expect(w.get('[data-testid="take-current"]').attributes('aria-pressed')).toBe('false')
   })
 
-  it('with nothing selected, "yours" is the pressed one', () => {
+  it('with nothing selected, "current" is the pressed one', () => {
     const w = mountStrip()
-    expect(w.get('[data-testid="take-yours"]').attributes('aria-pressed')).toBe('true')
+    expect(w.get('[data-testid="take-current"]').attributes('aria-pressed')).toBe('true')
   })
 
   it('uses aria-pressed ONLY — aria-selected is not valid on a button', () => {
     // These tiles are toggle buttons, not options in a listbox/tablist. Carrying
     // both states invites them to disagree, and the second one is ignored anyway.
     const w = mountStrip({ selected: TAKES[2] })
-    for (const el of [...tiles(w), w.get('[data-testid="take-yours"]')]) {
+    for (const el of [...tiles(w), w.get('[data-testid="take-current"]')]) {
       expect((el as any).attributes('aria-selected')).toBeUndefined()
       expect((el as any).attributes('role')).toBeUndefined() // a real <button>
     }
@@ -228,7 +236,7 @@ describe('TakeStrip — accessibility', () => {
     expect(tiles(w).map((t: any) => t.attributes('aria-label'))).toEqual(
       ['golden warm', 'soft dreamy', 'both, loud', 'restrained'],
     )
-    expect(w.get('[data-testid="take-yours"]').attributes('aria-label')).toBe('yours')
+    expect(w.get('[data-testid="take-current"]').attributes('aria-label')).toBe('current')
   })
 
   it('keyboard focus previews exactly like hover, and blur restores', async () => {
@@ -239,9 +247,9 @@ describe('TakeStrip — accessibility', () => {
     expect(w.emitted('hover')![1]).toEqual([null])
   })
 
-  it('focusing "yours" previews the original', async () => {
+  it('focusing "current" previews the original', async () => {
     const w = mountStrip({ selected: TAKES[0] })
-    await w.get('[data-testid="take-yours"]').trigger('focus')
+    await w.get('[data-testid="take-current"]').trigger('focus')
     expect(w.emitted('hover')![0]).toEqual([null])
   })
 
