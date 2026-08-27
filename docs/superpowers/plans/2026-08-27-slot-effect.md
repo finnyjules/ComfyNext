@@ -300,8 +300,9 @@ describe('reelScroll', () => {
   })
 
   it('lands slot j on integer cell offsets after settling', () => {
-    // Just before the segment boundary, every slot has settled onto message 1's land cell (offset 4)
-    const r = reelScroll(0.5 + 0.499, 1, T)
+    // End of segment 0 (t01≈0.499): every slot has settled onto message 1's land cell (offset 4).
+    // (At t01≈0.999 the reel has already wrapped toward message 0's land cell, offset→0.)
+    const r = reelScroll(0.499, 1, T)
     expect(r.offset).toBeCloseTo(4, 1)
   })
 
