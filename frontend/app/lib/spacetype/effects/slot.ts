@@ -209,6 +209,23 @@ export const slotEffect: SpaceTypeEffect = {
         transparent: true,
         depthWrite: false,
       })
+      const frameW = n(params, 'frameWidth')
+      if (frameW > 0) {
+        const frameCol = new three.Color(str(params, 'frameColor'))
+        bgMat.onBeforeCompile = (shader) => {
+          shader.uniforms.uFrameW = { value: frameW }
+          shader.uniforms.uFrameCol = { value: frameCol }
+          shader.vertexShader = 'varying vec2 vBgUv;\n' + shader.vertexShader
+            .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvBgUv = uv;')
+          shader.fragmentShader = ('uniform float uFrameW;\nuniform vec3 uFrameCol;\nvarying vec2 vBgUv;\n' + shader.fragmentShader)
+            .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+              {
+                float b = min(min(vBgUv.x, 1.0 - vBgUv.x), min(vBgUv.y, 1.0 - vBgUv.y));
+                if (b < uFrameW * 0.5) gl_FragColor.rgb = uFrameCol;
+              }`)
+        }
+      }
+
       const bg = new three.Mesh(bgGeo, bgMat)
       bg.position.z = -0.01
 
