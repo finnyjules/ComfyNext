@@ -13,8 +13,9 @@
  *     what you already have, and clicking it is one-tap undo (select(null)).
  *   • hover = preview (the parent renders the take live and restores on leave);
  *     click = select; keep commits; dismiss / Escape restores and closes.
- *   • two explicit buttons: ↻ different directions (always) and ≈ variations of
- *     this (only once something is selected).
+ *   • ↻ Re-roll (different directions) sits on the whole-strip bar, always on.
+ *     Keep and ≈ Variations live per-card instead — revealed on hover/focus/
+ *     selection — since each names the take it acts on, not "the" selection.
  *   • a take whose thumbnail failed shows an error tile and stays selectable —
  *     only the picture failed, not the config. A take with NO entry in the map
  *     yet is a different thing: still drawing (the strip goes up the instant the
@@ -96,7 +97,6 @@ onBeforeUnmount(() => {
 })
 
 const TILE = 'group relative overflow-hidden rounded-[5px] border transition enabled:cursor-pointer'
-const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-1 pt-3 text-left text-[10px] leading-none text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]'
 </script>
 
 <template>
@@ -121,29 +121,46 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
 
       <div data-testid="take-divider" class="my-0.5 w-px shrink-0 bg-white/10" />
 
-      <!-- ② the takes -->
-      <button v-for="(t, i) in takes" :key="i" data-testid="take-tile" type="button"
-              :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
-              :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
-              :title="t.rationale"
-              :class="[TILE, 'h-[96px] min-w-0 flex-1',
-                       selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
-              @mouseenter="onHover(t)" @mouseleave="onHover(null)"
-              @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
-        <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
-        <!-- ③ still drawing — NOT a failure. -->
-        <span v-else-if="pending.has(t)" data-testid="take-pending"
-              class="block h-full w-full animate-pulse bg-white/[0.07]" />
-        <!-- ④ error tile: the render threw. Never a blank strip. -->
-        <span v-else data-testid="take-error"
-              class="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
-          couldn’t draw
-        </span>
-        <span :class="TAG">{{ t.label }}</span>
-      </button>
+      <!-- ② the takes — each a cell: the tile-button plus its own action row as a
+           sibling (a button cannot nest inside a button). -->
+      <div v-for="(t, i) in takes" :key="i" data-testid="take-cell" class="group relative min-w-0 flex-1">
+        <button data-testid="take-tile" type="button"
+                :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
+                :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
+                :title="t.rationale"
+                :class="[TILE, 'h-[96px] w-full',
+                         selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
+                @mouseenter="onHover(t)" @mouseleave="onHover(null)"
+                @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
+          <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
+          <!-- ③ still drawing — NOT a failure. -->
+          <span v-else-if="pending.has(t)" data-testid="take-pending"
+                class="block h-full w-full animate-pulse bg-white/[0.07]" />
+          <!-- ④ error tile: the render threw. Never a blank strip. -->
+          <span v-else data-testid="take-error"
+                class="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
+            couldn’t draw
+          </span>
+        </button>
+        <!-- per-card actions: always in the DOM (tests need them addressable),
+             revealed on hover / focus-within / when this take is selected. -->
+        <div :class="['pointer-events-none absolute inset-x-0 bottom-0 flex justify-end gap-1.5 p-1.5 opacity-0 transition',
+                      'bg-gradient-to-t from-black/85 to-transparent',
+                      'group-hover:opacity-100 group-focus-within:opacity-100',
+                      selected === t ? '!opacity-100' : '']">
+          <StudioButton data-testid="take-variations" variant="secondary" class="pointer-events-auto"
+                        :disabled="busy || !canVary" @click.stop="emit('variationsOf', t)">
+            ≈ Variations
+          </StudioButton>
+          <StudioButton data-testid="take-keep" variant="primary" class="pointer-events-auto"
+                        :disabled="busy" @click.stop="emit('select', t); emit('keep')">
+            Keep
+          </StudioButton>
+        </div>
+      </div>
     </div>
 
-    <!-- ⑤ actions: two whole-strip controls. Keep/Variations move per-card (Task 3). -->
+    <!-- ⑤ actions: two whole-strip controls. Keep/Variations live per-card, above. -->
     <div data-testid="take-actions" class="flex items-center gap-2">
       <StudioButton data-testid="take-dismiss" variant="subtle" :disabled="busy" @click="emit('dismiss')">
         Cancel

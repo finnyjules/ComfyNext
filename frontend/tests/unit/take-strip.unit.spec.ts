@@ -23,6 +23,10 @@ function mountStrip(over: Record<string, unknown> = {}) {
 }
 
 const tiles = (w: any) => w.findAll('[data-testid="take-tile"]')
+// The per-card actions (Keep/Variations) are DOM siblings of the tile button,
+// not descendants of it (a button cannot nest inside a button) — so tests
+// that need to reach them scope through the wrapping cell, not the tile.
+const cells = (w: any) => w.findAll('[data-testid="take-cell"]')
 const base = () => ({ takes: TAKES, thumbs: thumbsFor(TAKES) })
 
 describe('TakeStrip — layout', () => {
@@ -33,15 +37,16 @@ describe('TakeStrip — layout', () => {
     // The current cell is a tile+marker wrapper now, not the bare tile.
     expect(kids[0]!.querySelector('[data-testid="take-current"]')).toBeTruthy()
     expect(kids[1]!.getAttribute('data-testid')).toBe('take-divider')
-    expect(kids.slice(2).map(k => k.getAttribute('data-testid'))).toEqual(Array(4).fill('take-tile'))
+    // Each take is now its own cell (tile-button + per-card actions as siblings).
+    expect(kids.slice(2).map(k => k.getAttribute('data-testid'))).toEqual(Array(4).fill('take-cell'))
+    for (const cell of kids.slice(2)) expect(cell.querySelector('[data-testid="take-tile"]')).toBeTruthy()
   })
 
-  it('shows every take label, in the order given', () => {
+  it('carries the take label as data/aria, in the order given, though the tile shows no text', () => {
     const w = mountStrip()
     expect(tiles(w).map((t: any) => t.attributes('data-label'))).toEqual(
       ['golden warm', 'soft dreamy', 'both, loud', 'restrained'],
     )
-    for (const t of TAKES) expect(w.text()).toContain(t.label)
   })
 
   it('renders the thumbnail it was handed for each take (no re-render of its own)', () => {
@@ -179,7 +184,7 @@ describe('TakeStrip — action bar', () => {
 })
 
 describe('TakeStrip — gating', () => {
-  // Keep/Variations disabled-state coverage moves per-card in Task 3.
+  // Per-card Keep/Variations disabled-state coverage lives in "per-card actions" below.
 
   it('busy marks the strip busy', async () => {
     const w = mountStrip({ selected: TAKES[0], busy: true })
@@ -190,6 +195,49 @@ describe('TakeStrip — gating', () => {
     const w = mountStrip({ busy: true })
     await tiles(w)[0]!.trigger('mouseenter')
     expect(w.emitted('hover')).toBeUndefined()
+  })
+})
+
+describe('TakeStrip — per-card actions', () => {
+  it('each take has its own Keep and Variations', () => {
+    const w = mount(TakeStrip, { props: base() })
+    for (const cell of cells(w)) {
+      expect(cell.find('[data-testid="take-keep"]').exists()).toBe(true)
+      expect(cell.find('[data-testid="take-variations"]').exists()).toBe(true)
+    }
+  })
+  it('Keep on a card selects that take then keeps it', async () => {
+    const w = mount(TakeStrip, { props: base() })
+    await cells(w)[1]!.get('[data-testid="take-keep"]').trigger('click')
+    expect(w.emitted('select')![0]).toEqual([w.props('takes')[1]])
+    expect(w.emitted('keep')).toHaveLength(1)
+  })
+  it('Variations on a card emits variationsOf(thatTake)', async () => {
+    const w = mount(TakeStrip, { props: base() })
+    await cells(w)[2]!.get('[data-testid="take-variations"]').trigger('click')
+    expect(w.emitted('variationsOf')![0]).toEqual([w.props('takes')[2]])
+  })
+  it('Variations is disabled when canVary is false; Keep is not', () => {
+    const w = mount(TakeStrip, { props: { ...base(), canVary: false } })
+    expect(cells(w)[0]!.get('[data-testid="take-variations"]').attributes('disabled')).toBeDefined()
+    expect(cells(w)[0]!.get('[data-testid="take-keep"]').attributes('disabled')).toBeUndefined()
+  })
+  it('busy disables every card action', () => {
+    const w = mount(TakeStrip, { props: { ...base(), busy: true } })
+    expect(cells(w)[0]!.get('[data-testid="take-keep"]').attributes('disabled')).toBeDefined()
+    expect(cells(w)[0]!.get('[data-testid="take-variations"]').attributes('disabled')).toBeDefined()
+  })
+  it('takes carry no on-tile text label', () => {
+    const w = mount(TakeStrip, { props: base() })
+    // label text is no longer stamped on the tile (the action buttons are the
+    // only text; the label survives only as data-label/aria-label).
+    for (const tile of tiles(w))
+      expect(tile.find('.take-label').exists()).toBe(false)
+  })
+  it('a card’s Keep/Variations are revealed when that take is selected (not just on hover)', () => {
+    const w = mount(TakeStrip, { props: { ...base(), selected: TAKES[0] } })
+    const overlay = cells(w)[0]!.get('[data-testid="take-keep"]').element.parentElement as HTMLElement
+    expect(overlay.className).toContain('!opacity-100')
   })
 })
 
