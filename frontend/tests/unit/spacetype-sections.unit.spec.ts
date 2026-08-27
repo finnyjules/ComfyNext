@@ -57,6 +57,28 @@ it('effect ids are unique', () => {
   expect(new Set(ids).size).toBe(ids.length)
 })
 
+// SpaceTypeSurface's multi-text editor is a SINGLETON bound to params.text (textLines ↔
+// params.text, SpaceTypeSurface.vue:215-228,1909): a `textList` control is NOT rendered per its
+// own key. So an effect may declare AT MOST ONE textList control, and it MUST be keyed 'text' —
+// otherwise its edits land in params.text and never reach the effect (which reads its own key),
+// and a second textList silently shares the same editor. The `text` kind (single-line) binds
+// per-key (params[c.key]) and has no such limit — use it for any additional text input.
+it('each effect has ≤1 textList control, keyed "text" (surface binds textLines↔params.text)', () => {
+  for (const e of SPACE_TYPE_EFFECTS) {
+    const textLists = e.controls.filter(c => c.kind === 'textList')
+    expect(
+      textLists.length,
+      `effect "${e.id}" declares ${textLists.length} textList controls (${textLists.map(c => c.key).join(', ')}); the surface's textList editor is a singleton — use kind 'text' for extra inputs`,
+    ).toBeLessThanOrEqual(1)
+    for (const c of textLists) {
+      expect(
+        c.key,
+        `effect "${e.id}" textList control is keyed "${c.key}", but the surface binds the editor to params.text — a non-'text' key means typed edits never reach the effect`,
+      ).toBe('text')
+    }
+  }
+})
+
 // The array IS the panel's display order (framing → content → shape → finish → motion → export).
 // 'Camera' is surface-injected (no effect declares it); 'Motion' renders on the Motion tab.
 it('panel order: framing → content → shape → finish → motion → output', () => {

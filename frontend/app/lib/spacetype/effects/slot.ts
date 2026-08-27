@@ -9,7 +9,10 @@ import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 
 const controls: ControlSpec[] = [
   // Type
-  { key: 'messages', label: 'Messages', kind: 'textList', default: 'MAKE IT REAL\nSHIP TODAY', group: 'Type' },
+  // Key MUST be 'text': SpaceTypeSurface's multi-text editor is a singleton bound to params.text
+  // (a textList control is not rendered per its own key) — see tests/unit/spacetype-sections. Each
+  // newline-separated row is one message the reels rotate between.
+  { key: 'text', label: 'Messages', kind: 'textList', default: 'MAKE IT REAL\nSHIP TODAY', group: 'Type' },
   { key: 'reelUnit', label: 'Reel unit', kind: 'select', options: ['word', 'char'], default: 'word', group: 'Type' },
   { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
   { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 700, group: 'Type' },
@@ -18,7 +21,10 @@ const controls: ControlSpec[] = [
   { key: 'fillerSource', label: 'Filler', kind: 'select', options: ['messages', 'glyphs', 'shapes', 'custom'], default: 'messages', group: 'Type' },
   { key: 'glyphSet', label: 'Glyph set', kind: 'select', options: ['alpha', 'digits', 'symbols', 'mixed'], default: 'mixed', group: 'Type', showIf: { key: 'fillerSource', equals: 'glyphs' } },
   { key: 'shapeSet', label: 'Shape set', kind: 'select', options: ['basic', 'geometric'], default: 'geometric', group: 'Type', showIf: { key: 'fillerSource', equals: 'shapes' } },
-  { key: 'fillerTokens', label: 'Filler tokens', kind: 'textList', default: 'A B C', group: 'Type', showIf: { key: 'fillerSource', equals: 'custom' } },
+  // kind 'text' (single-line, space-separated), NOT 'textList': the surface allows only one
+  // textList (the singleton above). buildReel splits fillerTokens on whitespace. kind 'text' binds
+  // per-key (params.fillerTokens), so it doesn't collide with the messages editor.
+  { key: 'fillerTokens', label: 'Filler tokens', kind: 'text', default: 'A B C', group: 'Type', showIf: { key: 'fillerSource', equals: 'custom' } },
   { key: 'fillerDensity', label: 'Filler amount', kind: 'slider', min: 0, max: 12, step: 1, default: 4, group: 'Type' },
   // Color
   { key: 'wordFill', label: 'Word fill', kind: 'fillList', default: defaultFillsFor(1, 'slot'), group: 'Color' },
@@ -149,7 +155,7 @@ export const slotEffect: SpaceTypeEffect = {
   buildScene(three, params) {
     const root = new three.Group()
     const reel = buildReel({
-      messages: str(params, 'messages'),
+      messages: str(params, 'text'),
       reelUnit: (str(params, 'reelUnit') as 'word' | 'char'),
       fillerSource: (str(params, 'fillerSource') as ReelSource),
       glyphSet: str(params, 'glyphSet'),
