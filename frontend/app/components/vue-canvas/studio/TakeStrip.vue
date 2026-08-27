@@ -123,14 +123,14 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
 
       <!-- ② the takes — each a cell: the tile-button plus its own action row as a
            sibling (a button cannot nest inside a button). -->
-      <div v-for="(t, i) in takes" :key="i" data-testid="take-cell" class="group relative min-w-0 flex-1">
+      <div v-for="(t, i) in takes" :key="i" data-testid="take-cell" class="group relative min-w-0 flex-1"
+           @mouseenter="onHover(t)" @mouseleave="onHover(null)">
         <button data-testid="take-tile" type="button"
                 :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
                 :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
                 :title="t.rationale"
                 :class="[TILE, 'h-[96px] w-full',
                          selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
-                @mouseenter="onHover(t)" @mouseleave="onHover(null)"
                 @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
           <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
           <!-- ③ still drawing — NOT a failure. -->

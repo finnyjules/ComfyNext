@@ -85,10 +85,13 @@ describe('TakeStrip — layout', () => {
 
 describe('TakeStrip — emits', () => {
   it('hovering a take emits hover(take); leaving it emits hover(null)', async () => {
+    // Hover is cell-scoped (not tile-scoped) so reaching for the per-card
+    // Keep/Variations buttons never reverts the preview — see the
+    // "held while reaching for its actions" test below.
     const w = mountStrip()
-    await tiles(w)[1]!.trigger('mouseenter')
+    await cells(w)[1]!.trigger('mouseenter')
     expect(w.emitted('hover')![0]).toEqual([TAKES[1]])
-    await tiles(w)[1]!.trigger('mouseleave')
+    await cells(w)[1]!.trigger('mouseleave')
     expect(w.emitted('hover')![1]).toEqual([null])
   })
 
@@ -193,7 +196,7 @@ describe('TakeStrip — gating', () => {
 
   it('busy suppresses hover previews (the engine is mid-render)', async () => {
     const w = mountStrip({ busy: true })
-    await tiles(w)[0]!.trigger('mouseenter')
+    await cells(w)[0]!.trigger('mouseenter')
     expect(w.emitted('hover')).toBeUndefined()
   })
 })
@@ -238,6 +241,27 @@ describe('TakeStrip — per-card actions', () => {
     const w = mount(TakeStrip, { props: { ...base(), selected: TAKES[0] } })
     const overlay = cells(w)[0]!.get('[data-testid="take-keep"]').element.parentElement as HTMLElement
     expect(overlay.className).toContain('!opacity-100')
+  })
+  it('the preview holds while reaching for a card’s Keep button — hover is cell-scoped, not tile-scoped', async () => {
+    // Regression for the flicker bug: Keep/Variations sit on top of the tile
+    // via absolute positioning but are DOM SIBLINGS of it (buttons can't
+    // nest). If hover/leave lived on the tile button, moving off it onto the
+    // overlaid Keep button would fire the tile's mouseleave right as the user
+    // reaches for it, reverting the live preview mid-click. Hover now lives
+    // on the wrapping cell, so entering a descendant button never leaves it.
+    const w = mount(TakeStrip, { props: base() })
+    await cells(w)[1]!.trigger('mouseenter')
+    expect(w.emitted('hover')![0]).toEqual([TAKES[1]])
+    await cells(w)[1]!.get('[data-testid="take-keep"]').trigger('mouseenter')
+    // Still just the one hover(take) emit — no trailing hover(null).
+    expect(w.emitted('hover')).toHaveLength(1)
+    expect(w.emitted('hover')![w.emitted('hover')!.length - 1]).toEqual([TAKES[1]])
+    // And the exact old bug trigger — a mouseleave landing on the tile
+    // button itself (as it would when the pointer crosses onto the
+    // sibling action row) — no longer does anything, because the tile no
+    // longer carries a mouseleave handler at all.
+    await tiles(w)[1]!.trigger('mouseleave')
+    expect(w.emitted('hover')).toHaveLength(1)
   })
 })
 
