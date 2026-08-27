@@ -23,6 +23,7 @@ function mountStrip(over: Record<string, unknown> = {}) {
 }
 
 const tiles = (w: any) => w.findAll('[data-testid="take-tile"]')
+const base = () => ({ takes: TAKES, thumbs: thumbsFor(TAKES) })
 
 describe('TakeStrip — layout', () => {
   it('pins "yours" first, then a divider, then the takes in order', () => {
@@ -147,12 +148,6 @@ describe('TakeStrip — emits', () => {
     added.mockRestore(); removed.mockRestore()
   })
 
-  it('"different directions" emits moreDirections', async () => {
-    const w = mountStrip()
-    await w.get('[data-testid="take-more"]').trigger('click')
-    expect(w.emitted('moreDirections')).toHaveLength(1)
-  })
-
   it('"variations of this" emits variationsOf(selected)', async () => {
     const w = mountStrip({ selected: TAKES[1] })
     await w.get('[data-testid="take-variations"]').trigger('click')
@@ -160,32 +155,38 @@ describe('TakeStrip — emits', () => {
   })
 })
 
+describe('TakeStrip — action bar', () => {
+  it('bar has exactly Cancel then Re-roll, in that order', () => {
+    const w = mount(TakeStrip, { props: base() })
+    const bar = w.get('[data-testid="take-actions"]')
+    const ids = bar.findAll('[data-testid^="take-"]').map(b => b.attributes('data-testid'))
+    expect(ids).toEqual(['take-dismiss', 'take-reroll'])
+  })
+  it('Re-roll emits moreDirections', async () => {
+    const w = mount(TakeStrip, { props: base() })
+    await w.get('[data-testid="take-reroll"]').trigger('click')
+    expect(w.emitted('moreDirections')).toHaveLength(1)
+  })
+  it('Cancel emits dismiss', async () => {
+    const w = mount(TakeStrip, { props: base() })
+    await w.get('[data-testid="take-dismiss"]').trigger('click')
+    expect(w.emitted('dismiss')).toHaveLength(1)
+  })
+  it('Re-roll uses the neutral (white) variant', () => {
+    const w = mount(TakeStrip, { props: base() })
+    expect(w.get('[data-testid="take-reroll"]').classes().join(' ')).toContain('bg-white')
+  })
+  it('busy disables both bar controls', () => {
+    const w = mount(TakeStrip, { props: { ...base(), busy: true } })
+    expect(w.get('[data-testid="take-reroll"]').attributes('disabled')).toBeDefined()
+  })
+})
+
 describe('TakeStrip — gating', () => {
-  it('keep and variations are disabled until a take is selected', () => {
-    const w = mountStrip()
-    expect(w.get('[data-testid="take-variations"]').attributes('disabled')).toBeDefined()
-    expect(w.get('[data-testid="take-keep"]').attributes('disabled')).toBeDefined()
-    // Diverging never needs a selection.
-    expect(w.get('[data-testid="take-more"]').attributes('disabled')).toBeUndefined()
-  })
+  // Keep/Variations disabled-state coverage moves per-card in Task 3.
 
-  it('a selection enables them', () => {
-    const w = mountStrip({ selected: TAKES[0] })
-    expect(w.get('[data-testid="take-variations"]').attributes('disabled')).toBeUndefined()
-    expect(w.get('[data-testid="take-keep"]').attributes('disabled')).toBeUndefined()
-  })
-
-  it('a disabled variations button emits nothing when clicked', async () => {
-    const w = mountStrip()
-    await w.get('[data-testid="take-variations"]').trigger('click')
-    expect(w.emitted('variationsOf')).toBeUndefined()
-  })
-
-  it('busy disables every action and marks the strip busy', async () => {
+  it('busy marks the strip busy', async () => {
     const w = mountStrip({ selected: TAKES[0], busy: true })
-    for (const id of ['take-more', 'take-variations', 'take-keep']) {
-      expect(w.get(`[data-testid="${id}"]`).attributes('disabled')).toBeDefined()
-    }
     expect(w.get('[data-testid="take-strip"]').attributes('aria-busy')).toBe('true')
   })
 

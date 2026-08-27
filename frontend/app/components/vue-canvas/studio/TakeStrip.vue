@@ -140,22 +140,17 @@ const TAG = 'pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 pb-
       </button>
     </div>
 
-    <!-- ⑤ actions: diverge · converge · undo · commit -->
-    <div class="flex items-center gap-2">
-      <StudioButton data-testid="take-more" variant="secondary" :disabled="busy" @click="emit('moreDirections')">
-        ↻ different directions
-      </StudioButton>
-      <StudioButton data-testid="take-variations" variant="secondary" :disabled="busy || !selected || !canVary"
-                    @click="selected && emit('variationsOf', selected)">
-        ≈ variations of this
+    <!-- ⑤ actions: two whole-strip controls. Keep/Variations move per-card (Task 3). -->
+    <div data-testid="take-actions" class="flex items-center gap-2">
+      <StudioButton data-testid="take-dismiss" variant="subtle" :disabled="busy" @click="emit('dismiss')">
+        Cancel
       </StudioButton>
       <span v-if="reviewing" data-testid="take-reviewing" class="pl-1 text-[11px] text-white/40">
         looking at these<span class="animate-pulse">…</span>
       </span>
       <span class="flex-1" />
-      <StudioButton data-testid="take-dismiss" variant="subtle" @click="emit('dismiss')">Dismiss</StudioButton>
-      <StudioButton data-testid="take-keep" variant="primary" :disabled="busy || !selected" @click="emit('keep')">
-        Keep
+      <StudioButton data-testid="take-reroll" variant="neutral" :disabled="busy" @click="emit('moreDirections')">
+        ↻ Re-roll
       </StudioButton>
     </div>
   </div>
