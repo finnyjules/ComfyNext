@@ -1,0 +1,253 @@
+import * as THREE from 'three'
+import { defaultsFromControls, type ControlSpec, type Params, type SpaceTypeEffect } from '../effect'
+import { buildReel, reelScroll, type Cell, type Timing } from '../slotGeometry'
+import { layoutChars } from '../charLayout'
+import { normalizeFill, fillIsTextured, fillShaderTexture, fillTiling, fillPrimary, type Fill } from '../fills'
+import { fillIsShader } from '../fillTile'
+import { defaultFillsFor } from '../palette'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
+
+const controls: ControlSpec[] = [
+  // Type
+  { key: 'messages', label: 'Messages', kind: 'textList', default: 'MAKE IT REAL\nSHIP TODAY', group: 'Type' },
+  { key: 'reelUnit', label: 'Reel unit', kind: 'select', options: ['word', 'char'], default: 'word', group: 'Type' },
+  { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
+  { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 700, group: 'Type' },
+  { key: 'typeSize', label: 'Type size', kind: 'slider', min: 40, max: 320, step: 2, default: 180, group: 'Type' },
+  { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
+  { key: 'fillerSource', label: 'Filler', kind: 'select', options: ['messages', 'glyphs', 'shapes', 'custom'], default: 'messages', group: 'Type' },
+  { key: 'glyphSet', label: 'Glyph set', kind: 'select', options: ['alpha', 'digits', 'symbols', 'mixed'], default: 'mixed', group: 'Type', showIf: { key: 'fillerSource', equals: 'glyphs' } },
+  { key: 'shapeSet', label: 'Shape set', kind: 'select', options: ['basic', 'geometric'], default: 'geometric', group: 'Type', showIf: { key: 'fillerSource', equals: 'shapes' } },
+  { key: 'fillerTokens', label: 'Filler tokens', kind: 'textList', default: 'A B C', group: 'Type', showIf: { key: 'fillerSource', equals: 'custom' } },
+  { key: 'fillerDensity', label: 'Filler amount', kind: 'slider', min: 0, max: 12, step: 1, default: 4, group: 'Type' },
+  // Color
+  { key: 'wordFill', label: 'Word fill', kind: 'fillList', default: defaultFillsFor(1, 'slot'), group: 'Color' },
+  { key: 'slotFill', label: 'Slot fill', kind: 'fillList', default: '[{"type":"solid","a":"#15221F","b":"#000000","textColor":"#ffffff","angle":45,"density":8}]', group: 'Color' },
+  // Stroke
+  { key: 'frameWidth', label: 'Frame', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0, group: 'Stroke' },
+  { key: 'frameColor', label: 'Frame color', kind: 'color', default: '#000000', group: 'Stroke', showIf: { key: 'frameWidth', notEquals: 0 } },
+  // Layout
+  { key: 'reelShape', label: 'Reel shape', kind: 'select', options: ['flat', 'drum'], default: 'drum', group: 'Layout' },
+  { key: 'curveAmount', label: 'Drum curve', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.6, group: 'Layout', showIf: { key: 'reelShape', equals: 'drum' } },
+  { key: 'slotAspect', label: 'Slot aspect', kind: 'slider', min: 0.4, max: 3, step: 0.05, default: 0.9, group: 'Layout' },
+  { key: 'slotGap', label: 'Slot gap', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.12, group: 'Layout' },
+  { key: 'columns', label: 'Columns', kind: 'slider', min: 1, max: 12, step: 1, default: 6, group: 'Layout' },
+  { key: 'align', label: 'Align', kind: 'select', options: ['left', 'center'], default: 'center', group: 'Layout' },
+  { key: 'edgeFalloff', label: 'Edge falloff', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.3, group: 'Layout' },
+  // Motion
+  { key: 'direction', label: 'Direction', kind: 'select', options: ['up', 'down'], default: 'up', group: 'Motion' },
+  { key: 'stagger', label: 'Stagger', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.4, group: 'Motion' },
+  { key: 'overshoot', label: 'Overshoot', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.3, group: 'Motion' },
+  { key: 'hold', label: 'Hold', kind: 'slider', min: 0, max: 0.9, step: 0.01, default: 0.4, group: 'Motion' },
+  { key: 'blur', label: 'Motion blur', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.6, group: 'Motion' },
+  // Look
+  { key: 'spinDim', label: 'Spin dim', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.3, group: 'Look' },
+  // Transform (engine applies scale/rotate from these — see engine.ts:348-349)
+  { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1.2, group: 'Transform' },
+  { key: 'rotateX', label: 'Scene rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
+  { key: 'rotateY', label: 'Scene rotate Y', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
+  { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
+]
+
+const SLOT_DEFAULTS = defaultsFromControls(controls)
+function n(p: Params, k: string): number { return Number(p[k] ?? SLOT_DEFAULTS[k]) }
+function str(p: Params, k: string): string { return String(p[k] ?? SLOT_DEFAULTS[k]) }
+
+/** wordFill/slotFill store one Fill as JSON (bare object OR [fill]); parse tolerantly like ring's resolveWordFill. */
+function resolveFill(raw: unknown, fallback: Fill): Fill {
+  if (typeof raw === 'string' && raw) {
+    try {
+      const v = JSON.parse(raw)
+      return normalizeFill(Array.isArray(v) ? v[0] : v)
+    } catch { /* fall through */ }
+  }
+  return fallback
+}
+
+const WHITE_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
+
+// Cell height in reel-canvas px; width derived from slotAspect. Supersample-ish for crisp glyphs.
+const CELL_PX = 128
+
+/** Draw a white geometric shape token centered in [0,0,w,h]. */
+function drawShapeToken(ctx: CanvasRenderingContext2D, id: string, x: number, y: number, w: number, h: number): void {
+  const cx = x + w / 2, cy = y + h / 2
+  const r = Math.min(w, h) * 0.32
+  ctx.save()
+  ctx.fillStyle = '#ffffff'
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = Math.max(2, r * 0.28)
+  ctx.beginPath()
+  switch (id) {
+    case 'square': ctx.rect(cx - r, cy - r, r * 2, r * 2); ctx.fill(); break
+    case 'triangle':
+      ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy + r); ctx.lineTo(cx - r, cy + r); ctx.closePath(); ctx.fill(); break
+    case 'diamond':
+      ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy); ctx.closePath(); ctx.fill(); break
+    case 'cross':
+      ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r); ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r); ctx.stroke(); break
+    case 'ring':
+      ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); break
+    case 'chevron':
+      ctx.moveTo(cx - r, cy - r * 0.5); ctx.lineTo(cx, cy + r * 0.5); ctx.lineTo(cx + r, cy - r * 0.5); ctx.stroke(); break
+    case 'circle':
+    default: ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); break
+  }
+  ctx.restore()
+}
+
+/** Paint one slot's cell strip as a tall WHITE-mask canvas (one cell per CELL_PX row). */
+function paintReelCanvas(cells: Cell[], cellW: number, family: string, weight: number, hasWght: boolean, tracking: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(2, Math.round(cellW))
+  canvas.height = Math.max(2, cells.length * CELL_PX)
+  const ctx = canvas.getContext('2d')!
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i]!
+    const y0 = i * CELL_PX
+    if (cell.kind === 'blank') continue
+    if (cell.kind === 'shape') { drawShapeToken(ctx, cell.value, 0, y0, canvas.width, CELL_PX); continue }
+    // text: rasterize glyph atlas (white), draw contained + centered in the cell
+    const layout = layoutChars({
+      text: cell.value, fontFamily: family, fontWeight: hasWght ? weight : 400,
+      fontSizePx: CELL_PX * 0.7, tracking, scaleX: 1, color: '#ffffff',
+      axes: hasWght ? { wght: weight } : undefined,
+    })
+    const img = layout.texture.image as HTMLCanvasElement
+    const pad = CELL_PX * 0.14
+    const maxW = canvas.width - pad * 2
+    const maxH = CELL_PX - pad * 2
+    const scale = Math.min(maxW / img.width, maxH / img.height)
+    const dw = img.width * scale, dh = img.height * scale
+    ctx.drawImage(img, (canvas.width - dw) / 2, y0 + (CELL_PX - dh) / 2, dw, dh)
+    layout.texture.dispose()
+  }
+  return canvas
+}
+
+interface SlotMesh { mesh: THREE.Mesh; alphaTex: THREE.CanvasTexture; cellCount: number; slotIndex: number }
+interface SlotState { slots: SlotMesh[]; messageCount: number; stride: number; slotCount: number }
+
+export const slotEffect: SpaceTypeEffect = {
+  id: 'slot',
+  label: 'Slot',
+  controls,
+  // Live: motion/look/placement that update() reads each frame — no structural rebuild.
+  liveKeys: ['direction', 'stagger', 'overshoot', 'hold', 'blur', 'spinDim', 'edgeFalloff', 'curveAmount', 'slotGap', 'reelShape', 'scale', 'rotateX', 'rotateY', 'rotateZ'],
+  // The whole message rotation is authored as ONE seamless loop (see reelScroll) — single loop.
+  loopRates() { return [1] },
+
+  buildScene(three, params) {
+    const root = new three.Group()
+    const reel = buildReel({
+      messages: str(params, 'messages'),
+      reelUnit: (str(params, 'reelUnit') as 'word' | 'char'),
+      fillerSource: (str(params, 'fillerSource') as ReelSource),
+      glyphSet: str(params, 'glyphSet'),
+      shapeSet: str(params, 'shapeSet'),
+      fillerTokens: str(params, 'fillerTokens'),
+      fillerDensity: n(params, 'fillerDensity'),
+      align: (str(params, 'align') as 'left' | 'center'),
+    })
+
+    const family = resolveFontFamily(str(params, 'font'))
+    const hasWght = fontHasWeightAxis(family)
+    const weight = n(params, 'typeWeight')
+    const tracking = n(params, 'tracking')
+
+    const wf = resolveFill(params.wordFill, WHITE_FILL)
+    const sf = resolveFill(params.slotFill, { type: 'solid', a: '#15221F', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 })
+    const wfTextured = fillIsTextured(wf)
+    let wordFillMap: THREE.Texture | null = null
+    if (wfTextured) {
+      if (fillIsShader(wf)) wordFillMap = fillShaderTexture(three, wf)
+      else {
+        wordFillMap = fillShaderTexture(three, wf).clone()
+        wordFillMap.needsUpdate = true
+        wordFillMap.repeat.set(fillTiling(wf), fillTiling(wf))
+        root.userData.tex = wordFillMap
+      }
+    }
+
+    const aspect = n(params, 'slotAspect')            // w/h
+    const H = 1                                        // slot world height (unit); scale control zooms the scene
+    const W = H * aspect
+    const cols = Math.min(Math.max(1, Math.round(n(params, 'columns'))), reel.slotCount)
+    const rows = Math.ceil(reel.slotCount / cols)
+
+    const slots: SlotMesh[] = []
+    for (let j = 0; j < reel.slotCount; j++) {
+      const cells = reel.cells[j]!
+      const cellW = CELL_PX * aspect
+      const canvas = paintReelCanvas(cells, cellW, family, weight, hasWght, tracking)
+      const alphaTex = new three.CanvasTexture(canvas)
+      alphaTex.wrapS = three.ClampToEdgeWrapping
+      alphaTex.wrapT = three.RepeatWrapping
+      alphaTex.repeat.set(1, 1 / cells.length)         // show one cell
+      alphaTex.needsUpdate = true
+
+      const geo = new three.PlaneGeometry(W, H, 1, 24) // vertical subdivisions for drum curve (Task 4)
+      const material = new three.MeshBasicMaterial({
+        map: wfTextured ? wordFillMap : null,
+        color: wfTextured ? new three.Color('#ffffff') : fillPrimary(three, wf),
+        alphaMap: alphaTex,
+        transparent: true,
+        side: three.DoubleSide,
+        depthWrite: false,
+      })
+
+      // Slot background quad (behind the reel).
+      const bgGeo = new three.PlaneGeometry(W, H, 1, 1)
+      const bgMat = new three.MeshBasicMaterial({
+        map: fillIsTextured(sf) ? fillShaderTexture(three, sf) : null,
+        color: fillIsTextured(sf) ? new three.Color('#ffffff') : fillPrimary(three, sf),
+        side: three.DoubleSide,
+        transparent: true,
+        depthWrite: false,
+      })
+      const bg = new three.Mesh(bgGeo, bgMat)
+      bg.position.z = -0.01
+
+      const mesh = new three.Mesh(geo, material)
+      mesh.userData.tex = alphaTex
+
+      const col = j % cols
+      const rowIdx = Math.floor(j / cols)
+      const gap = n(params, 'slotGap') * H
+      const px = (col - (cols - 1) / 2) * (W + gap)
+      const py = -(rowIdx - (rows - 1) / 2) * (H + gap)
+      const cell = new three.Group()
+      cell.position.set(px, py, 0)
+      cell.add(bg)
+      cell.add(mesh)
+      root.add(cell)
+
+      slots.push({ mesh, alphaTex, cellCount: cells.length, slotIndex: j })
+    }
+
+    root.userData.slotState = { slots, messageCount: reel.messageCount, stride: reel.stride, slotCount: reel.slotCount } as SlotState
+    return root
+  },
+
+  update(t01, params, root) {
+    const st = root?.userData?.slotState as SlotState | undefined
+    if (!st) return
+    const timing: Timing = {
+      messageCount: st.messageCount,
+      stride: st.stride,
+      slotCount: st.slotCount,
+      hold: n(params, 'hold'),
+      stagger: n(params, 'stagger'),
+      overshoot: n(params, 'overshoot'),
+    }
+    const dir = str(params, 'direction') === 'down' ? -1 : 1
+    for (const s of st.slots) {
+      const { offset } = reelScroll(t01, s.slotIndex, timing)
+      // offset in cells → V fraction of the strip; RepeatWrapping handles the seam.
+      s.alphaTex.offset.y = (dir * offset / s.cellCount) % 1
+    }
+  },
+}
+
+type ReelSource = 'messages' | 'glyphs' | 'shapes' | 'custom'

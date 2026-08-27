@@ -26,6 +26,7 @@ import { cornerPinEffect } from './cornerPin'
 import { shutterEffect } from './shutter'
 import { ringEffect } from './ring'
 import { loftEffect } from './loft'
+import { slotEffect } from './slot'
 
 /** All registered Space Type effects, in picker order. Add new effect modules here. */
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
@@ -56,6 +57,7 @@ export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   shutterEffect,
   ringEffect,
   loftEffect,
+  slotEffect,
 ]
 
 export function getEffect(id: string): SpaceTypeEffect {
