@@ -159,7 +159,15 @@ function paintReelCanvas(cells: Cell[], aspect: number, family: string, weight: 
     const pad = cellPx * 0.14
     const maxW = (canvas.width - pad * 2) * sizeScale
     const maxH = (cellPx - pad * 2) * sizeScale
-    const scale = Math.min(maxW / img.width, maxH / img.height)
+    // Decouple letter SIZE from tracking so tracking changes SPACING, not size. The contain scale
+    // is based on the word's width at ZERO tracking (the tracked atlas width minus tracking's own
+    // contribution — layoutChars adds `tracking` px between each pair of glyphs); the actually-
+    // tracked atlas is then drawn at that stable scale. So negative tracking visibly tightens the
+    // letters at constant size, positive spreads them (clipping at the aperture if too wide), and
+    // tracking 0 is exactly the previous contain-fit — the default is unchanged.
+    const gaps = Math.max(0, layout.glyphs.length - 1)
+    const untrackedW = Math.max(1, img.width - gaps * tracking)
+    const scale = Math.min(maxW / untrackedW, maxH / img.height)
     const dw = img.width * scale, dh = img.height * scale
     ctx.drawImage(img, (canvas.width - dw) / 2, y0 + (cellPx - dh) / 2, dw, dh)
     layout.texture.dispose()
@@ -168,7 +176,7 @@ function paintReelCanvas(cells: Cell[], aspect: number, family: string, weight: 
 }
 
 interface SlotUniforms { uBlur: { value: number }; uCurve: { value: number }; uEdge: { value: number }; uDim: { value: number }; uCellFrac: { value: number } }
-interface SlotMesh { mesh: THREE.Mesh; alphaTex: THREE.CanvasTexture; cellCount: number; slotIndex: number }
+interface SlotMesh { mesh: THREE.Mesh; alphaTex: THREE.CanvasTexture; cellCount: number; slotIndex: number; cells: Cell[] }
 interface SlotState { slots: SlotMesh[]; messageCount: number; stride: number; slotCount: number }
 
 export const slotEffect: SpaceTypeEffect = {
@@ -340,10 +348,29 @@ export const slotEffect: SpaceTypeEffect = {
       cell.add(mesh)
       root.add(cell)
 
-      slots.push({ mesh, alphaTex, cellCount: cells.length, slotIndex: j })
+      slots.push({ mesh, alphaTex, cellCount: cells.length, slotIndex: j, cells })
     }
 
     root.userData.slotState = { slots, messageCount: reel.messageCount, stride: reel.stride, slotCount: reel.slotCount } as SlotState
+
+    // Font repaint fallback: layoutChars rasterizes with whatever font is loaded AT BUILD TIME.
+    // A freshly-picked font may not be ready yet (the surface's ensureFont await can resolve before
+    // the injected @font-face is truly usable in canvas), so the first paint falls back and the new
+    // font appears "not honored". When the real font finishes loading, repaint each slot's reel
+    // canvas in place — mirrors spiral/elastic/tunnel/... buildScene. Skipped when already loaded.
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
+    if (fonts && typeof fonts.load === 'function') {
+      const probe = `${hasWght ? `${weight} ` : ''}64px "${family}"`
+      if (!fonts.check(probe)) {
+        fonts.load(probe).then(() => {
+          for (const s of slots) {
+            const repainted = paintReelCanvas(s.cells, aspect, family, weight, hasWght, tracking, sizeScale)
+            s.alphaTex.image = repainted
+            s.alphaTex.needsUpdate = true
+          }
+        }).catch(() => { /* best-effort; the fallback-font paint stands */ })
+      }
+    }
     return root
   },
 
