@@ -42,7 +42,7 @@ import {
   type GradientMapEffect, type GrainEffect, type PostEffect, type VignetteEffect,
 } from '~/lib/compositor/postEffects'
 import { applyDof, dofAvailable, dofShouldRun } from '~/lib/compositor/dofPass'
-import { depthImageFor, requestDepth } from '~/lib/compositor/depthRegistry'
+import { depthImageFor, requestDepth, depthSourceFromViewUrl, type DepthRef } from '~/lib/compositor/depthRegistry'
 import { ensureFillBitmaps } from '~/lib/paint/imageFillCache'
 import { applyTornEdge, tornEdgeActive } from '~/lib/compositor/tornEdge'
 import { applyFeather, featherActive } from '~/lib/compositor/feather'
@@ -88,10 +88,37 @@ export function _registerMotionPainter(impl: MotionPainter) { _motionPainterImpl
 // provider that returns a fresh surface with different dimensions on back-to-
 // back calls would size the corner-pin/DOF offscreen from one call and draw
 // into it from another, producing a misfit warp.
-type WiredContentProvider = (slot: number) => CanvasImageSource | null
+export type WiredContentProvider = (slot: number) => CanvasImageSource | null
 let _wiredContentImpl: WiredContentProvider | null = null
 /** Register (or clear, with `null`) the host's slot → live content resolver. */
 export function _registerWiredContent(provider: WiredContentProvider | null) { _wiredContentImpl = provider }
+
+/**
+ * Run `fn` with `provider` installed as THE wired resolver, restoring whatever
+ * was there before — the scoping seam for the fact that slot numbers are
+ * HOST-scoped while this registry is one module global.
+ *
+ * Two live hosts (a Frame card and the Compositor modal, or two cards) each own
+ * a different node's slots, so a single global registration means whoever
+ * painted last decides what "slot 2" resolves to for everybody. That is not
+ * only a pixel bug: `localLayerBox` resolves the provider too, so a cross-host
+ * leak mis-sizes SELECTION HANDLES and the pixel hit test, not just the image.
+ *
+ * Every synchronous span that can resolve wired content — a paint, an export, a
+ * hit test, a box measurement — wraps itself here with its OWN provider. Nesting
+ * is safe (the previous provider is restored on the way out, exceptions
+ * included), and passing a nullish provider runs `fn` untouched so a host with
+ * nothing wired never clobbers another host's registration.
+ *
+ * `fn` MUST be synchronous: an `await` inside would let another host's span
+ * interleave while this one's provider is still installed.
+ */
+export function withWiredContent<T>(provider: WiredContentProvider | null | undefined, fn: () => T): T {
+  if (!provider) return fn()
+  const prev = _wiredContentImpl
+  _wiredContentImpl = provider
+  try { return fn() } finally { _wiredContentImpl = prev }
+}
 
 /** Resolved wired-slot content: the source plus its native pixel dimensions. */
 type WiredLive = { src: CanvasImageSource; w: number; h: number }
@@ -402,6 +429,15 @@ export interface WiredLayer extends LayerCommon {
   w: number          // normalized to canvas width (like every other layer)
   lastAspect: number // contentH / contentW of the last-seen content
   unlinked?: boolean // true = keep `lastAspect` even when live content differs
+  /**
+   * Depth-map cache key for this slot's content (the upstream `/view` URL), so a
+   * wired layer can carry a `dof` effect like a local image layer does — which is
+   * keyed by `filename` for exactly the same reason. HOST-OWNED and refreshed
+   * whenever the slot's content changes; absent means "no depth source" (a live
+   * studio slot has no file behind it), and DOF then no-ops instead of blurring
+   * against a stale map.
+   */
+  depthKey?: string
 }
 
 export interface PolygonLayer extends LayerCommon {
@@ -1171,10 +1207,16 @@ function paintLayer(
   const chain = fx.filter(isChainEffect)
   const tornEdge = tornEdgeActive(layer.tornEdge) ? layer.tornEdge : undefined
   const feather = featherActive(layer.feather) ? layer.feather : undefined
-  // Image layers only — nothing else has a depth map to drive the blur.
-  const dof = layer.kind === 'image'
-    ? fx.find((e): e is DofEffect => e.type === 'dof')
-    : undefined
+  // Content layers with a depth map only — nothing else has one to drive the blur.
+  // An uploaded image keys depth by its `filename`; a WIRED layer keys it by the
+  // host-supplied `depthKey` (the upstream `/view` URL). Both resolve through the
+  // same depth registry, so a wired slot and an uploaded copy of the same picture
+  // defocus identically — a gap between them reads as a bug (and losing it here is
+  // what would have silently dropped DOF from every migrated frame).
+  const dofRef: DepthRef | null | undefined = layer.kind === 'image'
+    ? (layer as ImageLayer).filename
+    : layer.kind === 'wired' ? depthSourceFromViewUrl((layer as WiredLayer).depthKey) : undefined
+  const dof = dofRef ? fx.find((e): e is DofEffect => e.type === 'dof') : undefined
   // (background_blur is a stack-level effect — paintLayerStack applies it
   // against the backdrop before this layer paints.)
 
@@ -1208,9 +1250,8 @@ function paintLayer(
     dofMemo = null
     if (!dof || !dofAvailable()) return dofMemo
 
-    const filename = (layer as ImageLayer).filename
-    const depth = depthImageFor(filename)
-    if (!depth) { requestDepth(filename); return dofMemo }
+    const depth = depthImageFor(dofRef!)
+    if (!depth) { requestDepth(dofRef!); return dofMemo }
     if (!dofShouldRun(dof, true)) return dofMemo
 
     const box = localLayerBox(measureCtx(), layer, W, H, wiredLive)

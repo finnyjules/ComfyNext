@@ -178,6 +178,22 @@ describe('migrateFrameToUnifiedLayers — full fold', () => {
     expect(node.data.widgetsValues[node.data.widgetDefs.findIndex(d => d.name === 'layer1_x')]).toBe(0.1)
   })
 
+  it('moves a slot`s depth-of-field onto the layer`s own effects array', () => {
+    // DOF could not move at the time migration landed (paint gated it on
+    // `kind === 'image'`). The unified paint path gates on a depth KEY instead, so
+    // leaving it on the registry is now what would silently drop it.
+    const dof = { type: 'dof', visible: true, focus: 0.5, range: 0.2, strength: 1 }
+    const node = makeNode({
+      connectedSlots: [0],
+      widgets: CANVAS,
+      properties: { sailor_wiredTreatments: { 'w:1': { dof } } },
+    })
+    migrateFrameToUnifiedLayers(node, { 0: { w: 800, h: 600 } })
+    const [layer] = node.data.properties.sailor_localLayers as any[]
+    expect(layer.effects).toEqual([dof])
+    expect(layer.effects[0]).not.toBe(dof)      // copied, not aliased to the registry
+  })
+
   it('puts migrated wired layers BELOW the native ones (the legacy default)', () => {
     const node = makeNode({
       connectedSlots: [0],

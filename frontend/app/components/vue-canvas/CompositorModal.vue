@@ -9,8 +9,11 @@ import {
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
-  hasAnimatedShaderFill,
+  hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
 } from '~/composables/useCompositorLayers'
+import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent } from '~/lib/compositor/frameStack'
+import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, setWiredDof as writeWiredDof, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
 import {
@@ -334,10 +337,28 @@ const canvasRef = ref<HTMLDivElement | null>(null)
 function canvasRect(): DOMRect | null { return canvasRef.value?.getBoundingClientRect() ?? null }
 
 // ── Local-layer editing engine (shared with the Frame node) ─────────────────
+// ── Wired content, keyed the way the unified model keys it ──────────────────
+// This modal's own `Layer.slot` / `naturalDims` / `wiredImageEls` are 1-BASED
+// (`layer1` = slot 1); `WiredLayer.slot` is the 0-BASED input-port index. The
+// shift lives HERE, at every boundary, spelled out — a silent off-by-one
+// produces wrong widths rather than a crash.
+const wiredMaskCache = createWiredMaskCache()
+/** 0-based slot → decoded content (per-slot mask already punched out). */
+function wiredContentForSlot(slot: number): CanvasImageSource | null {
+  const n = slot + 1
+  return wiredMaskCache.apply(slot, wiredImageEls.value[n] ?? null, wiredMaskEls.value[n] ?? null)
+}
+/** 0-based slot → the content's real pixel dims, for the write-through's fit. */
+function wiredDimsForSlot(slot: number): { w: number; h: number } | undefined {
+  return naturalDims.value[slot + 1]
+}
+
 const editor = useLocalLayerEditor({
   node: () => compositor.value,
   dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
   getRect: () => canvasRect(),
+  wiredDims: wiredDimsForSlot,
+  wiredContent: wiredContentForSlot,
 })
 const layerEdit = useLayerImageEdit()
 const {
@@ -790,10 +811,13 @@ type StackKey = string
 function wiredKey(slot: number): StackKey { return `w:${slot}` }
 function localKey(id: string): StackKey { return `l:${id}` }
 
-const presentKeys = computed<StackKey[]>(() => [
-  ...layers.value.map(l => wiredKey(l.slot)),
-  ...localLayers.value.map(l => localKey(l.id)),
-])
+// A migrated slot is a LAYER: it contributes `l:<id>` and NOT also its legacy
+// `w:` key. Emitting both gives one layer two depths in the stack (and, on the
+// submit path, bakes it a second time as if it were a local overlay). Slots no
+// layer has claimed still emit `w:`, so a pre-schema-2 frame is unchanged.
+// `framePresentKeys` takes 0-based slots; this modal's `Layer.slot` is 1-based.
+const presentKeys = computed<StackKey[]>(() =>
+  framePresentKeys(layers.value.map(l => l.slot - 1), localLayers.value))
 const stackKeys = computed<StackKey[]>(() => {
   const saved = ((compositor.value?.data?.properties as any)?.sailor_stackOrder as StackKey[]) ?? []
   const present = new Set(presentKeys.value)
@@ -1149,7 +1173,10 @@ function layerHitAt(res: { type: 'wired'; layer: Layer } | { type: 'local'; laye
   ctx.clearRect(0, 0, W, H)
   try {
     if (res.type === 'wired') drawWiredLayer(ctx, res.layer, W, H)
-    else drawLocalLayer(ctx, res.layer as LocalLayer, W, H)
+    // A migrated wired layer arrives here as a LOCAL item and needs this frame's
+    // slot resolver installed, or it would draw nothing and every click would
+    // fall through it to whatever is underneath.
+    else withWiredContent(wiredContentForSlot, () => drawLocalLayer(ctx, res.layer as LocalLayer, W, H))
   } catch { return true }
   try {
     const R = 2
@@ -1690,8 +1717,9 @@ function renderSceneForHarmonize(): { canvas: HTMLCanvasElement; W: number; H: n
   const ctx = canvas.getContext('2d')!
   // bake=true (Task 10): a Harmonize render is a final full-resolution export, not a
   // live preview — shader-fill fields must render unclamped, same as Render/Export below.
-  paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value, true)
+  withWiredContent(wiredContentForSlot, () =>
+    paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
+      undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value, true))
   return { canvas, W, H }
 }
 
@@ -1736,6 +1764,12 @@ async function bakeMotion(motionOverride?: FrameMotion) {
     const { W, H } = bakeSize()
     const motion = motionOverride ?? effectiveMotion.value
     const previousFrames = storedMotionParams.value?.rendered ?? []
+    // The bake is ASYNC (one awaited upload per frame), so the scoped
+    // `withWiredContent` span can't hold across it — a global registration is the
+    // only correct shape here. Safe for the bake's duration: the modal covers the
+    // canvas, so every Frame card's own loop is occlusion-gated off. Cleared in
+    // `finally` so no stale resolver outlives the bake.
+    _registerWiredContent(wiredContentForSlot)
     const params = await bakeAndUpload(
       () => buildStackItems(), localLayers.value as LocalLayer[], W, H, motion,
       (done, total) => { bakeProgress.value = done / total },
@@ -1760,6 +1794,7 @@ async function bakeMotion(motionOverride?: FrameMotion) {
     console.error('[compositor motion bake]', err)
     bakeError.value = err?.message || 'Motion bake failed'
   } finally {
+    _registerWiredContent(null)
     baking.value = false
     startLive()
   }
@@ -1792,8 +1827,9 @@ async function renderStaticComposite(W: number, H: number): Promise<Blob | null>
   await ensureLayerImages(localLayers.value as LocalLayer[])
   await ensureLayerFonts(localLayers.value as LocalLayer[], W)
   // bake=true (Task 10): the static Render/Export path — final output, not preview.
-  paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value, true)
+  withWiredContent(wiredContentForSlot, () =>
+    paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
+      undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value, true))
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
 
@@ -1896,6 +1932,58 @@ watch(wiredTreatments, (tr) => {
   }
 }, { deep: true, immediate: true })
 
+// ── Schema 2: a connected slot IS a layer ───────────────────────────────────
+// 0-based input-port indices with an edge, read straight off the graph (the one
+// thing the migration cannot see for itself).
+const connectedSlots0 = computed<number[]>(() => {
+  const out = new Set<number>()
+  for (const e of (props.edges ?? []) as any[]) {
+    if (String(e?.target) !== String(props.nodeId)) continue
+    const m = /^input-(\d+)$/.exec(String(e?.targetHandle ?? ''))
+    if (m) out.add(Number(m[1]))
+  }
+  return [...out].sort((a, b) => a - b)
+})
+function slotDimsMap0(): Record<number, { w: number; h: number } | undefined> {
+  const out: Record<number, { w: number; h: number } | undefined> = {}
+  for (const s of connectedSlots0.value) out[s] = wiredDimsForSlot(s)
+  return out
+}
+// Runs on open and on every wiring change; self-no-ops once the frame is schema 2.
+// Skipped while nothing is connected — there would be nothing to fold, and
+// stamping the schema then would freeze a frame whose edges hadn't arrived.
+watch(() => connectedSlots0.value.join(','), () => {
+  const slots = connectedSlots0.value
+  if (!slots.length || !compositor.value) return
+  migrateFrameToUnifiedLayers({ data: compositor.value.data, connectedSlots: [...slots] }, slotDimsMap0())
+}, { immediate: true })
+
+/** What the reconciler knows about a slot's content this tick (0-based slot). */
+function wiredContentInfo0(slot: number) {
+  const l = layers.value.find(x => x.slot === slot + 1)
+  const url = l && !l.live ? l.url : undefined
+  return { dims: wiredDimsForSlot(slot), depthKey: url }
+}
+// First real content resolves the migration's `w <= 0` sentinels (preserving the
+// surviving `layer{N}_scale`), and every later content change refreshes the
+// cached aspect + depth key — without which the preview re-fits live while the
+// widget `scale` the server renders from drifts permanently. Committed WITHOUT
+// recordHistory: reconciliation is bookkeeping, not an undoable edit.
+watch(
+  () => connectedSlots0.value.map((s) => {
+    const d = wiredDimsForSlot(s)
+    return `${s}:${d ? `${d.w}x${d.h}` : '?'}:${wiredContentInfo0(s).depthKey ?? ''}`
+  }).join('|') + `|${canvasDisplay.w}x${canvasDisplay.h}`,
+  () => {
+    const canvas = { w: canvasDisplay.w, h: canvasDisplay.h }
+    const fin = finalizeWiredSentinels(localLayers.value as LocalLayer[], compositor.value?.data, canvas, wiredDimsForSlot)
+    if (fin) commit(fin)
+    const rec = reconcileWiredContent(localLayers.value as LocalLayer[], wiredContentInfo0)
+    if (rec) commit(rec)
+  },
+  { immediate: true },
+)
+
 // One StackItem builder shared by the live preview AND the motion bake, so the
 // baked frames render exactly what the editor shows (wired layers included).
 function buildStackItems(): StackItem[] {
@@ -1964,10 +2052,13 @@ function renderStack(wallT?: number) {
   // Frame node card.
   const clockT = previewT.value ?? wallT
   const motionArg = previewT.value != null ? motionDoc.value : undefined
-  const { frozenCount } = paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
-    l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
-    clockT, motionArg,
-    wiredTreatments.value, background.value, localGroups.value, postEffects.value)
+  // Scoped to THIS frame's slots — the wired resolver is a module global and the
+  // Frame cards on the canvas number their own slots exactly the same way.
+  const { frozenCount } = withWiredContent(wiredContentForSlot, () =>
+    paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
+      l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
+      clockT, motionArg,
+      wiredTreatments.value, background.value, localGroups.value, postEffects.value))
   shaderFieldsFrozen.value = frozenCount
 }
 

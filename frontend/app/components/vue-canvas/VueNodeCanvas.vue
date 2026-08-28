@@ -24,6 +24,7 @@ import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/u
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, parseSeedreamLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
+import { framePresentKeys } from '~/lib/compositor/frameStack'
 import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
@@ -5271,13 +5272,13 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       const port = comp.inputs.find((p: any) => p?.name === `layer${s + 1}`)
       if (port?.link != null) connectedSlots.push(s)
     }
-    const presentKeys = [
-      // Wired keys are 1-based (`w:1` = layer1), matching ArtifactFrameNode
-      // and CompositorModal — all three surfaces must agree or saved orders
-      // get dropped as "not present".
-      ...connectedSlots.map(s => `w:${s + 1}`),
-      ...locals.map(l => `l:${l.id}`),
-    ]
+    // Wired keys are 1-based (`w:1` = layer1), matching ArtifactFrameNode and
+    // CompositorModal — all three surfaces must agree or saved orders get dropped
+    // as "not present", which is why this is the shared builder. On a schema-2
+    // frame a connected slot is a LAYER, so it appears once, as `l:<id>`: listing
+    // it as `w:` as well gave one layer two depths here AND fed it to `injectRun`
+    // to be baked as though it were a local overlay.
+    const presentKeys = framePresentKeys(connectedSlots, locals)
     if (!presentKeys.length) continue
     const present = new Set(presentKeys)
     const saved = (comp.properties?.sailor_stackOrder as string[] | undefined) ?? []
@@ -5539,7 +5540,21 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
         if (hiddenWired.has(layerN)) setNamedWidget(comp, `layer${layerN}_opacity`, 0, objectInfo.value)
       } else {
         const layer = localById.get(key.slice(2))
-        if (!layer || layer.visible === false) continue
+        if (!layer) continue
+        // A schema-2 WIRED layer reaches the walker under its `l:` key. It is
+        // still backend-side a wired slot — the pixels come down the wire, not
+        // from a baked overlay — so it takes the same branch its `w:` key used
+        // to: flush the run, stamp its depth, and zero its opacity when hidden.
+        // Baking it as a local would upload an empty PNG into a spare slot and
+        // burn a layer port.
+        if (layer.kind === 'wired') {
+          await flush()
+          const layerN = (layer as any).slot + 1
+          setNamedWidget(comp, `layer${layerN}_z`, zi, objectInfo.value)
+          if (layer.visible === false) setNamedWidget(comp, `layer${layerN}_opacity`, 0, objectInfo.value)
+          continue
+        }
+        if (layer.visible === false) continue
         // Local layer used as a mask source with showSource:false → drop it.
         if (hiddenLocalMaskSources.has(layer.id)) continue
         const blend = layer.blend && layer.blend !== 'normal' ? layer.blend : null

@@ -13,7 +13,7 @@ import {
   type PostEffect,
   createTextLayer, createRectLayer, createEllipseLayer, createLineLayer, createImageLayer,
   createPolygonLayer, createStarLayer,
-  localLayerBox, shapeToPathLayer,
+  localLayerBox, shapeToPathLayer, withWiredContent, type WiredContentProvider,
 } from '~/composables/useCompositorLayers'
 import { svgToPathLayers, pathLayerBoolean, type BooleanOp } from '~/composables/useVectorSvg'
 import {
@@ -42,6 +42,12 @@ interface EditorOpts {
    * same ratio (see `syncWiredWidgets`).
    */
   wiredDims?: (slot: number) => ContentDims | undefined
+  /**
+   * The host's `slot → live content` resolver, used to MEASURE wired layers (see
+   * `boxPx`). Same host-owned indirection `paintLayerStack` uses; passing it here
+   * is what makes selection handles and hit boxes hug what actually paints.
+   */
+  wiredContent?: WiredContentProvider
 }
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -318,7 +324,15 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   function endEdit() { editingId.value = null }
 
   // ── Geometry ────────────────────────────────────────────────────────────────
-  function boxPx(layer: LocalLayer) { return localLayerBox(scratchCtx(), layer, dims().w, dims().h) }
+  // Every box measurement in the editor goes through here, so this is the one
+  // place the host's wired resolver has to be installed: a `wired` layer's box
+  // follows its LIVE content aspect, and without the host's provider it would
+  // fall back to `lastAspect` — right often enough to hide the bug, wrong exactly
+  // when an upstream node has just re-run. `withWiredContent` scopes it to this
+  // synchronous call so a second live host can't be measured with our slots.
+  function boxPx(layer: LocalLayer) {
+    return withWiredContent(opts.wiredContent, () => localLayerBox(scratchCtx(), layer, dims().w, dims().h))
+  }
   const handlePositions = computed(() => {
     const l = selected.value
     if (!l) return null

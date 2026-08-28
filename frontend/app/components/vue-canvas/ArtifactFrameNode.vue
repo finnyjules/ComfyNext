@@ -6,7 +6,10 @@ import {
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
-import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill } from '~/composables/useCompositorLayers'
+import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
+import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent } from '~/lib/compositor/frameStack'
+import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { libraryFamily } from '~/data/library-fonts'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
@@ -216,6 +219,27 @@ watch(() => wiredLayers.value.map(l => l.url).join('|') + '|' + frameSourceEpoch
   }
 }, { immediate: true })
 
+// ── Wired content, expressed as the ONE host indirection paint asks for ──────
+// `wiredImages`/`wiredDims` are keyed by draw URL; the unified layer model keys
+// by 0-based SLOT. These three helpers are that translation, and they are the
+// only thing the shared pipeline ever calls to reach this card's graph pixels.
+function wiredUrlForSlot(slot: number): string | undefined {
+  return wiredLayers.value.find(l => l.slot === slot)?.url
+}
+function wiredDimsForSlot(slot: number): { w: number; h: number } | undefined {
+  const u = wiredUrlForSlot(slot)
+  return u ? wiredDims.value[u] : undefined
+}
+// Per-slot visibility masks still live on the treatments registry (by slot), so
+// they are folded in HERE — the generic paint path has no mask argument, and
+// dropping them at the flip would have silently unmasked every masked frame.
+const wiredMaskCache = createWiredMaskCache()
+function wiredContentForSlot(slot: number): CanvasImageSource | null {
+  const u = wiredUrlForSlot(slot)
+  if (!u) return null
+  return wiredMaskCache.apply(slot, wiredImages.value[u] ?? null, wiredMasks.value[slot] ?? null)
+}
+
 // Pull a live studio slot's frame at normalized time t01 and COPY it into a canvas we
 // OWN — the source reuses its canvas across getFrame calls, so we must not hold its
 // buffer. The owned canvas is created once per slot and drawn into in place on every
@@ -291,6 +315,11 @@ const editor = useLocalLayerEditor({
   node: () => ({ data: props.data }),
   dims: () => ({ w: box.value.w, h: box.value.h }),
   getRect: () => artboardRef.value?.getBoundingClientRect() ?? null,
+  // Real decoded content dims, so the `layer{N}_*` write-through fits against the
+  // pixels the server will fit against — not against a cached aspect that an
+  // upstream re-run can have made stale.
+  wiredDims: wiredDimsForSlot,
+  wiredContent: wiredContentForSlot,
 })
 const editMode = ref(false)
 function toggleEdit() { editMode.value ? exitEdit() : (editMode.value = true) }
@@ -397,10 +426,12 @@ function localKey(id: string): StackKey { return `l:${id}` }
 
 // Present layers in the legacy default order: wired at the bottom, locals on top
 // (matches how the editor behaved before unification). Used to seed/append.
-const presentKeys = computed<StackKey[]>(() => [
-  ...wiredLayers.value.map(l => wiredKey(l.slot)),
-  ...editor.localLayers.value.map(l => localKey(l.id)),
-])
+// A migrated slot is a LAYER, so it contributes `l:<id>` and NOT also its legacy
+// `w:` key — counting it twice gives one layer two depths. Slots with no layer
+// claiming them (a pre-schema-2 frame, or an edge that just landed) still emit
+// `w:`, which is what keeps legacy frames rendering unchanged.
+const presentKeys = computed<StackKey[]>(() =>
+  framePresentKeys(wiredLayers.value.map(l => l.slot), editor.localLayers.value))
 // Reconcile the saved order against what's actually present: keep saved order
 // for layers still here, then append any newcomers on top. So adding a shape or
 // wiring an image floats it to the top, and removing one just drops out.
@@ -505,8 +536,11 @@ function renderStack(t?: number, live = false) {
   // out of scope for this fix, and passing a truthy `motion` alongside `t` would also
   // activate the slate-motion path in paintLayerStack, which the Frame card has never
   // driven. Only the shader-fill clock (`t`) is being wired up.
-  paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value, l => l.id === editor.editingId.value,
-    t, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value)
+  // Scoped to THIS card's slots: the wired resolver is a module global, and a
+  // second live host (the modal, or another Frame) numbers its slots the same way.
+  withWiredContent(wiredContentForSlot, () =>
+    paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value, l => l.id === editor.editingId.value,
+      t, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value))
 }
 
 // ── Live animation loop ──────────────────────────────────────────────────────
@@ -647,6 +681,52 @@ watch(wiredTreatments, (tr) => {
     renderStack()
   }
 }, { deep: true, immediate: true })
+// ── Schema 2: a connected slot IS a layer ───────────────────────────────────
+// Runs on every wiring change and self-no-ops once the frame is schema 2. It is
+// deliberately skipped while NO slot is connected: stamping the schema then would
+// freeze an empty frame whose edges simply hadn't been restored yet, and the fold
+// would find nothing to fold.
+const connectedSlotList = computed<number[]>(() => {
+  const out: number[] = []
+  for (let i = 0; i < 16; i++) if (slotConnected(i)) out.push(i)
+  return out
+})
+function slotDimsMap(): Record<number, { w: number; h: number } | undefined> {
+  const out: Record<number, { w: number; h: number } | undefined> = {}
+  for (const s of connectedSlotList.value) out[s] = wiredDimsForSlot(s)
+  return out
+}
+watch(() => connectedSlotList.value.join(','), () => {
+  const slots = connectedSlotList.value
+  if (!slots.length) return
+  migrateFrameToUnifiedLayers({ data: props.data as any, connectedSlots: [...slots] }, slotDimsMap())
+}, { immediate: true })
+
+/** Everything the reconciler needs to know about a slot's content this tick. */
+function wiredContentInfo(slot: number) {
+  const url = wiredUrlForSlot(slot)
+  return { dims: wiredDimsForSlot(slot), depthKey: url && !url.startsWith('live:') ? url : undefined }
+}
+// First real content resolves the migration's `w <= 0` sentinels (preserving the
+// surviving `layer{N}_scale`); every later content change refreshes the cached
+// aspect + depth key so the write-through's fit can't drift after an upstream
+// re-run. Committed WITHOUT recordHistory — reconciliation is bookkeeping, not an
+// edit, and must never become a step the user has to undo through.
+watch(
+  () => connectedSlotList.value.map((s) => {
+    const d = wiredDimsForSlot(s)
+    return `${s}:${d ? `${d.w}x${d.h}` : '?'}:${wiredUrlForSlot(s) ?? ''}`
+  }).join('|') + `|${box.value.w}x${box.value.h}`,
+  () => {
+    const canvas = { w: box.value.w, h: box.value.h }
+    const fin = finalizeWiredSentinels(editor.localLayers.value, props.data as any, canvas, wiredDimsForSlot)
+    if (fin) editor.commit(fin)
+    const rec = reconcileWiredContent(editor.localLayers.value, wiredContentInfo)
+    if (rec) editor.commit(rec)
+  },
+  { immediate: true },
+)
+
 watch(
   () => [
     JSON.stringify(editor.localLayers.value), editor.editingId.value,
@@ -720,8 +800,9 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
   // export includes every visible layer), so silhouette masks apply on download.
   // bake=true (Task 10): full-res download/publish, not the live preview — shader-fill
   // fields must render unclamped and stay live past LIVE_FIELD_CEILING.
-  paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value,
-    undefined, undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value, true)
+  withWiredContent(wiredContentForSlot, () =>
+    paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value,
+      undefined, undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value, true))
   return cv
 }
 

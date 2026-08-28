@@ -107,8 +107,6 @@ function canvasDims(
  *   is consumed only by the legacy wired StackItem draw path in both hosts. It
  *   stays on the registry and schema-2 frames keep reading it BY SLOT until the
  *   modal adoption task gives it a layer-model home.
- * - `sailor_wiredTreatments[w:N].dof` — same reason (paint gates DOF on
- *   `kind === 'image'`).
  * - `layer{N}_protect` — a server-render flag, not a layer property.
  */
 export function migrateFrameToUnifiedLayers(node: FrameNodeShape, naturalDims: SlotDims = {}): boolean {
@@ -169,6 +167,12 @@ export function migrateFrameToUnifiedLayers(node: FrameNodeShape, naturalDims: S
       ...(name ? { name } : {}),
       ...(treatment.maskedByKey ? { maskedByKey: String(treatment.maskedByKey) } : {}),
       ...(treatment.showSource ? { maskShowSource: true } : {}),
+      // Depth-of-field moves onto the layer's own `effects`, the same array an
+      // uploaded image layer keeps its `dof` in. It could not move at migration
+      // time (paint gated DOF on `kind === 'image'`); the unified paint path now
+      // gates on a depth KEY, which a wired layer carries in `depthKey`, so
+      // leaving it on the registry here is what WOULD drop it.
+      ...(treatment.dof ? { effects: [{ ...treatment.dof }] } : {}),
     })
     keyMap.set(`w:${n}`, `l:${layer.id}`)
     wired.push(layer)
