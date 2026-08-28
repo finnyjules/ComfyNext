@@ -206,3 +206,106 @@ def test_motion_clip_without_frames_is_skipped(tmp_path):
     finally:
         NT._close_render_clips(clips)
     assert np.allclose(arr[18, 32], [0x33 / 255, 0x66 / 255, 0x99 / 255], atol=1e-6)
+
+
+def _tiny_mp4(dirpath, name, rgb, size=(64, 36), frames=4):
+    """Encode a tiny solid-color H.264 mp4 with pyav."""
+    import av
+    p = os.path.join(str(dirpath), name)
+    container = av.open(p, mode="w")
+    stream = container.add_stream("h264", rate=30)
+    stream.width, stream.height = size
+    stream.pix_fmt = "yuv420p"
+    arr = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+    arr[:, :] = rgb
+    import av.video
+    for _ in range(frames):
+        frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
+        for packet in stream.encode(frame):
+            container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+    return p
+
+
+def test_video_clip_bare_filename_resolves_under_input(tmp_path, monkeypatch):
+    """The export payload carries bare filenames ("filenames, not URLs" — the
+    editor's export contract). A video clip whose path is a bare filename must
+    resolve against input/, exactly as image/spacetype/motion sources do — the
+    probe found video clips silently dropped from exports instead
+    (title-over-black while the preview composited correctly)."""
+    monkeypatch.setattr(NT.folder_paths, "get_input_directory", lambda: str(tmp_path))
+    _tiny_mp4(tmp_path, "probe_shot.mp4", (0, 255, 0))
+    state = _flat_state([{
+        "kind": "video", "path": "probe_shot.mp4",  # bare filename, as exported
+        "start_frame": 0, "length": 4, "in_frame": 0,
+        "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1,
+        "blend": "normal", "fade_in": 0, "fade_out": 0,
+    }], total=4, bg="#000000")
+    clips = NT._prepare_render_clips(state)
+    try:
+        assert len(clips) == 1, "bare-filename video clip must not be silently dropped"
+        arr = NT.render_frame_np(state, clips, 1)
+    finally:
+        NT._close_render_clips(clips)
+    # green video covers the canvas center; h264 yuv420 tolerance is loose
+    assert arr[18, 32][1] > 0.7 and arr[18, 32][0] < 0.3, f"center {arr[18, 32]} should be green video, not bg"
+
+
+def test_image_clip_bare_filename_resolves_under_input(tmp_path, monkeypatch):
+    """Same guard covers image clips: bare filename resolves under input/."""
+    monkeypatch.setattr(NT.folder_paths, "get_input_directory", lambda: str(tmp_path))
+    _solid_png(tmp_path, "probe_img.png", (255, 0, 0))
+    state = _flat_state([{
+        "kind": "image", "path": "probe_img.png",
+        "start_frame": 0, "length": 2, "in_frame": 0,
+        "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1,
+        "blend": "normal", "fade_in": 0, "fade_out": 0,
+    }], total=2, bg="#000000")
+    clips = NT._prepare_render_clips(state)
+    try:
+        assert len(clips) == 1, "bare-filename image clip must not be silently dropped"
+        arr = NT.render_frame_np(state, clips, 0)
+    finally:
+        NT._close_render_clips(clips)
+    assert np.allclose(arr[18, 32], [1, 0, 0], atol=3 / 255), f"center {arr[18, 32]} should be red image"
+
+
+def test_spacetype_clip_alpha_composites_over_underlying_layer(tmp_path, monkeypatch):
+    """A transparent Space Type bake frame over a video/image layer must show
+    the underlying layer through its transparent pixels. The composite passed
+    preserve_alpha only for kind == 'motion', so spacetype bakes flattened to
+    opaque black and buried everything beneath them — the bridge probe's
+    exports came out title-over-black while the browser preview composited
+    correctly."""
+    monkeypatch.setattr(NT.folder_paths, "get_input_directory", lambda: str(tmp_path))
+    # under-layer: solid red image
+    _solid_png(tmp_path, "under.png", (255, 0, 0))
+    # spacetype frame: fully transparent RGBA with one opaque white pixel block
+    fr = Image.new("RGBA", (64, 36), (0, 0, 0, 0))
+    for x in range(28, 36):
+        for y in range(14, 22):
+            fr.putpixel((x, y), (255, 255, 255, 255))
+    fr.save(os.path.join(str(tmp_path), "st_0000.png"))
+    state = _flat_state([
+        {"kind": "image", "path": "under.png", "start_frame": 0, "length": 2, "in_frame": 0,
+         "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1,
+         "blend": "normal", "fade_in": 0, "fade_out": 0},
+        {"kind": "spacetype", "spacetype_frames": ["st_0000.png"], "spacetype_loop": True,
+         "start_frame": 0, "length": 2, "in_frame": 0,
+         "x": 0, "y": 0, "rotation": 0, "scale": 1, "opacity": 1,
+         "blend": "normal", "fade_in": 0, "fade_out": 0},
+    ], total=2, bg="#000000")
+    clips = NT._prepare_render_clips(state)
+    try:
+        arr = NT.render_frame_np(state, clips, 0)
+    finally:
+        NT._close_render_clips(clips)
+    # center: the opaque white text block
+    assert np.allclose(arr[18, 32], [1, 1, 1], atol=3 / 255), f"center {arr[18, 32]} should be white text"
+    # corner: the red under-layer must show THROUGH the transparent title
+    assert np.allclose(arr[4, 4], [1, 0, 0], atol=3 / 255), (
+        f"corner {arr[4, 4]} should be the red under-layer — an opaque-flattened "
+        f"spacetype layer paints it black"
+    )

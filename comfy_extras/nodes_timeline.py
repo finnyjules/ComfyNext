@@ -1189,7 +1189,20 @@ def _prepare_render_clips(state: dict) -> list[dict]:
             continue
 
         path = c.get("path")
+        # The export payload carries bare filenames ("filenames, not URLs" —
+        # the editor's export contract), so resolve them against input/ exactly
+        # as the spacetype/motion bake paths above do. Without this, video and
+        # image clips added from the media rail silently vanished from exports
+        # while the browser preview composited them correctly.
+        if path and not os.path.isabs(path):
+            cand = os.path.join(folder_paths.get_input_directory(), path)
+            if os.path.exists(cand):
+                path = cand
         if not path or not os.path.exists(path):
+            logging.warning(
+                "timeline: %s clip @frame %s source missing (%s) — skipping",
+                kind, c.get("start_frame", "?"), path,
+            )
             continue
         if kind == "image":
             entry["pil"] = PILImage.open(path).convert("RGB")
@@ -1277,7 +1290,11 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
         tf = _interp_transform(static, L.get("keyframes"), local_f)
         rgb, alpha = _transform_and_alpha(
             src_pil, W, H, tf["x"], tf["y"] + mod["dy"], tf["rotation"], tf["scale"],
-            preserve_alpha=(L["kind"] == "motion"),
+            # motion AND spacetype bakes are transparent RGBA PNG sequences —
+            # both load with `.convert("RGBA")  # alpha preserved below` above.
+            # spacetype was missing here, so its transparent pixels flattened
+            # to opaque black and buried every layer beneath the title.
+            preserve_alpha=(L["kind"] in ("motion", "spacetype")),
         )
         rgb = _apply_filters_np(rgb, L.get("filters"))
         alpha = _apply_wipe_np(alpha, mod["wipe"], W)
