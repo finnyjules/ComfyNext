@@ -8,14 +8,15 @@ import {
 } from 'lucide-vue-next'
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
+  type WiredLayer,
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
   hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
 } from '~/composables/useCompositorLayers'
-import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
+import { migrateFrameToUnifiedLayers, FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
 import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
-import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
+import { useLocalLayerEditor, resizableKind, cornerResizableKind } from '~/composables/useLocalLayerEditor'
 import {
   allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
   reparentGroup as reparentGroupOp, directLayerIds, upsertGroup,
@@ -451,6 +452,11 @@ const selectedCount = computed(() => selectedLayers.value.length)
 // Box layers (rect/ellipse/image) get full Figma-style resize (corners + edges,
 // anchored opposite side); text/line/path keep uniform corner scale (no 2D box).
 const selectedResizable = computed(() => !!selectedLocal.value && resizableKind(selectedLocal.value.kind))
+// Wired layers join the anchored corner path (aspect-locked, no edge handles):
+// the grabbed corner follows the pointer and the opposite corner stays pinned,
+// which is the Figma feel. Only kinds with NO box at all (text/line/path) still
+// fall back to the uniform-from-centre scale.
+const selectedCornerResizable = computed(() => !!selectedLocal.value && cornerResizableKind(selectedLocal.value.kind))
 const ALIGN_BTNS = [
   { mode: 'left', icon: AlignStartVertical, title: 'Align left' },
   { mode: 'hcenter', icon: AlignCenterVertical, title: 'Align horizontal centers' },
@@ -987,6 +993,16 @@ function rowLabel(row: any) {
   if (l.kind === 'wired') return `Layer ${l.slot + 1}`
   return l.kind === 'text' ? (l.text?.split('\n')[0] || 'Text') : l.kind
 }
+/** The 1-BASED modal slot a row's wired content lives on, or null when the row is
+ *  not wired. Covers BOTH shapes: a schema-2 wired layer arrives as a `local`
+ *  row (its `layer.kind` is 'wired'), a pre-migration slot as a `wired` row.
+ *  Panel affordances that act on the slot (Copy into frame) gate on this rather
+ *  than on `row.kind`, which after unification stopped being the whole story. */
+function rowWiredSlot1(row: any): number | null {
+  if (row?.kind === 'wired') return row.slot as number
+  if (row?.layer?.kind === 'wired') return (row.layer.slot as number) + 1
+  return null
+}
 // Row icon → live image preview when the layer resolves to a still image.
 // Wired live sources (streams) and non-image locals fall through to their icon.
 function rowThumbUrl(row: any): string | null {
@@ -1124,7 +1140,10 @@ function layerHitAt(res: { type: 'local'; layer: any }, px: number, py: number, 
   // An unlinked (edge cut) wired layer paints NO pixels but keeps its box from
   // `lastAspect` — so it takes the same bbox fallback the tainted-canvas case
   // takes, and stays grabbable on canvas instead of becoming click-through.
-  if (res.layer?.kind === 'wired' && !wiredContentForSlot(res.layer.slot)) return true
+  // Gated on the LAYER's `unlinked` flag, not on "no content this instant": a
+  // connected slot whose image is still decoding would otherwise swallow every
+  // click across its whole bounding box, including the transparent parts.
+  if (res.layer?.kind === 'wired' && res.layer.unlinked) return true
   if (!_hitCanvas) _hitCanvas = document.createElement('canvas')
   const c = _hitCanvas
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H }
@@ -1360,8 +1379,16 @@ const hasAnimatedSlot = computed(() => layers.value.some(l => l.live && l.live.d
 // "Cannot access 'hiddenWired' before initialization" and killing the whole modal.
 // Latent since the shaderfill clock landed, because only documents with a WIRED slot
 // reach that branch. `readSlotArr` is a hoisted function declaration, so it is safe here.
-const hiddenWired = computed(() => new Set(readSlotArr('sailor_hiddenWired')))
-const lockedWired = computed(() => new Set(readSlotArr('sailor_lockedWired')))
+// Schema 2 retired the slot-keyed flag arrays: a wired slot is a LAYER, and its
+// hidden/locked state lives on the layer like every other kind's. The arrays are
+// left on disk untouched (rollback safety — see wiredMigration's header), so they
+// must be actively IGNORED here rather than merely stopped being written, or a
+// pre-migration `sailor_hiddenWired: [1]` would keep hiding a slot whose layer
+// says visible. Only a schema < 2 frame still consults them.
+const frameSchemaUnified = computed(() =>
+  Number((compositor.value?.data?.properties as any)?.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED)
+const hiddenWired = computed(() => (frameSchemaUnified.value ? new Set<number>() : new Set(readSlotArr('sailor_hiddenWired'))))
+const lockedWired = computed(() => (frameSchemaUnified.value ? new Set<number>() : new Set(readSlotArr('sailor_lockedWired'))))
 
 const hasAnimatedFill = computed(() => hasAnimatedShaderFill(buildStackItems(), background.value))
 const needsWallClock = computed(() => hasAnimatedFill.value && previewT.value == null)
@@ -1482,12 +1509,29 @@ watch(layers, (ls) => {
     if (next) props.sailor_wiredNames = next
   }
 }, { immediate: true })
+/** LEGACY (schema < 2) only: toggle a slot-keyed hidden/locked flag. A schema-2
+ *  frame has a layer for the slot and toggles `visible`/`locked` on it instead
+ *  (`toggleRowHidden` / `toggleRowLocked`), so this is a no-op there — writing the
+ *  dead array would leave state that nothing reads and rollback would misread. */
 function toggleWiredFlag(propKey: 'sailor_hiddenWired' | 'sailor_lockedWired', slot: number) {
+  if (frameSchemaUnified.value) return
   const cur = readSlotArr(propKey)
   writeSlotArr(propKey, cur.includes(slot) ? cur.filter(s => s !== slot) : [...cur, slot])
 }
-/** Set (not toggle) a wired slot's hidden flag. */
+/** The layer holding a 1-BASED modal slot, once the frame is on schema 2. */
+function wiredLayerForSlot1(slot: number): WiredLayer | undefined {
+  return localLayers.value.find(l => l.kind === 'wired' && (l as WiredLayer).slot === slot - 1) as WiredLayer | undefined
+}
+/** Set (not toggle) a wired slot's hidden flag, whichever schema the frame is on.
+ *  On schema 2 that is the LAYER's `visible` — the only flag the preview, the
+ *  motion bake and the submit path all read for a wired layer. */
 function setWiredHidden(slot: number, hidden: boolean) {
+  const wl = wiredLayerForSlot1(slot)
+  if (wl) {
+    if ((wl.visible === false) === hidden) return
+    setLocal(wl.id, { visible: hidden ? false : undefined } as any)
+    return
+  }
   const cur = readSlotArr('sailor_hiddenWired')
   if (cur.includes(slot) === hidden) return
   writeSlotArr('sailor_hiddenWired', hidden ? [...cur, slot] : cur.filter(s => s !== slot))
@@ -1526,6 +1570,14 @@ function writeStackOrder(arr: StackKey[]) {
   if (!node.data.properties) node.data.properties = {}
   ;(node.data.properties as any).sailor_stackOrder = arr
 }
+// Hide / lock read and write the LAYER's own fields for every kind — wired
+// included, since a wired slot is a layer now. The `w:` branch is the legacy
+// (schema < 2) row, which has no layer to carry the flag; on a schema-2 frame
+// `hiddenWired`/`lockedWired` are empty and `toggleWiredFlag` is a no-op, so that
+// branch is unreachable state rather than a second source of truth.
+// NOTE: a legacy `w:` row also carries a `layer`, but it is the graph-side `Layer`
+// (slot/url/scale), NOT a LocalLayer — it has no `id` to patch — so that branch has
+// to be tested FIRST.
 function rowHidden(row: any): boolean {
   if (row.kind === 'wired') return hiddenWired.value.has(row.slot)
   return row.layer ? row.layer.visible === false : false
@@ -2546,8 +2598,12 @@ async function copyWiredIntoFrame(slot: number) {
       ...(tr?.maskedByKey ? { maskedByKey: tr.maskedByKey, maskShowSource: tr.showSource || undefined } : {}),
     } as any)
     const added = localLayers.value.find(l => !before.has(l.id))
-    // 3. Hold the wired slot's z-position (else the copy jumps to the top).
-    if (added) writeStackOrder(insertStackKeyAbove(stackKeys.value, localKey(added.id), wiredKey(slot)) as StackKey[])
+    // 3. Hold the wired slot's z-position (else the copy jumps to the top). On a
+    //    schema-2 frame the slot's key in the stack is its LAYER's `l:<id>`, not
+    //    the legacy `w:<slot>` — anchoring to the dead key would silently leave
+    //    the copy on top of everything.
+    const anchorKey = (() => { const wl = wiredLayerForSlot1(slot); return wl ? localKey(wl.id) : wiredKey(slot) })()
+    if (added) writeStackOrder(insertStackKeyAbove(stackKeys.value, localKey(added.id), anchorKey) as StackKey[])
     // 4. Hide the now-redundant wired slot — only after the copy landed, so a
     //    failed upload never leaves an empty frame.
     setWiredHidden(slot, true)
@@ -3727,13 +3783,16 @@ onUnmounted(() => {
                 @click.stop="toggleRowHidden(row)">
                 <component :is="rowHidden(row) ? EyeOff : Eye" class="size-3.5" />
               </button>
-              <!-- Copy a wired image into the frame: bake a local copy, hide the wire -->
-              <button v-if="row.kind === 'wired'"
+              <!-- Copy a wired image into the frame: bake a local copy, hide the wire.
+                   Gated on the ROW'S SLOT, not `row.kind` — after unification a wired
+                   slot lists as a normal layer row, and gating on the kind silently
+                   dropped this affordance from every migrated frame. -->
+              <button v-if="rowWiredSlot1(row) != null"
                 class="transition cursor-pointer opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80 disabled:opacity-30 disabled:cursor-default"
                 :disabled="copyingSlot != null"
                 title="Copy into frame — bakes a local copy and hides the wired layer (not undoable; use Show to restore)"
                 data-testid="wired-copy-into-frame"
-                @click.stop="copyWiredIntoFrame(row.slot)">
+                @click.stop="copyWiredIntoFrame(rowWiredSlot1(row)!)">
                 <Copy class="size-3.5" />
               </button>
               <!-- Group opacity (compact hover-reveal slider; cascades to descendants) -->
@@ -4050,7 +4109,7 @@ onUnmounted(() => {
             data-handle
             class="absolute z-20 size-2.5 bg-white border border-white/60 cursor-nwse-resize"
             :style="{ left: localHandlePositions[corner].x + 'px', top: localHandlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
-            @pointerdown="selectedResizable ? onLocalResizePointerDown(corner, $event) : onLocalScalePointerDown($event)"
+            @pointerdown="selectedCornerResizable ? onLocalResizePointerDown(corner, $event) : onLocalScalePointerDown($event)"
           />
           <template v-if="selectedResizable">
             <div

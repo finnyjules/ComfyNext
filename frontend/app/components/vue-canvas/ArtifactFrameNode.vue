@@ -5,8 +5,8 @@ import {
   MousePointer2, Check, Type, Square, Circle, Minus, Trash2,
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
-import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
-import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
+import { useLocalLayerEditor, aspectLockedResizeKind } from '~/composables/useLocalLayerEditor'
+import { type LocalLayer, type TextLayer, type StackItem, type WiredLayer as UnifiedWiredLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
 import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
@@ -292,7 +292,57 @@ const editor = useLocalLayerEditor({
       })
     }
   },
+  // ⌘D / copy on a wired layer must never clone the live link (two layers on one
+  // slot). The honest copy is a SNAPSHOT of what the slot is showing, baked into
+  // an ordinary image layer at the same place. Passed here so the card has verb
+  // parity with the modal the moment it wires `handleEditorKey`.
+  materializeWired: (w) => { void snapshotWiredLayer(w) },
 })
+
+/**
+ * Bake a wired layer's current pixels (mask included — `wiredContentForSlot`
+ * already punches it) into a normal image layer at the same transform, then hide
+ * the wire so you see one image, not two. The modal's "Copy into frame" in the
+ * card's own terms; it uploads to the input dir exactly like a dropped file, so
+ * the result survives unplugging the wire.
+ */
+async function snapshotWiredLayer(w: UnifiedWiredLayer) {
+  const el = wiredContentForSlot(w.slot)
+  const d = wiredDimsForSlot(w.slot)
+  if (!el || !d?.w || !d?.h) { toast('That layer’s image isn’t ready yet'); return }
+  try {
+    const c = document.createElement('canvas'); c.width = d.w; c.height = d.h
+    c.getContext('2d')!.drawImage(el, 0, 0, d.w, d.h)
+    let dataUrl: string
+    try { dataUrl = c.toDataURL('image/png') }
+    catch { toast('Can’t read this image’s pixels'); return }
+    const fd = new FormData()
+    const safe = `framecopy_${Date.now()}.png`
+    fd.append('image', new File([await (await fetch(dataUrl)).blob()], safe, { type: 'image/png' }))
+    fd.append('overwrite', 'true')
+    const res = await fetch('/upload/image', { method: 'POST', body: fd })
+    if (!res.ok) throw new Error(`upload ${res.status}`)
+    const name = (await res.json())?.name || safe
+    editor.addImageFromName(name, d.w / d.h, {
+      x: w.x, y: w.y, w: w.w, rotation: w.rotation, opacity: w.opacity, blend: w.blend,
+    } as any)
+    // Hide (not delete) the wire: the slot's edge is untouched, so Show brings the
+    // live layer back exactly as "Copy into frame" has always behaved.
+    editor.setLocal(w.id, { visible: false } as any)
+  } catch (err) {
+    console.error('[Frame] snapshot wired layer failed:', err)
+    toast('Could not copy that layer into the frame')
+  }
+}
+/** The selection is a wired layer, so its corners resize ANCHORED + aspect-locked
+ *  (a wired layer has no independent height — see `aspectLockedResizeKind`). */
+const selectedCornerAnchored = computed(() =>
+  !!editor.selected.value && aspectLockedResizeKind(editor.selected.value.kind))
+/** The selection is a wired layer whose input has been cut — it keeps its box but
+ *  paints nothing, which the badge has to say (modal parity). */
+const selectedUnlinkedWired = computed(() =>
+  (editor.selected.value as any)?.kind === 'wired' && !!(editor.selected.value as any)?.unlinked)
+
 const editMode = ref(false)
 function toggleEdit() { editMode.value ? exitEdit() : (editMode.value = true) }
 function exitEdit() { editMode.value = false; editor.endEdit(); editor.selectLocal(null) }
@@ -1038,13 +1088,23 @@ onUnmounted(() => {
               fill="none" stroke="#22d3ee" stroke-width="1.5" vector-effect="non-scaling-stroke" />
             <line :x1="editor.handlePositions.value.topCenter.x" :y1="editor.handlePositions.value.topCenter.y" :x2="editor.handlePositions.value.rot.x" :y2="editor.handlePositions.value.rot.y" stroke="#22d3ee" stroke-width="1.5" vector-effect="non-scaling-stroke" />
           </svg>
-          <div v-for="corner in ['tl', 'tr', 'br', 'bl']" :key="'h-' + corner" data-handle
+          <!-- Wired layers take the ANCHORED corner resize (grabbed corner follows,
+               opposite corner pinned, aspect locked); everything else keeps this
+               card's uniform-from-centre scale. -->
+          <div v-for="corner in (['tl', 'tr', 'br', 'bl'] as const)" :key="'h-' + corner" data-handle
             class="nopan nodrag absolute size-2.5 bg-white border border-cyan-400 cursor-nwse-resize"
             :style="{ left: (editor.handlePositions.value as any)[corner].x + 'px', top: (editor.handlePositions.value as any)[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
-            @pointerdown="editor.startScale($event)" />
+            @pointerdown="selectedCornerAnchored ? editor.startResize(corner, $event) : editor.startScale($event)" />
           <div data-handle class="nopan nodrag absolute size-3 rounded-full bg-cyan-400 cursor-grab border-2 border-[#0e0e0e]"
             :style="{ left: editor.handlePositions.value.rot.x + 'px', top: editor.handlePositions.value.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
             @pointerdown="editor.startRotate($event)" />
+          <!-- Unlinked: the slot's edge is gone, so the layer keeps its last size
+               and placement but has no pixels. Say so on the selection itself —
+               an empty box with handles otherwise reads as a bug. -->
+          <div v-if="selectedUnlinkedWired"
+            class="absolute z-20 pointer-events-none rounded px-1 py-px text-[8px] uppercase tracking-wide bg-amber-400/20 text-amber-200 border border-amber-400/40 whitespace-nowrap"
+            :style="{ left: editor.handlePositions.value.topCenter.x + 'px', top: (editor.handlePositions.value.topCenter.y - 14) + 'px', transform: 'translate(-50%, -100%)' }"
+          >unlinked</div>
         </template>
 
         <!-- Inline text editor -->

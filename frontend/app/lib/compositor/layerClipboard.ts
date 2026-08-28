@@ -6,14 +6,24 @@
  */
 import type { LocalLayer } from '~/composables/useCompositorLayers'
 import type { LayerGroup } from '~/lib/compositor/layerGroups'
+import { isClonableLayer } from '~/lib/compositor/layerEdits'
 
 function clamp(v: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, v)) }
 
 export interface ClipboardPayload { layers: LocalLayer[]; groups: LayerGroup[] }
 
-/** Deep-clone the selected layers + the group registry entries they reference. */
+/**
+ * Deep-clone the selected layers + the group registry entries they reference.
+ *
+ * `wired` layers are dropped (see `isClonableLayer`): a wired layer names a SLOT,
+ * and a slot number only means something inside one frame's graph. Pasted back
+ * here it would double up on a live slot; pasted into another frame it would
+ * point at a completely different input. A wired-only selection therefore copies
+ * NOTHING (returns null) rather than filling the clipboard with a layer no paste
+ * could honour.
+ */
 export function extractForCopy(layers: LocalLayer[], groups: LayerGroup[], selectedIds: Set<string>): ClipboardPayload | null {
-  const sel = layers.filter(l => selectedIds.has(l.id))
+  const sel = layers.filter(l => selectedIds.has(l.id) && isClonableLayer(l))
   if (!sel.length) return null
   const gids = new Set(sel.map(l => l.groupId).filter(Boolean) as string[])
   return {
@@ -23,7 +33,13 @@ export function extractForCopy(layers: LocalLayer[], groups: LayerGroup[], selec
 }
 
 /** Paste a payload into an existing layer set: fresh ids, one new group id per
- *  distinct source group (carrying its name), offset applied, appended on top. */
+ *  distinct source group (carrying its name), offset applied, appended on top.
+ *
+ *  Filters `wired` again on the way IN, not only on the way out: the clipboard is
+ *  a module singleton that outlives any one frame, and a payload could also be
+ *  hand-built or restored from an older session. Refusing at both ends is what
+ *  makes "two live layers can never share a slot" a property of the module rather
+ *  than of one call site remembering. */
 export function materializePaste(
   payload: ClipboardPayload,
   layers: LocalLayer[],
@@ -34,7 +50,7 @@ export function materializePaste(
 ): { layers: LocalLayer[]; groups: LayerGroup[]; newIds: string[] } {
   const groupMap = new Map<string, string>()
   const newIds: string[] = []
-  const clones = payload.layers.map((l) => {
+  const clones = payload.layers.filter(isClonableLayer).map((l) => {
     const c = JSON.parse(JSON.stringify(l)) as any
     c.id = mkId(); newIds.push(c.id)
     c.x = clamp(l.x + offset, -0.5, 1.5)

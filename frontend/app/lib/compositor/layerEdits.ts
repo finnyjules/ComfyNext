@@ -20,10 +20,28 @@ export function nudgeLayers(layers: LocalLayer[], selectedIds: Set<string>, dx: 
     : l))
 }
 
+/**
+ * A `wired` layer is a live link to ONE graph slot, so it is never clonable —
+ * see `duplicateLayers`. Shared with `layerClipboard` so both copy paths refuse
+ * on the same rule.
+ */
+export function isClonableLayer(l: Pick<LocalLayer, 'kind'>): boolean {
+  return l?.kind !== 'wired'
+}
+
 /** Duplicate the selected layers: fresh ids, offset, and a fresh group id per
  *  distinct source group (added as a registry root). Deep-clones layer data.
  *  mkId/mkGid are injected so callers control id minting (and tests stay
- *  deterministic). Nested-group parent links are NOT remapped (v1 flat copy). */
+ *  deterministic). Nested-group parent links are NOT remapped (v1 flat copy).
+ *
+ *  `wired` members of the selection are SKIPPED, always. A wired layer's pixels
+ *  arrive down one graph edge into one slot: a second layer on that slot would
+ *  paint the same pixels twice, both copies would fight over the slot's
+ *  `layer{N}_*` widgets (last write wins), and the server would still render a
+ *  single image — so the copy would look right in the editor and wrong in the
+ *  output. The honest copy is a SNAPSHOT, which needs the host's bake + upload;
+ *  that half lives at the editor boundary (`duplicateSelection` →
+ *  `materializeWired`). This function stays pure and just refuses. */
 export function duplicateLayers(
   layers: LocalLayer[],
   groups: LayerGroup[],
@@ -32,7 +50,7 @@ export function duplicateLayers(
   mkId: () => string,
   mkGid: () => string,
 ): { layers: LocalLayer[]; groups: LayerGroup[]; newIds: string[] } {
-  const sel = layers.filter(l => selectedIds.has(l.id))
+  const sel = layers.filter(l => selectedIds.has(l.id) && isClonableLayer(l))
   if (!sel.length) return { layers, groups, newIds: [] }
   const groupMap = new Map<string, string>()
   const newIds: string[] = []

@@ -76,10 +76,25 @@ function scratchCtx(): CanvasRenderingContext2D | null {
   return _scratch
 }
 
-/** Box layers (independent width+height) get full Figma resize; text/line/path
- *  keep uniform corner scaling (no 2D box to resize). */
+/** Box layers (independent width+height) get full Figma resize (corners AND
+ *  edges); text/line/path keep uniform corner scaling (no 2D box to resize). */
 export function resizableKind(kind: string): boolean {
   return kind === 'rect' || kind === 'ellipse' || kind === 'image' || kind === 'polygon' || kind === 'star'
+}
+
+/** A `wired` layer has no independent height — its height is `w * lastAspect`,
+ *  set by the live content — so it gets no EDGE handles. Its corners still resize
+ *  the Figma way (grabbed corner follows the pointer, opposite corner pinned);
+ *  the aspect lock is implicit rather than a Shift modifier. */
+export function aspectLockedResizeKind(kind: string): boolean {
+  return kind === 'wired'
+}
+
+/** Kinds whose CORNER handles route to the anchored `resizeBox` path rather than
+ *  the uniform-from-centre `startScale` fallback. Hosts gate their corner
+ *  handles on this; `resizableKind` still gates the edge handles. */
+export function cornerResizableKind(kind: string): boolean {
+  return resizableKind(kind) || aspectLockedResizeKind(kind)
 }
 
 /** Compute handle positions (corners, edges, rotation, center) from box geometry
@@ -672,9 +687,18 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     } else if (d.type === 'resize') {
       const W = dims().w, H = dims().h
       const { nx, ny } = toNorm(e.clientX, e.clientY, r)
-      const box = resizeBox(d.start, d.rot, d.handle, d.p0, { x: nx * W, y: ny * H }, { aspect: e.shiftKey, fromCenter: e.altKey })
+      // A wired layer's height is DERIVED (`w * lastAspect`), so its corner drag is
+      // aspect-locked whether or not Shift is held, and only the width + the
+      // recomputed centre are written back. `d.start.h` is the derived height, which
+      // is what keeps the anchored maths honest: the opposite corner stays pinned in
+      // BOTH axes, exactly like a rect's.
+      const locked = aspectLockedResizeKind(
+        localLayers.value.find(l => l.id === d.id)?.kind ?? '')
+      const box = resizeBox(d.start, d.rot, d.handle, d.p0, { x: nx * W, y: ny * H }, { aspect: e.shiftKey || locked, fromCenter: e.altKey })
       // px → normalized (w,h fractions of WIDTH; x of width, y of height)
-      setLocal(d.id, { x: box.cx / W, y: box.cy / H, w: box.w / W, h: box.h / W })
+      const patch: Record<string, number> = { x: box.cx / W, y: box.cy / H, w: box.w / W }
+      if (!locked) patch.h = box.h / W
+      setLocal(d.id, patch)
     } else if (d.type === 'groupResize') {
       const W = dims().w, H = dims().h
       const { nx, ny } = toNorm(e.clientX, e.clientY, r)

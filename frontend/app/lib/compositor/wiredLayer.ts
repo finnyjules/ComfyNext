@@ -204,7 +204,15 @@ export function syncWiredWidgets(
  * not clear its widgets, because deletion is not what removes it server-side
  * (disconnecting the edge is), and a slot that gets re-wired should come back
  * with the placement it had.
+ *
+ * BACKSTOP: two live layers on one slot is a corrupt stack — they paint the same
+ * pixels twice while silently last-write-wins over that slot's widgets, and the
+ * server still renders a single copy, so the editor and the output disagree with
+ * no error anywhere. The duplicate/copy/paste paths refuse to create that state
+ * (`isClonableLayer` in layerEdits), and this is the tripwire if a future one does.
  */
+const _dupSlotWarned = new Set<number>()
+
 export function syncAllWiredWidgets(
   node: WiredWidgetNode | null | undefined,
   layers: readonly LocalLayer[],
@@ -213,9 +221,18 @@ export function syncAllWiredWidgets(
 ): number {
   if (!node?.data) return 0
   let n = 0
+  const seen = new Set<number>()
   for (const l of layers) {
     if (l?.kind !== 'wired') continue
     const w = l as WiredLayer
+    if (seen.has(w.slot)) {
+      // Once per slot per session: this runs on the editor's commit choke point,
+      // so a drag in the corrupt state would otherwise log at frame rate.
+      if (!_dupSlotWarned.has(w.slot)) {
+        _dupSlotWarned.add(w.slot)
+        console.warn(`[wiredLayer] two live layers claim slot ${w.slot} — the later one wins its widgets, so the render will not match the editor`)
+      }
+    } else seen.add(w.slot)
     if (syncWiredWidgets(node, w, canvas, naturalFor?.(w.slot))) n++
   }
   return n

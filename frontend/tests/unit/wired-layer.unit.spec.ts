@@ -11,6 +11,7 @@ import {
   type LocalLayer, type WiredLayer,
 } from '~/composables/useCompositorLayers'
 import { DEFAULT_CLONER } from '~/composables/useCloner'
+import { getClipboard, _resetClipboard } from '~/lib/compositor/layerClipboard'
 
 describe('wired layer mapping', () => {
   const natural = { w: 800, h: 600 }          // content pixels
@@ -663,5 +664,209 @@ describe('wired layer handle drags', () => {
     expect(l.h).toBeUndefined()
     expect(Number.isNaN(l.w)).toBe(false)
     expect(l.w).toBeGreaterThan(0.3)
+  })
+})
+
+// ── Task 6: verb parity ──────────────────────────────────────────────────────
+// A wired layer is a LocalLayer now, so align / nudge / duplicate / copy have to
+// treat it like every other layer — except duplication, where "like every other
+// layer" would mean two layers on one slot. The honest copy is a snapshot, which
+// only the HOST can bake (it owns the pixels and the upload), so the editor hands
+// the wired members to `materializeWired` and clones only the rest.
+describe('wired layer verb parity (mixed selection)', () => {
+  const listeners: Record<string, (e: any) => void> = {}
+  const realWindow = (globalThis as any).window
+  beforeAll(() => {
+    ;(globalThis as any).window = {
+      addEventListener: (type: string, fn: any) => { listeners[type] = fn },
+      removeEventListener: (type: string) => { delete listeners[type] },
+    }
+  })
+  afterAll(() => { (globalThis as any).window = realWindow })
+
+  const RECT = { left: 0, top: 0, width: 1024, height: 1024 } as DOMRect
+  const ptr = (x: number, y: number) => ({ clientX: x, clientY: y, preventDefault() {}, stopPropagation() {}, altKey: false, shiftKey: false }) as any
+
+  function mixedEditor(materializeWired?: (l: WiredLayer) => void) {
+    // wired: w 0.4 (box half-width 0.2), rect: w 0.2 (half-width 0.1)
+    const w = createWiredLayer(0, { x: 0.3, y: 0.3, w: 0.4, lastAspect: 0.5 })
+    const rect = { id: 'r', kind: 'rect', x: 0.7, y: 0.8, rotation: 0, opacity: 1, w: 0.2, h: 0.2 } as any
+    const node = reactive({ data: { properties: { sailor_localLayers: [w as LocalLayer, rect] } } })
+    const ed = useLocalLayerEditor({
+      node: () => node, dims: () => ({ w: 1024, h: 1024 }), getRect: () => RECT,
+      materializeWired,
+    })
+    ed.selectLocal(w.id); ed.toggleSelect('r')
+    return { node, ed, w, rect }
+  }
+  const read = (node: any) => node.data.properties.sailor_localLayers as any[]
+
+  it('align-left equalises the wired and native left edges', () => {
+    const { node, ed } = mixedEditor()
+    ed.alignSelected('left')
+    const [wl, rl] = read(node)
+    expect(wl.x - 0.2).toBeCloseTo(0.1, 6)   // wired half-width 0.2
+    expect(rl.x - 0.1).toBeCloseTo(0.1, 6)   // rect half-width 0.1
+  })
+
+  it('align-top equalises the wired and native top edges', () => {
+    const { node, ed } = mixedEditor()
+    ed.alignSelected('top')
+    const [wl, rl] = read(node)
+    // wired half-height = w * lastAspect / 2 = 0.1 (of WIDTH) → 0.1 of height too (square canvas)
+    expect(wl.y - 0.1).toBeCloseTo(0.2, 6)
+    expect(rl.y - 0.1).toBeCloseTo(0.2, 6)
+  })
+
+  it('nudge moves both members of the selection', () => {
+    const { node, ed } = mixedEditor()
+    ed.nudgeSelection(0.01, -0.02)
+    const [wl, rl] = read(node)
+    expect(wl.x).toBeCloseTo(0.31, 6); expect(wl.y).toBeCloseTo(0.28, 6)
+    expect(rl.x).toBeCloseTo(0.71, 6); expect(rl.y).toBeCloseTo(0.78, 6)
+  })
+
+  it('duplicate snapshots the wired member and clones the rest — never two live layers on one slot', () => {
+    const seen: WiredLayer[] = []
+    const { node, ed } = mixedEditor((l) => {
+      seen.push(l)
+      // What a host's materialize does: an ordinary image layer where the wire was.
+      ed.addImageFromName('snap.png', 1 / (l.lastAspect || 1), { x: l.x, y: l.y, w: l.w } as any)
+    })
+    ed.duplicateSelection()
+    const ls = read(node)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.slot).toBe(0)
+    expect(ls.filter(l => l.kind === 'wired')).toHaveLength(1)     // still exactly one live slot
+    expect(ls.filter(l => l.kind === 'image')).toHaveLength(1)     // the snapshot
+    expect(ls.filter(l => l.kind === 'image')[0]!.kind).toBe('image')
+    expect(ls.filter(l => l.kind === 'rect')).toHaveLength(2)      // the real clone
+  })
+
+  it('duplicate without a host materializer drops the wired member rather than doubling it', () => {
+    const { node, ed } = mixedEditor()
+    ed.duplicateSelection()
+    const ls = read(node)
+    expect(ls.filter(l => l.kind === 'wired')).toHaveLength(1)
+    expect(ls.filter(l => l.kind === 'rect')).toHaveLength(2)
+  })
+
+  it('copy keeps wired out of the clipboard, so paste can never re-create the slot', () => {
+    _resetClipboard()
+    const { ed } = mixedEditor()
+    ed.copySelection()
+    const p = getClipboard()!
+    expect(p.layers).toHaveLength(1)
+    expect(p.layers[0]!.kind).toBe('rect')
+  })
+})
+
+// Corner resize on a wired layer is ANCHORED, like every other layer: the grabbed
+// corner follows the pointer and the OPPOSITE corner stays put. It is aspect-
+// locked without Shift (a wired layer has no independent height — the height is
+// `w * lastAspect`), and only `w` plus the recomputed centre are written back.
+describe('wired layer anchored corner resize', () => {
+  const listeners: Record<string, (e: any) => void> = {}
+  const realWindow = (globalThis as any).window
+  beforeAll(() => {
+    ;(globalThis as any).window = {
+      addEventListener: (type: string, fn: any) => { listeners[type] = fn },
+      removeEventListener: (type: string) => { delete listeners[type] },
+    }
+  })
+  afterAll(() => { (globalThis as any).window = realWindow })
+
+  const W = 1024
+  const RECT = { left: 0, top: 0, width: W, height: W } as DOMRect
+  const ptr = (x: number, y: number, mod: Record<string, boolean> = {}) =>
+    ({ clientX: x, clientY: y, preventDefault() {}, stopPropagation() {}, altKey: false, shiftKey: false, ...mod }) as any
+
+  function wiredEditor() {
+    const w = createWiredLayer(0, { x: 0.5, y: 0.5, w: 0.4, lastAspect: 0.75 })
+    const node = reactive({ data: { properties: { sailor_localLayers: [w as LocalLayer] } } })
+    const ed = useLocalLayerEditor({ node: () => node, dims: () => ({ w: W, h: W }), getRect: () => RECT })
+    ed.selectLocal(w.id)
+    return { node, ed, w }
+  }
+  // box: 409.6 × 307.2 px centred at (512, 512) → tl (307.2, 358.4), br (716.8, 665.6)
+  const boxOf = (l: any) => {
+    const wPx = l.w * W, hPx = l.w * l.lastAspect * W
+    const cx = l.x * W, cy = l.y * W
+    return { wPx, hPx, l: cx - wPx / 2, t: cy - hPx / 2, r: cx + wPx / 2, b: cy + hPx / 2 }
+  }
+
+  it('dragging the BR corner leaves the TL corner fixed and follows the pointer in x', () => {
+    const { node, ed } = wiredEditor()
+    ed.startResize('br', ptr(716.8, 665.6))
+    listeners.pointermove!(ptr(816.8, 665.6))
+    const l = node.data.properties.sailor_localLayers[0] as any
+    const b = boxOf(l)
+    expect(b.l).toBeCloseTo(307.2, 3)
+    expect(b.t).toBeCloseTo(358.4, 3)
+    expect(b.r).toBeCloseTo(816.8, 3)
+    expect(l.h).toBeUndefined()
+  })
+
+  it('dragging the TL corner leaves the BR corner fixed', () => {
+    const { node, ed } = wiredEditor()
+    ed.startResize('tl', ptr(307.2, 358.4))
+    listeners.pointermove!(ptr(207.2, 358.4))
+    const l = node.data.properties.sailor_localLayers[0] as any
+    const b = boxOf(l)
+    expect(b.r).toBeCloseTo(716.8, 3)
+    expect(b.b).toBeCloseTo(665.6, 3)
+    expect(b.l).toBeCloseTo(207.2, 3)
+    expect(l.h).toBeUndefined()
+  })
+
+  it('stays aspect-locked WITHOUT shift and never writes an `h`', () => {
+    const { node, ed } = wiredEditor()
+    ed.startResize('br', ptr(716.8, 665.6))
+    listeners.pointermove!(ptr(900, 700))          // pointer off the aspect diagonal
+    const l = node.data.properties.sailor_localLayers[0] as any
+    const b = boxOf(l)
+    expect(b.hPx / b.wPx).toBeCloseTo(0.75, 6)
+    expect('h' in l).toBe(false)
+    expect(Number.isNaN(l.w)).toBe(false)
+    expect(l.w).toBeGreaterThan(0.4)
+  })
+
+  it('mirrors the resized box back into the slot widgets', () => {
+    const { node, ed } = wiredEditor()
+    ;(node.data as any).widgets_values = []
+    ;(node.data as any).widgets = []
+    ed.startResize('br', ptr(716.8, 665.6))
+    listeners.pointermove!(ptr(816.8, 665.6))
+    // The write-through is the commit's job; with no widget host declared it is a
+    // clean no-op rather than a crash (see syncWiredWidgets).
+    expect((node.data.properties.sailor_localLayers[0] as any).w).toBeGreaterThan(0.4)
+  })
+})
+
+// Backstop for the duplicate-slot hazard the verb sweep closes at the editor
+// boundary: if two live wired layers ever DID reach one slot, the write-through
+// would silently last-write-wins while the server rendered a single copy. Say so.
+describe('syncAllWiredWidgets duplicate-slot guard', () => {
+  const canvas = { w: 1024, h: 1024 }
+  function host(): { data: WidgetHostData } {
+    const data: any = { widgets_values: {} }
+    for (const k of ['x', 'y', 'rotation', 'scale', 'opacity', 'blend']) data.widgets_values[`layer1_${k}`] = 0
+    return { data }
+  }
+  it('warns once when two layers claim the same slot', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const a = createWiredLayer(0, { w: 0.5, lastAspect: 1 })
+    const b = createWiredLayer(0, { w: 0.8, lastAspect: 1 })
+    syncAllWiredWidgets(host(), [a as LocalLayer, b as LocalLayer], canvas)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0]![0])).toMatch(/slot 0/)
+    warn.mockRestore()
+  })
+  it('stays quiet for distinct slots', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    syncAllWiredWidgets(host(), [createWiredLayer(0, { w: 0.5, lastAspect: 1 }) as LocalLayer,
+      createWiredLayer(1, { w: 0.5, lastAspect: 1 }) as LocalLayer], canvas)
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 })

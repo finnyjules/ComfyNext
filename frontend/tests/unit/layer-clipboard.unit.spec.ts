@@ -54,3 +54,28 @@ describe('clipboard singleton', () => {
     expect(hasClipboard()).toBe(false)
   })
 })
+
+// ── Wired layers never enter (or leave) the clipboard ────────────────────────
+// `slot` is meaningful only inside ONE frame's graph: pasted here it doubles up
+// on a live slot, pasted into another frame it points at a completely different
+// input. Both ends refuse — extract drops it, and materialize drops it again so
+// a payload from an older session (or a hand-built one) cannot smuggle it back.
+const WD = (id: string, slot: number): any =>
+  ({ id, kind: 'wired', slot, x: 0.4, y: 0.4, rotation: 0, opacity: 1, w: 0.5, lastAspect: 0.75 })
+
+describe('clipboard refuses wired layers', () => {
+  it('extractForCopy drops the wired members of a mixed selection', () => {
+    const p = extractForCopy([WD('w1', 0), L('a', 0.2, 0.2)], [], new Set(['w1', 'a']))!
+    expect(p.layers).toHaveLength(1)
+    expect(p.layers[0]!.kind).toBe('rect')
+  })
+  it('extractForCopy returns null for a wired-only selection', () => {
+    expect(extractForCopy([WD('w1', 0)], [], new Set(['w1']))).toBeNull()
+  })
+  it('materializePaste drops a wired layer smuggled into a payload', () => {
+    const r = materializePaste({ layers: [WD('w1', 0), L('a', 0.2, 0.2)], groups: [] }, [], [], 0.02, ids(), gids())
+    expect(r.layers).toHaveLength(1)
+    expect(r.layers[0]!.kind).toBe('rect')
+    expect(r.newIds).toHaveLength(1)
+  })
+})

@@ -146,3 +146,43 @@ describe('dragHud', () => {
   it('move → rounded X, Y', () => { expect(dragHud('move', info)).toEqual({ text: '341, 200' }) })
   it('null kind → null', () => { expect(dragHud(null, info)).toBeNull() })
 })
+
+// ── Wired layers are LIVE LINKS, not clonable data ───────────────────────────
+// A wired layer's pixels come down one graph edge into ONE slot. Two layers on
+// that slot would paint the same pixels twice, fight over the slot's `layer{N}_*`
+// widgets (last write wins), and the server would still render a single copy —
+// so the pure duplicator must never emit the second one. Converting the wired
+// member into a SNAPSHOT needs the host's bake/upload, which is why that half
+// lives at the editor boundary (`duplicateSelection` → `materializeWired`) and
+// this layer only has to refuse cleanly.
+const WD = (id: string, slot: number, x = 0.4, y = 0.4): any =>
+  ({ id, kind: 'wired', slot, x, y, rotation: 0, opacity: 1, w: 0.5, lastAspect: 0.75 })
+
+describe('duplicateLayers with wired members', () => {
+  const ids2 = () => { let n = 0; return () => `id${++n}` }
+  const gids2 = () => { let n = 0; return () => `g${++n}` }
+
+  it('never emits a second live layer on the same slot', () => {
+    const layers = [WD('w1', 0), G('a', 0.2, 0.2)]
+    const r = duplicateLayers(layers, [], new Set(['w1', 'a']), 0.02, ids2(), gids2())
+    expect(r.layers.filter((l: any) => l.kind === 'wired').map((l: any) => l.slot)).toEqual([0])
+    expect(r.newIds).toHaveLength(1)
+    expect(r.layers).toHaveLength(3)
+    expect((r.layers[2] as any).kind).toBe('rect')
+  })
+
+  it('is a no-op when the selection is wired-only', () => {
+    const layers = [WD('w1', 0)]
+    const r = duplicateLayers(layers, [], new Set(['w1']), 0.02, ids2(), gids2())
+    expect(r.newIds).toEqual([])
+    expect(r.layers).toHaveLength(1)
+  })
+
+  it('still copies the grouped non-wired members of a mixed group', () => {
+    const layers = [WD('w1', 0), G('a', 0.2, 0.2, 'g0'), G('b', 0.3, 0.3, 'g0')]
+    const r = duplicateLayers(layers, [], new Set(['w1', 'a', 'b']), 0.02, ids2(), gids2())
+    expect(r.newIds).toHaveLength(2)
+    expect((r.layers[3] as any).groupId).toBe('g1')
+    expect((r.layers[4] as any).groupId).toBe('g1')
+  })
+})
