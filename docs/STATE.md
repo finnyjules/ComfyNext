@@ -66,6 +66,28 @@ setTimeout throttling, and page reload killing the client bake outright — expo
 reloads before completing) · `input/` holds 23k+ orphaned bake PNGs, never cleaned ·
 duration row says "frames", means seconds · killing the backend hard-reloads the app.
 
+### Frame — wired layers become native layers + the modal breathes — LANDED 2026-08-28 (`925c43728`..`8d3cac809`+fixes)
+
+The deepest Frame seam is closed: a wired input is now a normal layer (`kind:'wired'` in
+`sailor_localLayers`) whose pixels stay live from the slot feed — selection, align, group,
+nudge, hide/lock/rename, drag-reorder, anchored aspect-locked resize, ⌘D (materializes a
+snapshot, never clones the live link) all work on wired and native alike. Amber handle
+system retired. Schema-2 migration folds every per-slot registry (transforms, hidden/locked,
+cloners, names, mask treatments) into layers on first open, sentinel-safe with a finalizer;
+widgets keep a one-way write-through so server Render is untouched. Edge lifecycle: land →
+layer, cut → UNLINKED badge (box kept, pixels dropped), delete → disconnects, undo restores
+as unlinked + toast. **Server geometry bug fixed in passing** (`60ac0ce6c`): the Python
+Compositor applied HALF the authored x/y offset and SHEARED rotations on non-square
+canvases — probably forever; renders of saved frames with moved/rotated wired layers will
+visibly (correctly) shift. Part B: the modal stage is full-bleed (zoomed content slides
+under the floating panels instead of cropping at a 690px letterbox), ⌘\ hides both panels,
+zoom is a menu (Fit ⌘0 · 100/200 · zoom-to-selection ⌘2 · shortcut hints), prompt bar is a
+pill until focused, Motion tab reserves the timeline's height dynamically. Verified live:
+frame-lab 10/10 + real-app 7/7 Playwright passes with pixel probes (card compositing
+proven, server/client parity to 0.0004 of the canvas). Spec + plan in docs/superpowers/
+(2026-08-27-frame-wired-native-unification*). Follow-ups filed in the plan/ledger: torch/PIL
+timeline parity test, RotateNode shares the shear bug, nodeWidgets adoption in the 3 hosts.
+
 ### Four takes — the agent proposes four versions before committing — LANDED 2026-08-25 (Milestone A)
 
 Designed live with Julien via the visual-companion mockups (system C: canvas-shaped,

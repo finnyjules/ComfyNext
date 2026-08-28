@@ -1,7 +1,17 @@
 # Frame: one species of layer + room to breathe
 
 **Date:** 2026-08-27
-**Status:** approved
+**Status:** landed 2026-08-28 (`925c43728`..`8d3cac809` + final-review fixes; see Deviations below)
+
+## Deviations from this spec (all ratified in the plan or final review)
+
+- `WiredLayer` carries no `h` — height derives from `w × lastAspect` (live aspect when content resolves); no `protect` on the layer (widget preserved, never written — no wired protect UI exists).
+- Wired resize is corner-anchored aspect-locked, not free 8-handle (a wired layer has no independent height).
+- Undo of a wired-layer delete restores the layer as **unlinked** + a toast, not the edge (graph and editor histories don't compose).
+- One selection/handle system in **white** (the pre-existing local system), not cyan.
+- `w:` stack keys survive for connected slots no layer has claimed (pre-migration frames + the tick before a layer is minted).
+- Zoom menu additionally has 200%.
+- **Release note:** the server geometry fix (`60ac0ce6c`) corrects a long-standing half-offset and non-square rotation shear in the Python Compositor — saved frames with moved/rotated wired layers now render where the editor always showed them, which may visibly shift old server renders.
 **Scope:** CompositorModal-first (the modal is the real Frame editor; the inline card inherits what falls out for free)
 
 ## Why
