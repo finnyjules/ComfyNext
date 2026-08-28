@@ -68,6 +68,14 @@ duration row says "frames", means seconds · killing the backend hard-reloads th
 
 ### Frame — wired layers become native layers + the modal breathes — LANDED 2026-08-28 (`925c43728`..`8d3cac809`+fixes)
 
+**Toolbar regroup fast-follow (same day, `eb2900d0e`+`49a995341`):** the modal's bottom bar
+went 17 buttons → 10 — five shape stamps collapsed into a last-used-face flyout (face
+stamps in one click, chevron opens the list), Import SVG folded into the Insert menu, the
+three AI flows (AI vector · generate in region · smart select) behind one ✦ menu with the
+smart-select disabled-hint preserved. All shortcuts unchanged; menus share the zoom menu's
+idiom + a common exclusion (`closeToolbarMenus`). Live-verified 15/15 + 8/8 menu-exclusion
+checks. Spec: 2026-08-28-compositor-toolbar-regroup-design.md.
+
 The deepest Frame seam is closed: a wired input is now a normal layer (`kind:'wired'` in
 `sailor_localLayers`) whose pixels stay live from the slot feed — selection, align, group,
 nudge, hide/lock/rename, drag-reorder, anchored aspect-locked resize, ⌘D (materializes a

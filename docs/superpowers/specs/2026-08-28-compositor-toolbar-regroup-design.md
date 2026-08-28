@@ -1,7 +1,7 @@
 # Compositor toolbar — collapse shapes, group by job
 
 **Date:** 2026-08-28
-**Status:** approved
+**Status:** landed 2026-08-28 (`eb2900d0e` + `49a995341`; split face+chevron variant chosen — repeat stamping stays one click)
 **Scope:** the bottom toolbar of `CompositorModal.vue` only. No behavior changes to any tool; this is chrome organization.
 
 ## Why
