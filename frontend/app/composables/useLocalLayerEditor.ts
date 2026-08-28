@@ -13,7 +13,8 @@ import {
   type PostEffect,
   createTextLayer, createRectLayer, createEllipseLayer, createLineLayer, createImageLayer,
   createPolygonLayer, createStarLayer,
-  localLayerBox, shapeToPathLayer, withWiredContent, type WiredContentProvider,
+  localLayerBox, shapeToPathLayer, withWiredContent,
+  type WiredContentProvider, type WiredLayer,
 } from '~/composables/useCompositorLayers'
 import { svgToPathLayers, pathLayerBoolean, type BooleanOp } from '~/composables/useVectorSvg'
 import {
@@ -48,6 +49,23 @@ interface EditorOpts {
    * is what makes selection handles and hit boxes hug what actually paints.
    */
   wiredContent?: WiredContentProvider
+  /**
+   * Called with the `wired` layers a delete just removed, BEFORE the removal is
+   * committed. Deleting a wired layer has a graph consequence the editor cannot
+   * reach — the slot's edge must come out too, or the backend keeps compositing
+   * pixels the editor no longer shows. Hosts wire this to the canvas's edge
+   * removal. Routed through the delete choke points so every call site (keyboard,
+   * panel, inspector, group delete) gets it without remembering to.
+   */
+  onWiredRemoved?: (layers: WiredLayer[]) => void
+  /**
+   * Called for each `wired` layer in a ⌘D / copy, instead of cloning it. A wired
+   * layer's pixels belong to ONE slot: a second layer on the same slot would
+   * paint twice and both would fight over that slot's widgets. The honest copy is
+   * a SNAPSHOT (the host's "copy wired into frame" path); hosts that have one
+   * pass it here, hosts that don't simply skip wired layers.
+   */
+  materializeWired?: (layer: WiredLayer) => void
 }
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -184,8 +202,16 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     commit(localLayers.value.map(l => (l.id === id ? { ...l, ...patch } as LocalLayer : l)))
   }
   function addLocal(layer: LocalLayer) { recordHistory(); commit([...localLayers.value, layer]); selectLocal(layer.id) }
+  /** Tell the host about any `wired` layers a delete is about to remove, so it
+   *  can take the slot's edge out with them (see `onWiredRemoved`). */
+  function notifyWiredRemoval(ids: Set<string>) {
+    if (!opts.onWiredRemoved) return
+    const wired = localLayers.value.filter(l => ids.has(l.id) && l.kind === 'wired') as WiredLayer[]
+    if (wired.length) opts.onWiredRemoved(wired)
+  }
   function deleteLocal(id: string) {
     recordHistory()
+    notifyWiredRemoval(new Set([id]))
     commitBoth(localLayers.value.filter(l => l.id !== id), localGroups.value)
     if (selectedId.value === id) selectedId.value = null
   }
@@ -194,6 +220,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (!ids.length) return
     recordHistory()
     const set = new Set(ids)
+    notifyWiredRemoval(set)
     commitBoth(localLayers.value.filter(l => !set.has(l.id)), localGroups.value)
     if (selectedId.value && set.has(selectedId.value)) selectLocal(null)
   }
@@ -408,12 +435,26 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     commit(nudgeLayers(localLayers.value, selectedIds.value, dx, dy))
   }
 
+  /** The selection minus its `wired` members — the part that can be CLONED. A
+   *  wired layer is a live link to one slot, so it is snapshotted instead (see
+   *  `materializeWired`); cloning it would put two layers on one slot. */
+  function clonableSelection(): { ids: Set<string>; wired: WiredLayer[] } {
+    const wired = localLayers.value.filter(
+      l => selectedIds.value.has(l.id) && l.kind === 'wired') as WiredLayer[]
+    if (!wired.length) return { ids: selectedIds.value, wired }
+    const drop = new Set(wired.map(l => l.id))
+    return { ids: new Set([...selectedIds.value].filter(id => !drop.has(id))), wired }
+  }
+
   /** Duplicate the current multi-selection; the copies become the selection. */
   function duplicateSelection() {
     if (!selectedIds.value.size) return
+    const { ids, wired } = clonableSelection()
+    for (const w of wired) opts.materializeWired?.(w)
+    if (!ids.size) return
     recordHistory()
     const r = duplicateLayers(
-      localLayers.value, localGroups.value, selectedIds.value, 0.02,
+      localLayers.value, localGroups.value, ids, 0.02,
       () => `ll-${Date.now().toString(36)}-${++_dupSeq}`,
       () => `g-${Date.now().toString(36)}-${++_groupSeq}`,
     )
@@ -424,7 +465,11 @@ export function useLocalLayerEditor(opts: EditorOpts) {
 
   /** Copy the current multi-selection to the shared in-app clipboard. */
   function copySelection() {
-    const p = extractForCopy(localLayers.value, localGroups.value, selectedIds.value)
+    // Wired layers never enter the clipboard: pasting one — here or into another
+    // frame — would produce a layer pointing at a slot that means something else.
+    const { ids } = clonableSelection()
+    if (!ids.size) return
+    const p = extractForCopy(localLayers.value, localGroups.value, ids)
     if (p) setClipboard(p)
   }
   /** Paste the clipboard into THIS frame; offset unless inPlace. Copies become the selection. */

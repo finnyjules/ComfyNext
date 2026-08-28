@@ -8,7 +8,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent } from '~/lib/compositor/frameStack'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { libraryFamily } from '~/data/library-fonts'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
@@ -25,6 +25,7 @@ import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSour
 import { deriveMasterClock, slotPhase01, masterFrameIndex } from '~/lib/compositor/masterClock'
 import { portOffset } from '~/lib/canvas/portLayout'
 import { onFieldCatalogReady } from '~/lib/shaderfill/field'
+import { toast } from 'vue-sonner'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
 // live composite (wired layers from `data.images` + a live local-layer overlay),
@@ -277,6 +278,20 @@ const editor = useLocalLayerEditor({
   // upstream re-run can have made stale.
   wiredDims: wiredDimsForSlot,
   wiredContent: wiredContentForSlot,
+  // Deleting a wired layer must take the slot's edge with it — only the canvas
+  // owns edges, so ask it. Undo (the editor's own history step, recorded by the
+  // delete) brings the LAYER back; the edge does not come back with it, so the
+  // restored layer reconciles to `unlinked` and the toast says how to relink.
+  onWiredRemoved: (wired) => {
+    for (const w of wired) {
+      window.dispatchEvent(new CustomEvent('sailor:frameUnwireSlot', { detail: { nodeId: props.id, slot: w.slot } }))
+    }
+    if (wired.length) {
+      toast('Layer removed and its input unwired', {
+        description: 'Undo brings the layer back unlinked — re-wire the input to reconnect it.',
+      })
+    }
+  },
 })
 const editMode = ref(false)
 function toggleEdit() { editMode.value ? exitEdit() : (editMode.value = true) }
@@ -603,8 +618,19 @@ function slotDimsMap(): Record<number, { w: number; h: number } | undefined> {
 }
 watch(() => connectedSlotList.value.join(','), () => {
   const slots = connectedSlotList.value
-  if (!slots.length) return
-  migrateFrameToUnifiedLayers({ data: props.data as any, connectedSlots: [...slots] }, slotDimsMap())
+  if (slots.length) {
+    migrateFrameToUnifiedLayers({ data: props.data as any, connectedSlots: [...slots] }, slotDimsMap())
+  }
+  // Edge lifecycle: a new edge mints a layer, a cut edge marks its layer
+  // `unlinked` (never deletes it — placement, name, mask and z-position survive),
+  // and re-wiring the same slot relinks it. No history step: this mirrors the
+  // graph, and undoing it would only fight the graph on the next tick.
+  const linked = syncWiredLayerLinks(editor.localLayers.value, slots)
+  if (linked) {
+    editor.commit(linked.layers)
+    const last = linked.addedIds[linked.addedIds.length - 1]
+    if (last && editMode.value) editor.selectLocal(last)
+  }
 }, { immediate: true })
 
 /** Everything the reconciler needs to know about a slot's content this tick. */

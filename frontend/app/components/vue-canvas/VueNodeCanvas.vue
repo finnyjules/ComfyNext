@@ -3214,6 +3214,19 @@ function handleMoodboardUnwire(e: Event) {
   if (drop.length) removeEdges(drop.map(e2 => e2.id))
 }
 
+/** Deleting a wired layer in a Frame (card or modal) has to take the slot's edge
+ *  out with it — otherwise the backend keeps compositing pixels the editor no
+ *  longer shows. The Frame surfaces dispatch this because only the canvas owns
+ *  the graph's edges. `slot` is the 0-based input-port index. */
+function handleFrameUnwireSlot(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string; slot: number }>).detail
+  if (!detail?.nodeId || !Number.isInteger(detail.slot)) return
+  const handle = `input-${detail.slot}`
+  const drop = (edges.value as any[]).filter(
+    (edge: any) => String(edge.target) === String(detail.nodeId) && edge.targetHandle === handle)
+  if (drop.length) removeEdges(drop.map((edge: any) => edge.id))
+}
+
 /** Manual TASTE wire completion (drag onto style_in, or a wire dropped on the
  *  generator body that completes onto it): same side effects as a chip apply,
  *  minus the block write. Called from onConnect / completeConnectionOnNode. */
@@ -4883,6 +4896,7 @@ onMounted(() => {
   window.addEventListener('sailor:openMoodboard', handleOpenMoodboard)
   window.addEventListener('sailor:moodboardWire', handleMoodboardWire)
   window.addEventListener('sailor:moodboardUnwire', handleMoodboardUnwire)
+  window.addEventListener('sailor:frameUnwireSlot', handleFrameUnwireSlot)
   window.addEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
   // Texture Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
@@ -4959,6 +4973,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:openMoodboard', handleOpenMoodboard)
   window.removeEventListener('sailor:moodboardWire', handleMoodboardWire)
   window.removeEventListener('sailor:moodboardUnwire', handleMoodboardUnwire)
+  window.removeEventListener('sailor:frameUnwireSlot', handleFrameUnwireSlot)
   window.removeEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
   window.removeEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openShaderStudio', handleOpenShaderStudio)

@@ -19,8 +19,9 @@
  */
 
 import type { LocalLayer, WiredLayer } from '~/composables/useCompositorLayers'
-import { wiredBoxFromWidgets, type ContentDims } from '~/lib/compositor/wiredLayer'
+import { createWiredLayer, wiredBoxFromWidgets, type ContentDims } from '~/lib/compositor/wiredLayer'
 import { widgetNum, type WidgetHostData } from '~/lib/compositor/nodeWidgets'
+import { UNRESOLVED_WIRED_W } from '~/lib/compositor/wiredMigration'
 
 /** Stack key for a wired slot. `slot` is 0-BASED; keys are 1-based (`w:1` = layer1). */
 export function wiredStackKey(slot: number): string { return `w:${slot + 1}` }
@@ -123,6 +124,57 @@ export function finalizeWiredSentinels(
     return { ...w, w: box.w, lastAspect: box.lastAspect }
   })
   return changed ? next : null
+}
+
+/**
+ * Reconcile the layer stack against the graph's edges — the whole edge lifecycle
+ * in one pure pass, so both hosts (and any future one) behave identically:
+ *
+ *  - an edge LANDS on a slot no layer holds ⇒ append a wired layer for it, as a
+ *    `w <= 0` sentinel. The finalizer resolves its box from the slot's widgets
+ *    on first content, exactly as it does for a migrated one. Appended (not
+ *    prepended) so a newly wired image floats to the TOP of the stack, matching
+ *    what the editor has always done with newcomers.
+ *  - an edge is CUT ⇒ the layer is not deleted, it goes `unlinked`. The user's
+ *    placement, name, mask, cloner and z-position survive, and `lastAspect` keeps
+ *    its box the size it was, so re-wiring the slot restores the layer instead of
+ *    making the user rebuild it.
+ *  - the slot is RE-CONNECTED ⇒ `unlinked` clears and the layer tracks live
+ *    content again.
+ *
+ * Returns `{ layers, addedIds }`, or `null` when nothing changed — callers commit
+ * only on a change, so this can run on every wiring tick without looping.
+ */
+export function syncWiredLayerLinks(
+  layers: readonly LocalLayer[],
+  connectedSlots: readonly number[],
+): { layers: LocalLayer[]; addedIds: string[] } | null {
+  const connected = new Set(connectedSlots.filter(s => Number.isInteger(s) && s >= 0))
+  const held = new Set<number>()
+  let changed = false
+
+  const next: LocalLayer[] = layers.map((l) => {
+    if (l.kind !== 'wired') return l
+    const w = l as WiredLayer
+    held.add(w.slot)
+    const shouldBeUnlinked = !connected.has(w.slot)
+    if (!!w.unlinked === shouldBeUnlinked) return l
+    changed = true
+    if (shouldBeUnlinked) return { ...w, unlinked: true }
+    const relinked = { ...w }
+    delete relinked.unlinked
+    return relinked
+  })
+
+  const addedIds: string[] = []
+  for (const slot of [...connected].sort((a, b) => a - b)) {
+    if (held.has(slot)) continue
+    const layer = createWiredLayer(slot, { w: UNRESOLVED_WIRED_W, lastAspect: 1 })
+    next.push(layer)
+    addedIds.push(layer.id)
+    changed = true
+  }
+  return changed ? { layers: next, addedIds } : null
 }
 
 /** What a host knows about a wired slot's live content this tick. */

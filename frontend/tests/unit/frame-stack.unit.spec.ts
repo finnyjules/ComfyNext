@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, isWiredSentinel,
+  syncWiredLayerLinks,
 } from '~/lib/compositor/frameStack'
 import { createWiredLayer, wiredFitWidth } from '~/lib/compositor/wiredLayer'
 import { migrateFrameToUnifiedLayers, UNRESOLVED_WIRED_W } from '~/lib/compositor/wiredMigration'
@@ -122,6 +123,51 @@ describe('finalizeWiredSentinels', () => {
       [sentinel(0), sentinel(1)], host, canvas, s => (s === 0 ? natural : undefined))!
     expect(isWiredSentinel(out[0])).toBe(false)
     expect(isWiredSentinel(out[1])).toBe(true)
+  })
+})
+
+describe('syncWiredLayerLinks — the edge lifecycle', () => {
+  it('mints a sentinel layer for an edge that just landed, appended on TOP', () => {
+    const out = syncWiredLayerLinks([local('a')], [2])!
+    expect(out).not.toBeNull()
+    expect(out.layers).toHaveLength(2)
+    const added = out.layers[1] as any
+    expect(added.kind).toBe('wired')
+    expect(added.slot).toBe(2)
+    expect(added.w).toBe(UNRESOLVED_WIRED_W)   // the finalizer resolves it on first content
+    expect(out.addedIds).toEqual([added.id])
+  })
+
+  it('UNLINKS a cut slot instead of deleting the layer', () => {
+    const w = createWiredLayer(0, { w: 0.6, lastAspect: 0.5, name: 'Hero' }) as LocalLayer
+    const out = syncWiredLayerLinks([w], [])!
+    const kept = out.layers[0] as any
+    expect(kept.unlinked).toBe(true)
+    expect(kept.w).toBeCloseTo(0.6)            // placement and size survive
+    expect(kept.name).toBe('Hero')
+    expect(out.addedIds).toEqual([])
+  })
+
+  it('relinks on re-connect rather than minting a second layer for the slot', () => {
+    const w = createWiredLayer(0, { w: 0.6, lastAspect: 0.5, unlinked: true }) as LocalLayer
+    const out = syncWiredLayerLinks([w], [0])!
+    expect(out.layers).toHaveLength(1)
+    expect((out.layers[0] as any).unlinked).toBeUndefined()
+    expect(out.addedIds).toEqual([])
+  })
+
+  it('returns null in the steady state, so the host never commits in a loop', () => {
+    const w = createWiredLayer(0, { w: 0.6, lastAspect: 0.5 }) as LocalLayer
+    expect(syncWiredLayerLinks([w, local('a')], [0])).toBeNull()
+    const cut = createWiredLayer(1, { w: 0.6, lastAspect: 0.5, unlinked: true }) as LocalLayer
+    expect(syncWiredLayerLinks([cut], [])).toBeNull()
+  })
+
+  it('never gives one slot two layers, however often it runs', () => {
+    let layers: LocalLayer[] = []
+    for (let i = 0; i < 3; i++) layers = syncWiredLayerLinks(layers, [0, 1])?.layers ?? layers
+    const slots = layers.filter(l => l.kind === 'wired').map(l => (l as any).slot)
+    expect(slots).toEqual([0, 1])
   })
 })
 

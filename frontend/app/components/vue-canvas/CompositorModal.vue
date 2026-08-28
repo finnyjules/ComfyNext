@@ -12,7 +12,7 @@ import {
   hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
 } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent } from '~/lib/compositor/frameStack'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
@@ -203,9 +203,13 @@ function setWiredCloner(slot: number, cloner: Cloner) {
 
 // ── Canvas sizing — match the artboard/base aspect so positions are exact ───
 const naturalDims = ref<Record<number, { w: number; h: number }>>({})
-function onImageLoad(slot: number, e: Event) {
-  const img = e.target as HTMLImageElement
+/** Record a decoded wired image for `slot` (1-based) — its pixel dims drive the
+ *  artboard aspect and the contain-fit, and the element itself is what the
+ *  content provider hands to paint. */
+function setWiredImage(slot: number, img: HTMLImageElement) {
+  if (!img.naturalWidth) return
   naturalDims.value = { ...naturalDims.value, [slot]: { w: img.naturalWidth, h: img.naturalHeight } }
+  wiredImageEls.value = { ...wiredImageEls.value, [slot]: img }
 }
 const baseAspect = computed(() => {
   const node = compositor.value
@@ -339,6 +343,23 @@ const editor = useLocalLayerEditor({
   getRect: () => canvasRect(),
   wiredDims: wiredDimsForSlot,
   wiredContent: wiredContentForSlot,
+  // Deleting a wired layer takes the slot's edge with it (only the canvas owns
+  // edges, so ask it). Undo restores the LAYER, not the edge — it comes back
+  // `unlinked`, and the toast says how to relink it.
+  onWiredRemoved: (wired) => {
+    for (const w of wired) {
+      window.dispatchEvent(new CustomEvent('sailor:frameUnwireSlot', { detail: { nodeId: props.nodeId, slot: w.slot } }))
+    }
+    if (wired.length) {
+      toast('Layer removed and its input unwired', {
+        description: 'Undo brings the layer back unlinked — re-wire the input to reconnect it.',
+      })
+    }
+  },
+  // ⌘D / copy on a wired layer never clones the live link: it bakes what you SEE
+  // into a normal image layer (the existing "Copy into frame" path), which is the
+  // only copy that can stand on its own.
+  materializeWired: (w) => { void copyWiredIntoFrame(w.slot + 1) },
 })
 const layerEdit = useLayerImageEdit()
 const {
@@ -951,6 +972,9 @@ function onRowDblClick(row: any) {
 function rowLabel(row: any) {
   const l = row.layer
   if (l.name) return l.name
+  // A wired layer's honest default name is its slot — "wired" tells you nothing
+  // about WHICH input it is.
+  if (l.kind === 'wired') return `Layer ${l.slot + 1}`
   return l.kind === 'text' ? (l.text?.split('\n')[0] || 'Text') : l.kind
 }
 // Row icon → live image preview when the layer resolves to a still image.
@@ -1247,9 +1271,23 @@ const editingStyle = computed(() => {
 // shape can sit below a wired image. Wired drawing uses the shared
 // `drawWiredImageLayer` so the node and modal render pixel-identically.
 const wiredImageEls = ref<Record<number, HTMLImageElement | HTMLCanvasElement>>({})
-function onWiredImageReady(slot: number, img: HTMLImageElement) {
-  if (img.complete && img.naturalWidth) wiredImageEls.value = { ...wiredImageEls.value, [slot]: img }
-}
+// Decode each non-live slot's image OURSELVES rather than depending on an <img>
+// in the template firing `@load`. That listener is attached during hydration, so a
+// server-rendered host can miss the event entirely and end up with no dims at all
+// — which leaves every wired layer stuck as an unresolved sentinel: no box, no
+// pixels, no error. The Frame card has always decoded explicitly; this is the same
+// thing, and it takes the render path off the DOM.
+watch(() => layers.value.filter(l => !l.live).map(l => `${l.slot}:${l.url}`).join('|'), () => {
+  if (typeof window === 'undefined') return   // no decoding on the server
+  for (const l of layers.value) {
+    if (l.live || !l.url) continue
+    const cur = wiredImageEls.value[l.slot] as HTMLImageElement | undefined
+    if (cur?.dataset?.url === l.url) continue
+    const im = new Image()
+    im.onload = () => { im.dataset.url = l.url; setWiredImage(l.slot, im); renderStack() }
+    im.src = l.url
+  }
+}, { immediate: true })
 // A live studio slot has no <img> to @load — pull its frame at normalized time t01 and
 // COPY it into a canvas we OWN (the source reuses its buffer). The owned canvas is created
 // once per slot and drawn into in place, so per-frame animation doesn't churn the reactive
@@ -1866,8 +1904,21 @@ function slotDimsMap0(): Record<number, { w: number; h: number } | undefined> {
 // stamping the schema then would freeze a frame whose edges hadn't arrived.
 watch(() => connectedSlots0.value.join(','), () => {
   const slots = connectedSlots0.value
-  if (!slots.length || !compositor.value) return
-  migrateFrameToUnifiedLayers({ data: compositor.value.data, connectedSlots: [...slots] }, slotDimsMap0())
+  if (!compositor.value) return
+  if (slots.length) {
+    migrateFrameToUnifiedLayers({ data: compositor.value.data, connectedSlots: [...slots] }, slotDimsMap0())
+  }
+  // Edge lifecycle: a new edge mints a layer (selected, so you can place it
+  // straight away), a cut edge marks its layer `unlinked` rather than deleting it
+  // — placement, name, mask, cloner and z-position all survive — and re-wiring
+  // the same slot relinks it. Committed without a history step: this mirrors the
+  // graph, and undoing it would only fight the graph on the next tick.
+  const linked = syncWiredLayerLinks(localLayers.value as LocalLayer[], slots)
+  if (linked) {
+    commit(linked.layers)
+    const last = linked.addedIds[linked.addedIds.length - 1]
+    if (last) selectLocal(last)
+  }
 }, { immediate: true })
 
 /** What the reconciler knows about a slot's content this tick (0-based slot). */
@@ -3629,6 +3680,12 @@ onUnmounted(() => {
               <span v-else class="truncate flex-1 capitalize" :class="[row.kind === 'child' ? 'text-[13px] text-white/65' : 'text-sm', rowHidden(row) ? 'text-white/35 line-through decoration-white/20' : '']"
                 title="Double-click to rename"
                 @dblclick.stop="startLayerRename(row.layer.id)">{{ rowLabel(row) }}</span>
+              <!-- Unlinked: the slot's edge is gone, so the layer keeps its last
+                   size and placement but has no pixels to draw. Say so here rather
+                   than letting it read as an empty layer. -->
+              <span v-if="(row as any).layer?.kind === 'wired' && (row as any).layer?.unlinked"
+                class="shrink-0 rounded px-1 py-px text-[9.5px] uppercase tracking-wide bg-amber-400/15 text-amber-300/90 border border-amber-400/25"
+                title="This layer's input was disconnected — re-wire the slot to bring its pixels back">unlinked</span>
               <!-- Lock (locked layers render but ignore canvas clicks/drags) -->
               <button v-if="row.kind !== 'group'"
                 class="transition cursor-pointer"
@@ -3736,22 +3793,6 @@ onUnmounted(() => {
         @pointerleave="genCursor.on = false; smartCursor.on = false; brush.cursor.value = null"
         @dblclick.capture="onCanvasDblClickCapture"
       >
-        <!-- Invisible <img> elements: kept ONLY for @load (natural dims + the decoded
-             element the stack canvas and the wired-content provider draw from). They are
-             no longer pointer targets: a wired slot is a layer, so it is hit-tested
-             pixel-accurately with every other layer by hitTopStackKey.
-             Live studio slots have no real URL — a transparent 1x1 keeps the element
-             mounted; their pixels + dims come from the live-pull watch. -->
-        <img
-          v-for="layer in layers"
-          :key="layer.slot"
-          :src="layer.live ? 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' : layer.url"
-          draggable="false"
-          aria-hidden="true"
-          class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none opacity-0"
-          @load="(e: Event) => { if (!layer.live) { onImageLoad(layer.slot, e); onWiredImageReady(layer.slot, e.target as HTMLImageElement) } }"
-        />
-
         <!-- Unified stack canvas: wired + local layers in z-order (WYSIWYG) -->
         <canvas
           ref="overlayCanvas"
@@ -3951,6 +3992,15 @@ onUnmounted(() => {
 
       </div>
       <!-- end artboard (clipped) — selection controls below live in the wrapper, unclipped -->
+
+        <!-- Unlinked wired layer: the box is still there (last known size), but
+             nothing is feeding it. Badge it on the selection itself, not only in
+             the layers panel, or an empty selection box reads as a bug. -->
+        <div
+          v-if="localHandlePositions && (selectedLocal as any)?.kind === 'wired' && (selectedLocal as any)?.unlinked"
+          class="absolute z-20 pointer-events-none rounded px-1.5 py-px text-[10px] uppercase tracking-wide bg-amber-400/20 text-amber-200 border border-amber-400/40 whitespace-nowrap"
+          :style="{ left: localHandlePositions.topCenter.x + 'px', top: (localHandlePositions.topCenter.y - 18) + 'px', transform: 'translate(-50%, -100%)' }"
+        >unlinked — re-wire this input</div>
 
         <!-- Local-layer selection / handles (single selection only — multi-select uses the group box below) -->
         <svg
