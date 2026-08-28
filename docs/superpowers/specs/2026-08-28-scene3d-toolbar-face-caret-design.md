@@ -1,7 +1,7 @@
 # 3D Studio add-toolbar — face+caret grammar (ported from the Frame toolbar)
 
 **Date:** 2026-08-28
-**Status:** approved (Julien: "apply our actions on the frame toolbar to the 3d studio toolbar")
+**Status:** landed 2026-08-28 (`882e56f5e`; review Approved, 33/33 live checks)
 **Scope:** the bottom add-pill of `Scene3DStudioSurface.vue` (~:3320-3440). No behavior changes to what the entries do.
 
 ## Design
