@@ -1,7 +1,7 @@
 # 3D Studio — full-bleed viewport (Part B ported to the studio shell)
 
 **Date:** 2026-08-28
-**Status:** approved (Julien: "should we extend the viewport to the entirety of the modal?" → "please do")
+**Status:** landed 2026-08-28 (`1d4656194` + inset-var fix; review Approved, 33/33 live)
 **Scope:** `StudioModalShell.vue` gains an opt-in `fullBleed` variant; `Scene3DStudioSurface.vue` opts in. No other studio changes behavior.
 
 ## Design

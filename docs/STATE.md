@@ -74,7 +74,16 @@ stamps in one click, chevron opens the list), Import SVG folded into the Insert 
 three AI flows (AI vector · generate in region · smart select) behind one ✦ menu with the
 smart-select disabled-hint preserved. All shortcuts unchanged; menus share the zoom menu's
 idiom + a common exclusion (`closeToolbarMenus`). Live-verified 15/15 + 8/8 menu-exclusion
-checks. Same-day generalization (`773432ed9`+`51edf5954`): face+caret became the grammar for
+checks. **The grammar reached the 3D Studio same day** (`882e56f5e`+`e11ac17b4`): its add-pill's
+Primitive/Light/Decal became face+caret (last-used one-click repeat, popups anchored to their
+own trigger groups), Upload GLB/Generate stay direct — port also fixed a pre-existing
+outside-click listener leak. **And the 3D Studio went full-bleed** (`1d4656194`+`abacf5a0b`):
+`StudioModalShell` gained an opt-in `fullBleed` variant (default byte-identical for the other
+six studios, class-string-pinned by test) — the WebGL viewport is the modal's ground layer,
+Objects/inspector float as glass panels, ⌘\ hides both, overlay insets derive from the
+shell's `--studio-panel-inset` var. Live-proven: orbit works in the reclaimed columns, wheel
+over a panel leaves the camera bit-identical, ⌘\ causes no canvas reflow.
+Same-day generalization (`773432ed9`+`51edf5954`): face+caret became the grammar for
 EVERY grouped control — AI and Insert faces remember the last-used action (one-click repeat),
 Insert's first hop is an anchored flyout (picker dialog is the second hop; the card keeps its
 dialog), all three AI entries exit pen/brush/each-other through one shared gate, and the AI
