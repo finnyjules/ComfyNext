@@ -244,26 +244,59 @@ const PANEL_GUTTER_RIGHT = 320
 const STAGE_MATTE_X = 24
 const STAGE_MATTE_TOP = 24
 const STAGE_MATTE_BOTTOM = 24
-const stagePadBottom = STAGE_MATTE_BOTTOM - STAGE_MATTE_TOP
+
+// ── Hideable chrome (⌘\) ────────────────────────────────────────────────────
+// Both glass panels slide out together. The preference is per-session (a
+// reopened modal in the same tab remembers; a new tab starts with chrome on).
+// Read in onMounted, never during setup, so SSR and the client agree.
+const PANELS_KEY = 'sailor:compositor:panels'
+const panelsVisible = ref(true)
+/** Gutter Fit must clear on each side — nothing but the matte once panels are gone. */
+const fitGutter = computed(() => panelsVisible.value ? Math.max(PANEL_GUTTER_LEFT, PANEL_GUTTER_RIGHT) : 0)
+/** Left/right insets of the visible gap (used by the docked timeline + zoom-to-selection). */
+const gapLeft = computed(() => panelsVisible.value ? PANEL_GUTTER_LEFT : STAGE_MATTE_X)
+const gapRight = computed(() => panelsVisible.value ? PANEL_GUTTER_RIGHT : STAGE_MATTE_X)
+function setPanelsVisible(v: boolean) {
+  panelsVisible.value = v
+  try { sessionStorage.setItem(PANELS_KEY, v ? '1' : '0') } catch { /* private mode / SSR */ }
+  fitCanvasToStage()
+}
+function togglePanels() { setPanelsVisible(!panelsVisible.value) }
+
+// Extra bottom allowance, in px, for chrome docked over the stage. Motion mode
+// parks a full-width timeline at bottom-8; the artboard must re-fit ABOVE it
+// rather than pay a permanent matte in every other mode. Written by the
+// timeline's ResizeObserver (see `motionTimelineRef` below) — declared here so
+// `fitCanvasToStage` never reads a ref through the temporal dead zone.
+const stageBottomReserve = ref(0)
+const stagePadBottom = computed(() => STAGE_MATTE_BOTTOM + stageBottomReserve.value - STAGE_MATTE_TOP)
 function fitCanvasToStage() {
   const a = baseAspect.value || 1
   const box = stageBoxRef.value
   // Fit must land the artboard in the PANEL GAP, not in the full-bleed stage,
   // or "Fit" would tuck content under the glass. The artboard is centred on the
   // stage (= on the modal), so the binding constraint is the WIDER gutter: half
-  // the artboard has to clear it on both sides.
+  // the artboard has to clear it on both sides. With the panels hidden there is
+  // no gutter left to respect and Fit uses the full modal width.
   const availW = box
-    ? Math.max(120, box.clientWidth - Math.max(PANEL_GUTTER_LEFT, PANEL_GUTTER_RIGHT) * 2 - STAGE_MATTE_X * 2)
+    ? Math.max(120, box.clientWidth - fitGutter.value * 2 - STAGE_MATTE_X * 2)
     : 680
-  const availH = box ? Math.max(120, box.clientHeight - STAGE_MATTE_TOP - STAGE_MATTE_BOTTOM) : 600
+  // clientHeight INCLUDES stagePadBottom (padding is inside the client box), so
+  // the reserve is subtracted once here and once as padding — that pair is what
+  // biases the centred artboard up clear of the docked timeline.
+  const availH = box
+    ? Math.max(120, box.clientHeight - STAGE_MATTE_TOP - STAGE_MATTE_BOTTOM - stageBottomReserve.value)
+    : 600
   let w = availW, h = w / a
   if (h > availH) { h = availH; w = h * a }
   canvasDisplay.w = Math.round(w)
   canvasDisplay.h = Math.round(h)
 }
+watch(stageBottomReserve, () => fitCanvasToStage())
 watch(baseAspect, fitCanvasToStage)
 let stageRO: ResizeObserver | null = null
 onMounted(() => {
+  try { panelsVisible.value = sessionStorage.getItem(PANELS_KEY) !== '0' } catch { /* private mode */ }
   fitCanvasToStage()
   if (typeof ResizeObserver !== 'undefined' && stageBoxRef.value) {
     stageRO = new ResizeObserver(() => fitCanvasToStage())
@@ -271,6 +304,24 @@ onMounted(() => {
   }
 })
 onBeforeUnmount(() => { stageRO?.disconnect(); stageRO = null })
+
+// The docked motion timeline measures itself into `stageBottomReserve`, so the
+// allowance tracks the real chrome (a taller timeline, more layers, a wrapped
+// control row) instead of a hard-coded number that drifts.
+const MOTION_TIMELINE_INSET = 32   // `bottom-8` on the docked timeline
+const MOTION_TIMELINE_GAP = 12     // breathing room between artboard and timeline
+const motionTimelineRef = ref<HTMLElement | null>(null)
+let motionRO: ResizeObserver | null = null
+watch(motionTimelineRef, (el) => {
+  motionRO?.disconnect(); motionRO = null
+  if (!el) { stageBottomReserve.value = 0; return }
+  const measure = () => {
+    stageBottomReserve.value = Math.round(el.getBoundingClientRect().height) + MOTION_TIMELINE_INSET + MOTION_TIMELINE_GAP
+  }
+  measure()
+  if (typeof ResizeObserver !== 'undefined') { motionRO = new ResizeObserver(measure); motionRO.observe(el) }
+})
+onBeforeUnmount(() => { motionRO?.disconnect(); motionRO = null })
 
 // ── Pan & zoom ──────────────────────────────────────────────────────────────
 // A CSS transform on the stage wrapper. All hit-testing reads
@@ -303,6 +354,65 @@ function zoomBy(factor: number) {
   const r = box.getBoundingClientRect()
   zoomAround(r.left + r.width / 2, r.top + r.height / 2, factor)
 }
+
+// ── Zoom menu actions ───────────────────────────────────────────────────────
+// Fit is the only one that re-measures: it clears the pan/zoom transform AND
+// re-fits the artboard, so it always uses whatever width the chrome leaves.
+const zoomMenuOpen = ref(false)
+function zoomFit() { resetView(); fitCanvasToStage(); zoomMenuOpen.value = false }
+/** Absolute zoom about the centre of the visible gap. */
+function zoomToScale(target: number) {
+  const s0 = view.scale
+  const s1 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, target))
+  zoomMenuOpen.value = false
+  if (s1 === s0) return
+  const c = gapCentre(); if (!c) return
+  zoomAround(c.x, c.y, s1 / s0)
+}
+/** Centre of the space actually left between the panels, in client coords. */
+function gapCentre(): { x: number, y: number, w: number, h: number } | null {
+  const box = stageBoxRef.value; if (!box) return null
+  const r = box.getBoundingClientRect()
+  const w = Math.max(120, r.width - gapLeft.value - gapRight.value)
+  const h = Math.max(120, r.height - STAGE_MATTE_TOP - STAGE_MATTE_BOTTOM - stageBottomReserve.value)
+  return { x: r.left + gapLeft.value + w / 2, y: r.top + STAGE_MATTE_TOP + h / 2, w, h }
+}
+/** Selection bounds in ARTBOARD px (rotation-aware for a single layer). */
+function selectionBoundsPx(): { cx: number, cy: number, w: number, h: number } | null {
+  const multi = selectionBox.value
+  if (multi) return { cx: multi.cx, cy: multi.cy, w: multi.w, h: multi.h }
+  const h = localHandlePositions.value
+  if (!h) return null
+  const xs = [h.tl.x, h.tr.x, h.br.x, h.bl.x], ys = [h.tl.y, h.tr.y, h.br.y, h.bl.y]
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys)
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) }
+}
+const hasSelectionToZoom = computed(() => !!selectionBox.value || !!localHandlePositions.value)
+/** ⌘2 — fill ~60% of the visible gap with the selection, centred in that gap. */
+const ZOOM_SELECTION_FILL = 0.6
+function zoomToSelection(): boolean {
+  zoomMenuOpen.value = false
+  const b = selectionBoundsPx(); const c = gapCentre(); const wrap = stageWrapRef.value
+  if (!b || !c || !wrap) return false
+  const s1 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN,
+    Math.min(c.w * ZOOM_SELECTION_FILL / b.w, c.h * ZOOM_SELECTION_FILL / b.h)))
+  // transform-origin is 0 0 and the translate is applied BEFORE the scale, so
+  // the wrapper's untransformed origin is just its current rect minus the pan.
+  const rect = wrap.getBoundingClientRect()
+  const baseLeft = rect.left - view.tx
+  const baseTop = rect.top - view.ty
+  view.scale = s1
+  view.tx = c.x - baseLeft - b.cx * s1
+  view.ty = c.y - baseTop - b.cy * s1
+  return true
+}
+const zoomMenuItems = computed(() => [
+  { id: 'fit', label: 'Fit', hint: '⌘0', disabled: false, run: zoomFit },
+  { id: '100', label: '100%', hint: '', disabled: false, run: () => zoomToScale(1) },
+  { id: '200', label: '200%', hint: '', disabled: false, run: () => zoomToScale(2) },
+  { id: 'selection', label: 'Zoom to selection', hint: '⌘2', disabled: !hasSelectionToZoom.value, run: () => { zoomToSelection() } },
+])
+
 function onStageWheel(e: WheelEvent) {
   e.preventDefault()
   if (e.ctrlKey || e.metaKey) zoomAround(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01))
@@ -458,6 +568,36 @@ const {
 })
 // The agent's progress / proposed changes take over the right inspector while active.
 const caPanelActive = computed(() => caBusy.value || caReviewing.value || caHasProposal.value)
+
+// ── Prompt bar: collapsed pill until it's wanted ────────────────────────────
+// The AgentBar stays MOUNTED at all times — collapsing is width/opacity only —
+// so focusing it works and the half-typed phrase it owns internally survives.
+// The draft is mirrored here (from the bubbling `input` event, no prop drilling)
+// for one decision: a bar with text in it does NOT collapse on blur. Losing
+// sight of a phrase you were still writing is worse than a slightly wider bar.
+const promptFocused = ref(false)
+const promptDraft = ref('')
+const promptExpanded = computed(() => promptFocused.value || promptDraft.value.trim().length > 0)
+const promptDockRef = ref<HTMLElement | null>(null)
+function onPromptInput(e: Event) {
+  const t = e.target as HTMLInputElement | null
+  if (t && 'value' in t) promptDraft.value = t.value
+}
+function onPromptFocusOut() {
+  // `relatedTarget` is not enough: the collapsed pill is a BUTTON inside the
+  // dock, and hiding it (v-show) fires a focusout with relatedTarget null even
+  // though focus is on its way to the input. Settle a frame, then ask where
+  // focus actually landed — inside the dock (input ⇄ send button) is not a blur.
+  requestAnimationFrame(() => {
+    const el = document.activeElement
+    if (el && promptDockRef.value?.contains(el)) return
+    promptFocused.value = false
+  })
+}
+function focusPrompt() {
+  promptFocused.value = true
+  nextTick(() => promptDockRef.value?.querySelector('input')?.focus())
+}
 
 const selectedCount = computed(() => selectedLayers.value.length)
 // Box layers (rect/ellipse/image) get full Figma-style resize (corners + edges,
@@ -784,11 +924,17 @@ function onKeydown(e: KeyboardEvent) {
   const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!editingId.value
   // Space → hold-to-pan. Prevent the default page scroll while held.
   if (e.code === 'Space' && !inField) { e.preventDefault(); spaceDown.value = true }
-  // Zoom shortcuts: ⌘/Ctrl +, −, and 0 (reset).
+  // ⌘\ hides/shows both glass panels. Unlike the zoom combos it is allowed while
+  // typing: backslash means nothing to a text field, and a user who has just
+  // hidden the chrome and clicked into the prompt must still be able to bring it
+  // back without reaching for the mouse.
+  if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanels(); return }
+  // Zoom shortcuts: ⌘/Ctrl +, −, 0 (fit) and 2 (zoom to selection).
   if ((e.metaKey || e.ctrlKey) && !inField) {
     if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomBy(1.2); return }
     if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(1 / 1.2); return }
-    if (e.key === '0') { e.preventDefault(); resetView(); return }
+    if (e.key === '0') { e.preventDefault(); zoomFit(); return }
+    if (e.key === '2') { e.preventDefault(); zoomToSelection(); return }
   }
   // Undo/redo — skip while editing text so the textarea handles it natively.
   const meta = e.metaKey || e.ctrlKey
@@ -1289,6 +1435,7 @@ function onCanvasClick(e: MouseEvent) {
 // Click in the empty stage gutter (outside the artboard) → deselect. A pan that
 // ends on the gutter also fires a click here, so swallow it.
 function onStageBackgroundClick(e: MouseEvent) {
+  zoomMenuOpen.value = false   // click-away for the toolbar zoom menu
   if (brush.active.value) return // brush owns the canvas
   if (smartActive.value) return // smart select owns the canvas
   if (genActive.value && genTool.value !== 'shape') return
@@ -3590,6 +3737,7 @@ function handleKeydown(e: KeyboardEvent) {
   const ae = document.activeElement
   const typing = ae instanceof Element && ae.matches('input, textarea, [contenteditable]')
   if (e.key === 'Escape') {
+    if (zoomMenuOpen.value) { zoomMenuOpen.value = false; return }
     if (addMenuOpen.value) { addMenuOpen.value = false; return }
     if (editingId.value) { endEdit(); return }
     if (typing) return
@@ -3701,14 +3849,22 @@ onUnmounted(() => {
     @drop.prevent
   >
     <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative antialiased text-white/85 overflow-hidden">
-    <!-- Modal title (top-left, studio-style) -->
-    <div class="absolute top-4 left-6 z-30 text-sm font-semibold tracking-tight text-white truncate max-w-[260px]" :title="frameName">{{ frameName }}</div>
+    <!-- Modal title (top-left, studio-style). The stage is full-bleed, so zoomed
+         content passes UNDER this chip — it carries the same glass scrim as the
+         floating panels so it stays readable over a bright layer. -->
+    <div class="glass-panel absolute top-4 left-4 z-30 rounded-lg border border-white/10 bg-[#0e0e10]/75 backdrop-blur-md shadow-lg px-2.5 py-1 text-sm font-semibold tracking-tight text-white truncate max-w-[260px]" :title="frameName">{{ frameName }}</div>
 
     <!-- Glimm sweep over the frame while the agent works. -->
     <AgentSweep :active="caBusy" />
 
-    <!-- Left sidebar: floating glass layer panel -->
-    <div class="glass-panel absolute top-16 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+    <!-- Left sidebar: floating glass layer panel.
+         ⌘\ slides it out instead of unmounting it: the list keeps its scroll
+         position, expanded groups and in-flight renames across a hide/show. -->
+    <div
+      data-testid="compositor-left-panel"
+      :data-hidden="panelsVisible ? '0' : '1'"
+      class="glass-panel absolute top-16 left-4 bottom-4 z-20 w-60 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden transition-all duration-200 ease-out"
+      :class="panelsVisible ? 'translate-x-0 opacity-100' : '-translate-x-[130%] opacity-0 pointer-events-none'">
       <div class="px-3 pt-3 pb-3 flex-1 min-h-0 overflow-y-auto">
         <div class="panel-heading mb-2 px-1">Layers</div>
 
@@ -4308,31 +4464,89 @@ onUnmounted(() => {
       </div>
       </Transition>
 
-      <!-- Zoom control (top-center of the stage). Scroll to pan, ⌘/pinch to zoom,
-           space-drag to pan; these buttons + the % (reset) cover mouse users. -->
-      <div class="absolute top-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-0.5 rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1 shadow-lg pointer-events-auto">
-        <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom out (⌘−)" @click="zoomBy(1 / 1.2)">
-          <Minus class="size-4" />
-        </button>
-        <button class="h-7 min-w-[46px] px-1 rounded hover:bg-white/10 text-white/80 cursor-pointer text-[11px] tabular-nums" title="Reset zoom (⌘0)" @click="resetView">
-          {{ Math.round(view.scale * 100) }}%
-        </button>
-        <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom in (⌘+)" @click="zoomBy(1.2)">
-          <Plus class="size-4" />
-        </button>
-      </div>
-
       <!-- Bottom cluster: agent command bar + toolbar. The column is bottom-anchored
            and shrink-wraps to the toolbar's width (its widest child), so the bare
            prompt above stretches to exactly match the toolbar. -->
       <div v-if="inspectorTab !== 'motion'" class="absolute bottom-8 flex flex-col items-stretch gap-2 pointer-events-none">
       <!-- Agent command bar — bare prompt; its progress + proposal render in the
-           right inspector (see the Assistant takeover branch). -->
-      <div class="pointer-events-auto">
-        <AgentBar :busy="caBusy" :error="caError" :notice="caNotice" :chips="[]" @submit="caAsk" @chip="caAsk" />
+           right inspector (see the Assistant takeover branch).
+           Collapsed to a pill until it's wanted: the AgentBar is never unmounted,
+           only clipped and faded, so focus lands in the real input and a draft
+           phrase survives (and in fact keeps the bar open — see promptExpanded). -->
+      <div
+        ref="promptDockRef"
+        data-testid="compositor-prompt-dock"
+        :data-expanded="promptExpanded ? '1' : '0'"
+        class="pointer-events-auto relative self-start overflow-hidden transition-all duration-200 ease-out"
+        :style="{ width: promptExpanded ? '100%' : '164px' }"
+        @focusin="promptFocused = true"
+        @focusout="onPromptFocusOut"
+        @input="onPromptInput"
+      >
+        <div class="transition-opacity duration-150" :class="promptExpanded ? 'opacity-100' : 'opacity-0'">
+          <AgentBar :busy="caBusy" :error="caError" :notice="caNotice" :chips="[]" @submit="caAsk" @chip="caAsk" />
+        </div>
+        <!-- The collapsed face. Not a replacement for the bar — it sits ON it and
+             hands focus straight to the input underneath. -->
+        <button
+          v-show="!promptExpanded"
+          type="button"
+          data-testid="compositor-prompt-pill"
+          class="absolute inset-0 flex items-center gap-2 rounded-md border border-white/[0.12] bg-[#141416] px-2.5 text-left text-[12px] text-white/45 hover:text-white/75 hover:border-white/20 cursor-pointer"
+          title="Ask the assistant"
+          @mousedown.prevent="focusPrompt"
+          @click="focusPrompt"
+        >
+          <span class="text-[13px] text-white/80">✦</span>
+          <span class="truncate">Ask…</span>
+        </button>
       </div>
       <!-- Toolbar -->
       <div class="pointer-events-auto flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
+        <!-- Zoom cluster: −, the % (opens the menu), +. The menu carries the
+             navigation shortcuts, which had no home when the pill floated. -->
+        <!-- .stop: the toolbar lives INSIDE the full-bleed stage, whose click
+             handler is the menu's click-away — without this the toggle would
+             open and immediately close itself on the same click. -->
+        <div class="relative flex items-center gap-0.5" @click.stop>
+          <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer"
+            data-testid="zoom-out" title="Zoom out (⌘−)" @click="zoomBy(1 / 1.2)">
+            <Minus class="size-4" />
+          </button>
+          <button
+            class="h-8 min-w-[52px] px-1.5 rounded cursor-pointer text-[11px] tabular-nums"
+            :class="zoomMenuOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
+            data-testid="zoom-menu-toggle" title="Zoom & navigation"
+            @click="zoomMenuOpen = !zoomMenuOpen">
+            {{ Math.round(view.scale * 100) }}%
+          </button>
+          <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer"
+            data-testid="zoom-in" title="Zoom in (⌘+)" @click="zoomBy(1.2)">
+            <Plus class="size-4" />
+          </button>
+          <Transition
+            enter-active-class="transition-all duration-150 ease-out"
+            leave-active-class="transition-all duration-100 ease-in"
+            enter-from-class="opacity-0 translate-y-1"
+            leave-to-class="opacity-0 translate-y-1"
+          >
+            <div v-if="zoomMenuOpen"
+              data-testid="zoom-menu"
+              class="absolute bottom-full left-0 mb-2 w-[248px] rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/97 p-1 shadow-xl"
+              @pointerdown.stop>
+              <button v-for="item in zoomMenuItems" :key="item.id"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[12px] cursor-pointer disabled:opacity-30 disabled:cursor-default hover:bg-white/10 text-white/85"
+                :data-testid="'zoom-menu-' + item.id" :disabled="item.disabled" @click="item.run()">
+                <span class="flex-1 text-left">{{ item.label }}</span>
+                <span class="text-[11px] text-white/35 tabular-nums">{{ item.hint }}</span>
+              </button>
+              <!-- Each clause is atomic: a wrap mid-shortcut ("⌘\ —" / "hide panels") reads as noise. -->
+              <div class="mt-1 border-t border-white/10 px-2 pb-1 pt-1.5 text-[10.5px] leading-relaxed text-white/40"
+                data-testid="zoom-menu-hints"><span class="whitespace-nowrap">Space — pan</span> · <span class="whitespace-nowrap">Pinch/⌘ scroll — zoom</span> · <span class="whitespace-nowrap">⌘\ — hide panels</span></div>
+            </div>
+          </Transition>
+        </div>
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
         <button
           class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="isSelectTool ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
@@ -4435,8 +4649,8 @@ onUnmounted(() => {
       <!-- Docked motion timeline (replaces the agent bar + toolbar in Motion mode) -->
       <!-- Full-width chrome, so it is pinned to the panel gap by hand (the stage
            behind it is full-bleed): panel gutter + the same 16px inset as before. -->
-      <div v-if="inspectorTab === 'motion'" class="absolute bottom-8 z-20 pointer-events-auto"
-        :style="{ left: (PANEL_GUTTER_LEFT + 16) + 'px', right: (PANEL_GUTTER_RIGHT + 16) + 'px' }"
+      <div v-if="inspectorTab === 'motion'" ref="motionTimelineRef" class="absolute bottom-8 z-20 pointer-events-auto"
+        :style="{ left: (gapLeft + 16) + 'px', right: (gapRight + 16) + 'px' }"
         @pointerdown.stop @click.stop @dblclick.stop>
         <CompositorMotionTimeline
           :layers="localLayers" :selected-id="selectedLocal?.id ?? null"
@@ -4449,16 +4663,21 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Floating top-right: esc/close (studio chrome) -->
-    <div class="absolute top-4 right-4 z-30 flex items-center gap-2">
-      <span class="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-white/30 select-none">esc</span>
+    <!-- Floating top-right: esc/close (studio chrome). Same glass scrim as the
+         title — these sit over the full-bleed stage and must survive light content. -->
+    <div class="glass-panel absolute top-4 right-4 z-30 flex items-center gap-2 rounded-lg border border-white/10 bg-[#0e0e10]/75 backdrop-blur-md shadow-lg px-2 py-1">
+      <span class="rounded border border-white/15 px-1.5 py-0.5 text-[11px] text-white/45 select-none">esc</span>
       <button type="button" aria-label="Close" title="Close (Esc)"
-        class="text-white/45 transition-colors hover:text-white/80 text-base leading-none px-1 cursor-pointer"
+        class="text-white/55 transition-colors hover:text-white text-base leading-none px-1 cursor-pointer"
         @click="emit('close')">✕</button>
     </div>
 
     <!-- Right sidebar: floating glass properties panel -->
-    <div class="glass-panel absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+    <div
+      data-testid="compositor-right-panel"
+      :data-hidden="panelsVisible ? '0' : '1'"
+      class="glass-panel absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden transition-all duration-200 ease-out"
+      :class="panelsVisible ? 'translate-x-0 opacity-100' : 'translate-x-[130%] opacity-0 pointer-events-none'">
       <!-- Design | Motion tabs (hidden while the Assistant takes the panel over) -->
       <div v-if="!caPanelActive" class="shrink-0 px-3 pt-3">
         <div class="flex gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
