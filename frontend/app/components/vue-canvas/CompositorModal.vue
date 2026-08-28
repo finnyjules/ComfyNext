@@ -12,8 +12,8 @@ import {
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
   hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
 } from '~/composables/useCompositorLayers'
-import { migrateFrameToUnifiedLayers, FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey } from '~/lib/compositor/frameStack'
+import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey, legacyWiredFlagsActive } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind, cornerResizableKind } from '~/composables/useLocalLayerEditor'
@@ -1386,7 +1386,7 @@ const hasAnimatedSlot = computed(() => layers.value.some(l => l.live && l.live.d
 // pre-migration `sailor_hiddenWired: [1]` would keep hiding a slot whose layer
 // says visible. Only a schema < 2 frame still consults them.
 const frameSchemaUnified = computed(() =>
-  Number((compositor.value?.data?.properties as any)?.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED)
+  !legacyWiredFlagsActive((compositor.value?.data?.properties as any) ?? null))
 const hiddenWired = computed(() => (frameSchemaUnified.value ? new Set<number>() : new Set(readSlotArr('sailor_hiddenWired'))))
 const lockedWired = computed(() => (frameSchemaUnified.value ? new Set<number>() : new Set(readSlotArr('sailor_lockedWired'))))
 
@@ -1486,9 +1486,14 @@ watch(layers, (ls) => {
   // every flag, so require a resolved compositor node first.
   if (!compositor.value) return
   const live = ls.map(l => l.slot)
-  for (const key of ['sailor_hiddenWired', 'sailor_lockedWired'] as const) {
-    const pruned = pruneWiredSlotFlags(readSlotArr(key), live)
-    if (pruned) writeSlotArr(key, pruned)   // null ⇒ unchanged, skip the write
+  // Schema-2 frames leave these arrays untouched on disk (rollback safety —
+  // see wiredMigration's header); pruning them here would contradict that
+  // contract even though nothing reads them anymore.
+  if (legacyWiredFlagsActive((compositor.value.data.properties as any) ?? null)) {
+    for (const key of ['sailor_hiddenWired', 'sailor_lockedWired'] as const) {
+      const pruned = pruneWiredSlotFlags(readSlotArr(key), live)
+      if (pruned) writeSlotArr(key, pruned)   // null ⇒ unchanged, skip the write
+    }
   }
   // Same trap for the sibling slot-keyed state: a stale mask/cloner would be
   // inherited by the NEXT image wired into that port (invisible or half-erased).
@@ -2588,6 +2593,15 @@ async function copyWiredIntoFrame(slot: number) {
       { x: layer.x, y: layer.y, scale: layer.scale, rotation: layer.rotation },
       iw, ih, iw, ih, canvasDisplay.w, canvasDisplay.h,
     )
+    // On a schema-2 frame the slot's clip ref lives on its LAYER — migration
+    // remapped `treatments['w:N'].maskedByKey`/`showSource` onto the layer's
+    // `maskedByKey`/`maskShowSource` (repointing any `w:` key to `l:<id>` too)
+    // but left the registry entry itself un-remapped for rollback, so it's
+    // stale once a layer claims the slot. Prefer the layer; fall back to the
+    // registry only pre-migration, when no layer claims the slot at all.
+    const wl = wiredLayerForSlot1(slot)
+    const maskedByKey = wl ? wl.maskedByKey : tr?.maskedByKey
+    const maskShowSource = wl ? wl.maskShowSource : tr?.showSource
     const before = new Set(localLayers.value.map(l => l.id))
     addImageFromName(name, iw / ih, {
       ...place,
@@ -2595,14 +2609,14 @@ async function copyWiredIntoFrame(slot: number) {
       blend: layer.blend,
       // A wired image clipped by another layer's silhouette stays clipped —
       // carried as the same treatment rather than baked into the pixels.
-      ...(tr?.maskedByKey ? { maskedByKey: tr.maskedByKey, maskShowSource: tr.showSource || undefined } : {}),
+      ...(maskedByKey ? { maskedByKey, maskShowSource: maskShowSource || undefined } : {}),
     } as any)
     const added = localLayers.value.find(l => !before.has(l.id))
     // 3. Hold the wired slot's z-position (else the copy jumps to the top). On a
     //    schema-2 frame the slot's key in the stack is its LAYER's `l:<id>`, not
     //    the legacy `w:<slot>` — anchoring to the dead key would silently leave
     //    the copy on top of everything.
-    const anchorKey = (() => { const wl = wiredLayerForSlot1(slot); return wl ? localKey(wl.id) : wiredKey(slot) })()
+    const anchorKey = wl ? localKey(wl.id) : wiredKey(slot)
     if (added) writeStackOrder(insertStackKeyAbove(stackKeys.value, localKey(added.id), anchorKey) as StackKey[])
     // 4. Hide the now-redundant wired slot — only after the copy landed, so a
     //    failed upload never leaves an empty frame.

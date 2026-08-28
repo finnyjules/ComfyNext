@@ -7,8 +7,8 @@ import {
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor, aspectLockedResizeKind } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, type WiredLayer as UnifiedWiredLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
-import { migrateFrameToUnifiedLayers, FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey } from '~/lib/compositor/frameStack'
+import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey, legacyWiredFlagsActive } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { libraryFamily } from '~/data/library-fonts'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
@@ -263,7 +263,7 @@ async function pullLiveFrame(l: WiredLayer, t01: number) {
 // and ignored on the SAME terms the modal uses, or the two surfaces would
 // disagree about whether a slot is hidden and render the frame differently.
 const hiddenWiredSet = computed(() => {
-  if (Number((props.data.properties as any)?.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED) return new Set<number>()
+  if (!legacyWiredFlagsActive((props.data.properties as any) ?? null)) return new Set<number>()
   return new Set((((props.data.properties as any)?.sailor_hiddenWired as number[]) ?? []).map(Number))
 })
 

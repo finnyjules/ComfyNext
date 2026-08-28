@@ -24,8 +24,7 @@ import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/u
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, parseSeedreamLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
-import { framePresentKeys } from '~/lib/compositor/frameStack'
-import { FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
+import { framePresentKeys, legacyWiredFlagsActive } from '~/lib/compositor/frameStack'
 import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
@@ -5565,9 +5564,9 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
     // The array survives on disk for rollback, so read it on the SAME terms both
     // hosts do — otherwise the submit could hide a slot the editor was showing.
     const hiddenWired = new Set<number>(
-      Number(comp.properties?.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED
-        ? []
-        : ((comp.properties?.sailor_hiddenWired as number[] | undefined) ?? []).map(Number),
+      legacyWiredFlagsActive((comp.properties as any) ?? null)
+        ? ((comp.properties?.sailor_hiddenWired as number[] | undefined) ?? []).map(Number)
+        : [],
     )
     let run: LocalLayer[] = []
     let runZ = 0

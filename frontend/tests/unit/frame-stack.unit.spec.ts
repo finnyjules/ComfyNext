@@ -3,9 +3,10 @@ import {
   framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, isWiredSentinel,
   wiredReconcileKey,
   syncWiredLayerLinks,
+  legacyWiredFlagsActive,
 } from '~/lib/compositor/frameStack'
 import { createWiredLayer, wiredFitWidth } from '~/lib/compositor/wiredLayer'
-import { migrateFrameToUnifiedLayers, UNRESOLVED_WIRED_W } from '~/lib/compositor/wiredMigration'
+import { migrateFrameToUnifiedLayers, UNRESOLVED_WIRED_W, FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
 import type { LocalLayer } from '~/composables/useCompositorLayers'
 
 // Host-side reconciliation for a schema-2 Frame. Everything here is the seam the
@@ -253,5 +254,56 @@ describe('wiredReconcileKey — undo onto a sentinel re-finalizes', () => {
       { ...a, w: 0.5 } as LocalLayer, { ...b, w: UNRESOLVED_WIRED_W } as LocalLayer,
     ])
     expect(one).not.toBe(other)
+  })
+})
+
+// The single predicate every "is a wired slot's hidden/locked state still on the
+// legacy sailor_hiddenWired/sailor_lockedWired arrays?" gate defers to — the
+// Compositor modal, the Frame node card, and the submit path in VueNodeCanvas
+// all call this ONE function instead of hand-copying the schema check, so they
+// cannot silently disagree about which schema a frame is on. A reviewer found
+// that reverting just one of those three call sites back to a hand-rolled check
+// still passed every existing test — these pin the predicate's exact boundary
+// (not just "schema 2" vs "schema 1") so any operator flip (`>=` → `>`, a
+// dropped negation, an off-by-one) fails here.
+describe('legacyWiredFlagsActive — the schema-2-dead gate', () => {
+  it('is FALSE once a frame is migrated (schema 2): stale arrays are ignored', () => {
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: 2 })).toBe(false)
+  })
+
+  it('is FALSE for any schema at or above the unified constant, not just literal 2', () => {
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: FRAME_SCHEMA_UNIFIED })).toBe(false)
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: FRAME_SCHEMA_UNIFIED + 1 })).toBe(false)
+  })
+
+  it('is TRUE for a pre-migration frame: schema absent, 0, or 1', () => {
+    expect(legacyWiredFlagsActive({})).toBe(true)
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: 0 })).toBe(true)
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: 1 })).toBe(true)
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: FRAME_SCHEMA_UNIFIED - 1 })).toBe(true)
+  })
+
+  it('is TRUE when properties itself is missing (no node data yet)', () => {
+    expect(legacyWiredFlagsActive(null)).toBe(true)
+    expect(legacyWiredFlagsActive(undefined)).toBe(true)
+  })
+
+  it('coerces a stringy schema the same way the migration gate does', () => {
+    // `Number('2')` — mirrors `migrateFrameToUnifiedLayers`'s own
+    // `Number(props.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED` idiom, so a
+    // frame loaded from JSON (numbers can round-trip as strings) is read the
+    // same way on both the migration side and the consumer side.
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: '2' } as any)).toBe(false)
+    expect(legacyWiredFlagsActive({ sailor_frameSchema: '1' } as any)).toBe(true)
+  })
+
+  it('agrees with a real migration end to end: pre-migrate TRUE, post-migrate FALSE', () => {
+    const node = {
+      connectedSlots: [0],
+      data: { ...widgetHost({ width: 100, height: 100 }), properties: {} as Record<string, any> },
+    }
+    expect(legacyWiredFlagsActive(node.data.properties)).toBe(true)
+    migrateFrameToUnifiedLayers(node, { 0: { w: 100, h: 100 } })
+    expect(legacyWiredFlagsActive(node.data.properties)).toBe(false)
   })
 })

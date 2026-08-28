@@ -21,12 +21,34 @@
 import type { LocalLayer, WiredLayer } from '~/composables/useCompositorLayers'
 import { createWiredLayer, wiredBoxFromWidgets, type ContentDims } from '~/lib/compositor/wiredLayer'
 import { widgetNum, type WidgetHostData } from '~/lib/compositor/nodeWidgets'
-import { UNRESOLVED_WIRED_W } from '~/lib/compositor/wiredMigration'
+import { UNRESOLVED_WIRED_W, FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
 
 /** Stack key for a wired slot. `slot` is 0-BASED; keys are 1-based (`w:1` = layer1). */
 export function wiredStackKey(slot: number): string { return `w:${slot + 1}` }
 /** Stack key for a layer (wired layers included, once migrated). */
 export function localStackKey(id: string): string { return `l:${id}` }
+
+/**
+ * True when a frame's legacy per-slot wired registries — `sailor_hiddenWired`,
+ * `sailor_lockedWired`, and their kin — are still the ones a host must consult.
+ *
+ * Schema 2 moved hidden/locked state onto the wired LAYER itself, but the
+ * legacy arrays are left on disk untouched (rollback safety — see
+ * `wiredMigration`'s header), so a migrated frame must actively IGNORE them
+ * rather than merely stop writing them: a stale `sailor_hiddenWired: [1]`
+ * would otherwise keep hiding a slot whose layer says visible. This is the ONE
+ * predicate every surface that reads or prunes those arrays gates on, so the
+ * three hosts (Compositor modal, Frame node card, submit path) can never
+ * silently disagree about which schema a frame is on.
+ */
+export function legacyWiredFlagsActive(properties: Record<string, any> | null | undefined): boolean {
+  // NOT `< FRAME_SCHEMA_UNIFIED` — a missing/non-numeric schema coerces to NaN,
+  // and every NaN comparison (including `<`) is false, which would wrongly read
+  // as "migrated" for a frame that has never run migration. Negating the
+  // migration gate's own `>=` check keeps NaN on the legacy (true) side, same
+  // as `migrateFrameToUnifiedLayers`'s `Number(props.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED`.
+  return !(Number(properties?.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED)
+}
 
 /** The minimum layer shape present-key building needs. */
 export interface StackLayerLike { id: string; kind?: string; slot?: number }
