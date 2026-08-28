@@ -81,8 +81,12 @@ import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
 import { libraryFamily } from '~/data/library-fonts'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
-import { PenTool, Brush, FileUp, Sparkles, Wand2, Lasso, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
-import type { ComputedRef } from 'vue'
+import { PenTool, Brush, Sparkles, Wand2, Lasso, Undo2, Redo2, ChevronRight, ChevronDown, ChevronUp, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
+import {
+  TOOLBAR_SHAPES, TOOLBAR_AI, DEFAULT_SHAPE_FACE, resolveShapeFace, shapeFaceLabel, smartSelectRowState,
+  type ToolbarShapeId, type ToolbarAiId,
+} from '~/lib/compositor/toolbarMenus'
+import type { Component, ComputedRef } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches } from '~~/shared/brand/resolve'
 import { PhCheckerboard } from '@phosphor-icons/vue'
@@ -1456,7 +1460,7 @@ function onCanvasClick(e: MouseEvent) {
 // Click in the empty stage gutter (outside the artboard) → deselect. A pan that
 // ends on the gutter also fires a click here, so swallow it.
 function onStageBackgroundClick(e: MouseEvent) {
-  zoomMenuOpen.value = false   // click-away for the toolbar zoom menu
+  closeToolbarMenus()          // click-away for the toolbar's flyouts
   if (brush.active.value) return // brush owns the canvas
   if (smartActive.value) return // smart select owns the canvas
   if (genActive.value && genTool.value !== 'shape') return
@@ -3732,6 +3736,53 @@ async function onPickCanvasImage(src: string) {
   addMenuOpen.value = false
   try { await addImageFromCanvasSrc(src) } catch (err) { console.error('[Compositor] add canvas image failed:', err) }
 }
+function onImportSvgChoice() { addMenuOpen.value = false; triggerImportSvg() }
+
+// ── Toolbar menus: Shapes ▾ and AI ✦ ▾ ──────────────────────────────────────
+// Same idiom as the zoom menu: a ref per menu, the cluster wrapper stops the
+// click (the toolbar sits inside the stage, whose click handler is the
+// click-away), Escape closes the open one. Opening one closes the others so two
+// flyouts can never overlap.
+const shapesMenuOpen = ref(false)
+const aiMenuOpen = ref(false)
+/** Last-used shape, worn by the Shapes button. Component state on purpose —
+ *  the spec asks for no persistence beyond the open modal. */
+const shapeFace = ref<ToolbarShapeId>(DEFAULT_SHAPE_FACE)
+const SHAPE_ICONS: Record<ToolbarShapeId, Component> = {
+  rect: Square, ellipse: Circle, line: Minus, polygon: Hexagon, star: Star,
+}
+const SHAPE_STAMP: Record<ToolbarShapeId, () => void> = {
+  rect: addRect, ellipse: addEllipse, line: addLine, polygon: addPolygon, star: addStar,
+}
+function closeToolbarMenus() {
+  zoomMenuOpen.value = false
+  shapesMenuOpen.value = false
+  aiMenuOpen.value = false
+}
+function toggleZoomMenu() { const next = !zoomMenuOpen.value; closeToolbarMenus(); zoomMenuOpen.value = next }
+function toggleShapesMenu() { const next = !shapesMenuOpen.value; closeToolbarMenus(); shapesMenuOpen.value = next }
+function toggleAiMenu() { const next = !aiMenuOpen.value; closeToolbarMenus(); aiMenuOpen.value = next }
+/** Menu row → stamp it now AND wear it, so repeat stamping is one click. */
+function pickShape(id: ToolbarShapeId) {
+  shapeFace.value = id
+  shapesMenuOpen.value = false
+  SHAPE_STAMP[id]()
+}
+/** The face button itself: stamp the current shape without opening anything. */
+function stampFaceShape() { closeToolbarMenus(); SHAPE_STAMP[resolveShapeFace(shapeFace.value)]() }
+/** Called during render (not a computed): `selectedWiredImage()` reads the DOM,
+ *  so it must be re-evaluated with the rest of the template, exactly as the old
+ *  Smart-select button's :disabled/:title bindings did. */
+function smartRowState() {
+  return smartSelectRowState(selectedLocal.value?.kind === 'image' || !!selectedWiredImage(), smartActive.value)
+}
+function runAiRow(id: ToolbarAiId) {
+  aiMenuOpen.value = false
+  if (id === 'vector') { aiOpen.value = !aiOpen.value; return }
+  if (id === 'region') { toggleGenMode(); return }
+  toggleSmartMode()
+}
+const aiToolActive = computed(() => aiOpen.value || genActive.value || smartActive.value)
 
 // ── Fill a brush layer with an image ────────────────────────────────────────
 // Reuses the add-image flow, then clips the freshly-added image to the brush
@@ -3765,6 +3816,8 @@ function handleKeydown(e: KeyboardEvent) {
   const typing = ae instanceof Element && ae.matches('input, textarea, [contenteditable]')
   if (e.key === 'Escape') {
     if (zoomMenuOpen.value) { zoomMenuOpen.value = false; return }
+    if (shapesMenuOpen.value) { shapesMenuOpen.value = false; return }
+    if (aiMenuOpen.value) { aiMenuOpen.value = false; return }
     if (addMenuOpen.value) { addMenuOpen.value = false; return }
     if (editingId.value) { endEdit(); return }
     if (typing) return
@@ -4544,7 +4597,7 @@ onUnmounted(() => {
             class="h-8 min-w-[52px] px-1.5 rounded cursor-pointer text-[11px] tabular-nums"
             :class="zoomMenuOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
             data-testid="zoom-menu-toggle" title="Zoom & navigation"
-            @click="zoomMenuOpen = !zoomMenuOpen">
+            @click="toggleZoomMenu()">
             {{ Math.round(view.scale * 100) }}%
           </button>
           <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer"
@@ -4590,24 +4643,46 @@ onUnmounted(() => {
           <Redo2 class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add text" @click="addText">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" data-testid="add-text" title="Add text" @click="addText">
           <Type class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add rectangle" @click="addRect">
-          <Square class="size-4" />
-        </button>
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add ellipse" @click="addEllipse">
-          <Circle class="size-4" />
-        </button>
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
-          <Minus class="size-4" />
-        </button>
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add polygon" @click="addPolygon">
-          <Hexagon class="size-4" />
-        </button>
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add star" @click="addStar">
-          <Star class="size-4" />
-        </button>
+        <!-- Shapes: the face stamps the last-used shape (one click to repeat),
+             the chevron opens the list. Two real buttons rather than hit-testing
+             zones inside one, so a 16px chevron target is still a real target. -->
+        <div class="relative flex items-center" @click.stop>
+          <button
+            class="flex items-center justify-center h-8 w-7 rounded-l hover:bg-white/10 text-white/80 cursor-pointer"
+            data-testid="shapes-face" :title="'Add ' + shapeFaceLabel(shapeFace).toLowerCase()"
+            @click="stampFaceShape()">
+            <component :is="SHAPE_ICONS[shapeFace]" class="size-4" />
+          </button>
+          <button
+            class="flex items-center justify-center h-8 w-4 rounded-r cursor-pointer"
+            :class="shapesMenuOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/50'"
+            data-testid="shapes-menu-toggle" title="Shapes"
+            @click="toggleShapesMenu()">
+            <ChevronUp class="size-3" />
+          </button>
+          <Transition
+            enter-active-class="transition-all duration-150 ease-out"
+            leave-active-class="transition-all duration-100 ease-in"
+            enter-from-class="opacity-0 translate-y-1"
+            leave-to-class="opacity-0 translate-y-1"
+          >
+            <div v-if="shapesMenuOpen"
+              data-testid="shapes-menu"
+              class="absolute bottom-full left-0 mb-2 w-[160px] rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/97 p-1 shadow-xl"
+              @pointerdown.stop>
+              <button v-for="row in TOOLBAR_SHAPES" :key="row.id"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[12px] cursor-pointer text-white/85"
+                :class="row.id === shapeFace ? 'bg-white/10' : 'hover:bg-white/10'"
+                :data-testid="'shapes-menu-' + row.id" @click="pickShape(row.id)">
+                <component :is="SHAPE_ICONS[row.id]" class="size-3.5 text-white/60" />
+                <span class="flex-1 text-left">{{ row.label }}</span>
+              </button>
+            </div>
+          </Transition>
+        </div>
         <button
           class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="pen.active.value ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
@@ -4623,40 +4698,55 @@ onUnmounted(() => {
           @click="toggleBrush">
           <Brush class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Import SVG" @click="triggerImportSvg">
-          <FileUp class="size-4" />
-        </button>
-        <button
-          class="flex items-center justify-center size-8 rounded cursor-pointer"
-          :class="aiOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
-          title="AI vector — generate from text or vectorize a selected image"
-          @click="aiOpen = !aiOpen"
-        >
-          <Sparkles class="size-4" />
-        </button>
-        <button
-          class="flex items-center justify-center size-8 rounded cursor-pointer"
-          :class="genActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
-          title="Generate in region — mark an area (box, brush, or shape) and regenerate just that part of an image"
-          @click="toggleGenMode"
-        >
-          <Wand2 class="size-4" />
-        </button>
-        <button
-          class="flex items-center justify-center size-8 rounded cursor-pointer disabled:opacity-30 disabled:cursor-default"
-          :class="smartActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
-          :disabled="!smartActive && selectedLocal?.kind !== 'image' && !selectedWiredImage()"
-          :title="selectedLocal?.kind === 'image' || selectedWiredImage() || smartActive ? 'Smart select — scribble over an object, AI refines the selection' : 'Smart select — select an image layer first'"
-          data-testid="smart-select-toggle"
-          @click="toggleSmartMode"
-        >
-          <Lasso class="size-4" />
-        </button>
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
+        <!-- Insert: the add-image chooser, which now also carries Import SVG. -->
         <div class="relative inline-flex">
-          <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="addMenuOpen = !addMenuOpen">
+          <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer"
+            data-testid="insert-menu-toggle" title="Insert — image or SVG" @click="addMenuOpen = !addMenuOpen">
             <ImageIcon class="size-4" />
           </button>
-          <AddImageSourcePopover :open="addMenuOpen" @upload="onUploadChoice" @pick="onPickCanvasImage" @close="addMenuOpen = false" />
+          <AddImageSourcePopover :open="addMenuOpen" show-import-svg @upload="onUploadChoice" @pick="onPickCanvasImage"
+            @import-svg="onImportSvgChoice" @close="addMenuOpen = false" />
+        </div>
+        <!-- AI: the three generative flows, one button. Rows keep their old
+             tooltips as subtitles; Smart select greys out without an image. -->
+        <div class="relative flex items-center" @click.stop>
+          <button
+            class="flex items-center justify-center size-8 rounded cursor-pointer"
+            :class="aiMenuOpen || aiToolActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
+            data-testid="ai-menu-toggle" title="AI — vector, generate in region, smart select"
+            @click="toggleAiMenu()">
+            <Sparkles class="size-4" />
+          </button>
+          <Transition
+            enter-active-class="transition-all duration-150 ease-out"
+            leave-active-class="transition-all duration-100 ease-in"
+            enter-from-class="opacity-0 translate-y-1"
+            leave-to-class="opacity-0 translate-y-1"
+          >
+            <div v-if="aiMenuOpen"
+              data-testid="ai-menu"
+              class="absolute bottom-full right-0 mb-2 w-[268px] rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/97 p-1 shadow-xl"
+              @pointerdown.stop>
+              <button v-for="row in TOOLBAR_AI" :key="row.id"
+                class="flex w-full items-start gap-2 rounded px-2 py-1.5 text-[12px] cursor-pointer disabled:opacity-30 disabled:cursor-default hover:bg-white/10 text-white/85"
+                :class="{
+                  'bg-white/10': (row.id === 'vector' && aiOpen) || (row.id === 'region' && genActive) || (row.id === 'smart' && smartActive),
+                }"
+                :data-testid="'ai-menu-' + row.id"
+                :disabled="row.id === 'smart' && smartRowState().disabled"
+                @click="runAiRow(row.id)">
+                <Sparkles v-if="row.id === 'vector'" class="mt-0.5 size-3.5 text-white/60" />
+                <Wand2 v-else-if="row.id === 'region'" class="mt-0.5 size-3.5 text-white/60" />
+                <Lasso v-else class="mt-0.5 size-3.5 text-white/60" />
+                <span class="flex-1 text-left">
+                  {{ row.label }}
+                  <span class="mt-0.5 block text-[10.5px] leading-snug text-white/40"
+                    :data-testid="'ai-menu-hint-' + row.id">{{ row.id === 'smart' ? smartRowState().hint : row.hint }}</span>
+                </span>
+              </button>
+            </div>
+          </Transition>
         </div>
         <BrandImagePicker @add="(name, aspect) => addImageFromName(name, aspect)" />
         <button
