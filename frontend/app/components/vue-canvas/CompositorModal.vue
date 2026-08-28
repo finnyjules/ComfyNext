@@ -981,6 +981,13 @@ function rowLabel(row: any) {
 // Wired live sources (streams) and non-image locals fall through to their icon.
 function rowThumbUrl(row: any): string | null {
   if (row.kind === 'wired') return row.layer?.live ? null : ((row.layer?.url as string) || null)
+  // A migrated wired slot is a `local` row now, but its thumbnail still comes
+  // from the slot feeding it — losing it would make the layer list less legible
+  // than before unification.
+  if (row.layer?.kind === 'wired') {
+    const w = layers.value.find(x => x.slot === row.layer.slot + 1)
+    return w && !w.live ? (w.url || null) : null
+  }
   if ((row.kind === 'local' || row.kind === 'child') && row.layer?.kind === 'image' && row.layer?.filename) {
     return imageLayerUrl(row.layer.filename)
   }

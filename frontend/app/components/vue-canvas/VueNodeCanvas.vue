@@ -5711,8 +5711,18 @@ async function injectCompositorCloners(workflow: any): Promise<void> {
   for (const comp of comps) {
     if ((comp.mode ?? 0) !== 0) continue // muted/bypassed won't execute
     const liveNode = (nodes.value as any[]).find(n => n.id === String(comp.id))
-    const map = liveNode?.data?.properties?.sailor_wiredCloners
-      ?? comp.properties?.sailor_wiredCloners
+    // Legacy registry first (1-based slot → Cloner), then the schema-2 layers on
+    // top of it: once a slot is a LAYER, the layer owns its cloner and the
+    // registry is a frozen pre-migration copy. Reading only the registry would
+    // render the server with a cloner the editor stopped showing.
+    const props = liveNode?.data?.properties ?? comp.properties
+    const map: Record<string, any> = { ...((props?.sailor_wiredCloners as Record<string, any>) ?? {}) }
+    for (const l of ((props?.sailor_localLayers as any[]) ?? [])) {
+      if (l?.kind !== 'wired' || !Number.isInteger(l.slot)) continue
+      const n = String(l.slot + 1)
+      if (l.cloner) map[n] = l.cloner
+      else delete map[n]
+    }
     const entries = wiredClonerWidgetEntries(map)
     for (const { name, json } of entries) {
       if (setNamedWidget(comp, name, json, objectInfo.value)) continue
