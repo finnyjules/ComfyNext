@@ -1,10 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { reactive } from 'vue'
 import {
   createWiredLayer, wiredBoxFromWidgets, widgetsFromWiredBox,
   syncWiredWidgets, syncAllWiredWidgets,
 } from '~/lib/compositor/wiredLayer'
-import { widgetNum } from '~/lib/compositor/nodeWidgets'
+import { widgetNum, setWidget, type WidgetHostData } from '~/lib/compositor/nodeWidgets'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import {
   _registerWiredContent, localLayerBox, paintLayerStack,
@@ -465,6 +465,72 @@ describe('wired widget write-through', () => {
     const node = fixtureNode()
     syncWiredWidgets(node, createWiredLayer(0, { x: 0.7, w: 1, lastAspect: 600 / 800 }), canvas, natural)
     expect(widgetNum(node.data, 'layer1_x')).toBeCloseTo(0.2, 6)
+  })
+})
+
+// ── setWidget: no holes, fail-closed writes are visible ─────────────────────
+//
+// `setWidget` used to guard `i < 0` and a missing array, but not `i >=
+// widgetsValues.length` — a write past the end left a HOLE in the array
+// (`arr[5] = x` on a length-3 array leaves indices 3-4 empty, not null), and
+// `JSON.stringify` serializes an array hole as `null` too, but `i in arr`
+// and `Object.keys` disagree — a hole is invisible to those, which is how a
+// short array smuggled a missing widget past code that checked "is this key
+// present" rather than round-tripping through JSON. Padding with real nulls
+// (the same loop VueNodeCanvas.vue's `setVal` already uses) keeps the array
+// dense so every consumer agrees on its shape.
+describe('setWidget: dense writes and fail-closed visibility', () => {
+  const host = (widgetsValues: any[]): WidgetHostData => ({
+    widgetDefs: [{ name: 'a' }, { name: 'b' }, { name: 'c' }],
+    widgetsValues,
+  })
+
+  it('pads with real nulls (not holes) when writing past the current length', () => {
+    const data = host([1])
+    expect(setWidget(data, 'c', 42)).toBe(true)
+    expect(data.widgetsValues).toEqual([1, null, 42])
+    // A hole would still equal [1, undefined, 42] under toEqual and would still
+    // stringify as null — the real test is that the index is densely present.
+    expect(1 in data.widgetsValues!).toBe(true)
+    expect(Object.keys(data.widgetsValues!)).toEqual(['0', '1', '2'])
+    expect(JSON.stringify(data.widgetsValues)).toBe('[1,null,42]')
+  })
+
+  it('writes in place, no padding needed, when the index is already in range', () => {
+    const data = host([1, 2, 3])
+    expect(setWidget(data, 'b', 99)).toBe(true)
+    expect(data.widgetsValues).toEqual([1, 99, 3])
+  })
+
+  it('lands the value at the declared index after padding, not appended at the end', () => {
+    const data: WidgetHostData = {
+      widgetDefs: [{ name: 'a' }, { name: 'b' }, { name: 'c' }, { name: 'd' }],
+      widgetsValues: [1],
+    }
+    expect(setWidget(data, 'd', 'x')).toBe(true)
+    expect(data.widgetsValues).toEqual([1, null, null, 'x'])
+  })
+
+  it('is still a no-op (returns false, writes nothing) for an undeclared widget', () => {
+    const data = host([1, 2, 3])
+    expect(setWidget(data, 'ghost', 5)).toBe(false)
+    expect(data.widgetsValues).toEqual([1, 2, 3])
+  })
+
+  it('warns naming the widget it could not write, in dev builds', () => {
+    // import.meta.dev is a Nuxt build-time replacement; this plain-vite unit
+    // suite does not define it (see resolveField's token-mismatch tests in
+    // shaderfill-field-frame.unit.spec.ts for the same caveat), so it is falsy
+    // here and the guard below is expected NOT to run under `vitest run`. The
+    // assertions still hold real value once run inside the Nuxt-built app,
+    // and the "no write happened" behavior above is verified unconditionally.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    setWidget(host([1, 2, 3]), 'ghost', 5)
+    if ((import.meta as any).dev) {
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(String(warnSpy.mock.calls[0]![0])).toContain('ghost')
+    }
+    warnSpy.mockRestore()
   })
 })
 

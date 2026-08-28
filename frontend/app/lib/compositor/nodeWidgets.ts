@@ -45,11 +45,28 @@ export function widgetStr(data: WidgetHostData | null | undefined, name: string,
  * Write a widget value by name. Returns false — writing NOTHING — when the node
  * type does not declare the widget or carries no values array. Failing closed
  * matters: a positional write against a mismatched defs list would silently
- * corrupt a neighbouring widget.
+ * corrupt a neighbouring widget. The failure is not silent, though: in dev
+ * builds it warns which widget name it could not place, so an integration gap
+ * (a node type missing a widget the write-through expects) surfaces instead of
+ * hiding behind a graceful-looking no-op (see the "graceful fallback hides
+ * integration failure" lesson).
+ *
+ * When `i` lands past the current end of `widgetsValues`, this pads with real
+ * `null`s first (the same loop VueNodeCanvas.vue's `setVal` uses) rather than
+ * writing straight to the index — assigning past the end leaves an array HOLE,
+ * and `JSON.stringify` turns a hole into `null` in the workflow payload sent to
+ * the Python backend either way, so padding costs nothing and keeps the array
+ * dense for every other consumer that checks length or iterates it.
  */
 export function setWidget(data: WidgetHostData | null | undefined, name: string, value: any): boolean {
   const i = widgetIdx(data, name)
-  if (i < 0 || !data?.widgetsValues) return false
+  if (i < 0 || !data?.widgetsValues) {
+    if (import.meta.dev) {
+      console.warn(`[nodeWidgets] setWidget: widget "${name}" is not declared on this node — write skipped.`)
+    }
+    return false
+  }
+  while (data.widgetsValues.length <= i) data.widgetsValues.push(null)
   data.widgetsValues[i] = value
   return true
 }
