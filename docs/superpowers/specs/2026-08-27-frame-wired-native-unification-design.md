@@ -1,7 +1,8 @@
 # Frame: one species of layer + room to breathe
 
 **Date:** 2026-08-27
-**Status:** landed 2026-08-28 (`925c43728`..`8d3cac809` + final-review fixes; see Deviations below)
+**Status:** landed 2026-08-28 (`925c43728`..`3e021c17e`; see Deviations below)
+**Scope:** CompositorModal-first (the modal is the real Frame editor; the inline card inherits what falls out for free)
 
 ## Deviations from this spec (all ratified in the plan or final review)
 
@@ -11,8 +12,8 @@
 - One selection/handle system in **white** (the pre-existing local system), not cyan.
 - `w:` stack keys survive for connected slots no layer has claimed (pre-migration frames + the tick before a layer is minted).
 - Zoom menu additionally has 200%.
+- A newly wired edge no longer auto-selects its layer (the spec said "selected"): a fresh layer is always a dims-unknown sentinel at mint — invisible and zero-size — so selecting it read as a broken state; the layer appears and is selectable once its content resolves.
 - **Release note:** the server geometry fix (`60ac0ce6c`) corrects a long-standing half-offset and non-square rotation shear in the Python Compositor — saved frames with moved/rotated wired layers now render where the editor always showed them, which may visibly shift old server renders.
-**Scope:** CompositorModal-first (the modal is the real Frame editor; the inline card inherits what falls out for free)
 
 ## Why
 

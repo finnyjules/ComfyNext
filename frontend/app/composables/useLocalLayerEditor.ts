@@ -525,7 +525,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (!selectedIds.value.size) return false
     e.preventDefault()
     if (a.type === 'nudge') nudgeSelection(a.dxPx / dims().w, a.dyPx / dims().h)
-    else if (a.type === 'duplicate') duplicateSelection()
+    else if (a.type === 'duplicate') void duplicateSelection()
     else if (a.type === 'copy') copySelection()
     return true
   }
