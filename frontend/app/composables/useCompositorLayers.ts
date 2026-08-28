@@ -13,7 +13,7 @@
  * One renderer (`drawLocalLayer`) draws to any 2D context at any resolution.
  */
 
-export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path' | 'image' | 'polygon' | 'star' | 'brush'
+export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path' | 'image' | 'polygon' | 'star' | 'brush' | 'wired'
 
 // ── Motion painter indirection ───────────────────────────────────────────────
 // paintLayerStack(t) needs the motion module, but motion/paint.ts imports
@@ -296,6 +296,27 @@ export interface ImageLayer extends LayerCommon {
   displaceMap?: DisplaceMapSpec // present ⇒ layer is a lens warping everything below
 }
 
+/**
+ * A graph-input image, expressed as an ordinary layer. The pixels come from an
+ * upstream node (identified by `slot`), not from a file on the layer — but the
+ * geometry is the SAME width-normalized box every other layer uses, so wired
+ * content moves, rotates, masks and stacks through one code path.
+ *
+ * There is no stored `h`: the render height follows the LIVE content aspect
+ * (`h = w * lastAspect`), so re-running the upstream node at a new aspect
+ * re-fits the layer instead of stretching it. `lastAspect` caches the most
+ * recent content aspect (contentH / contentW) so the box survives a frame with
+ * no content yet, and so `unlinked` layers (deliberately detached from the live
+ * aspect after a manual resize) keep the size the user set.
+ */
+export interface WiredLayer extends LayerCommon {
+  kind: 'wired'
+  slot: number       // upstream input slot the pixels come from
+  w: number          // normalized to canvas width (like every other layer)
+  lastAspect: number // contentH / contentW of the last-seen content
+  unlinked?: boolean // true = keep `lastAspect` even when live content differs
+}
+
 export interface PolygonLayer extends LayerCommon {
   kind: 'polygon'
   w: number; h: number
@@ -322,7 +343,7 @@ export interface BrushLayer extends LayerCommon {
   h: number              // aspect (artboardH / artboardW)
 }
 
-export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer | PolygonLayer | StarLayer | BrushLayer
+export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer | PolygonLayer | StarLayer | BrushLayer | WiredLayer
 
 // Re-export so consumers of local layers can import the stroke type from one place.
 export type { PaintStroke } from '~/lib/compositor/brushStamp'
@@ -1586,6 +1607,7 @@ function layerPaints(layer: LocalLayer): Paint[] {
     case 'line': return [layer.stroke]
     case 'image': return layer.tint ? [layer.tint] : []
     case 'brush': return layer.stroke ? [layer.fill, layer.stroke] : [layer.fill]
+    case 'wired': return []                    // graph pixels — no authored Paint slots
     default: return [layer.fill, layer.stroke] // rect / ellipse / polygon / star / path
   }
 }
