@@ -111,10 +111,36 @@ describe('migrateFrameToUnifiedLayers — full fold', () => {
     expect(a.visible).toBeUndefined()
     expect(a.name).toBe('Hero')          // sailor_wiredNames: { 1: 'Hero' }
     expect(a.maskShowSource).toBe(true)
+    expect(a.maskedByKey).toBe('l:t1')   // treatments['w:1'].maskedByKey, unchanged (not a w:N key)
 
     expect(b.visible).toBe(false)        // sailor_hiddenWired: [2] ⇒ slot 1
     expect(b.locked).toBeUndefined()
     expect(b.cloner).toEqual({ mode: 'grid', count: 4 })
+  })
+
+  it('shallow-copies the cloner config so post-migration edits do not mutate the rollback registry', () => {
+    const node = fullFixture()
+    migrateFrameToUnifiedLayers(node, { 0: { w: 800, h: 600 }, 1: { w: 400, h: 400 } })
+    const layers = node.data.properties.sailor_localLayers as any[]
+    const b = layers.find(l => l.slot === 1)
+    const cloners = node.data.properties.sailor_wiredCloners
+    expect(b.cloner).toEqual(cloners[2])
+    expect(b.cloner).not.toBe(cloners[2])
+  })
+
+  it('remaps a wired layer masked by ANOTHER wired slot (not just local layers masked by a wired slot)', () => {
+    const node = makeNode({
+      connectedSlots: [0, 1],
+      widgets: CANVAS,
+      properties: {
+        sailor_wiredTreatments: { 'w:1': { maskedByKey: 'w:2' } },
+      },
+    })
+    migrateFrameToUnifiedLayers(node, { 0: { w: 800, h: 600 }, 1: { w: 400, h: 400 } })
+    const layers = node.data.properties.sailor_localLayers as any[]
+    const a = layers.find(l => l.slot === 0)
+    const b = layers.find(l => l.slot === 1)
+    expect(a.maskedByKey).toBe(`l:${b.id}`)   // was 'w:2'
   })
 
   it('rewrites w: keys in the stack order in place and keeps positions', () => {
@@ -215,6 +241,19 @@ describe('migrateFrameToUnifiedLayers — idempotence and edge cases', () => {
     expect(layers.find(l => l.slot === 0).w).toBeCloseTo(1, 6)
     // A square in a 2:1 artboard is height-limited ⇒ half the width.
     expect(layers.find(l => l.slot === 1).w).toBeCloseTo(0.5, 6)
+  })
+
+  it('sentinels EVERY slot when the base (bottom) slot dims are unknown, even if another slot IS known', () => {
+    // Both hosts derive the artboard from the BOTTOM slot only, with no fallback
+    // to any other slot. Slot 0 (the base) has no known dims here; slot 1's ARE
+    // known (400x800). Borrowing slot 1's aspect for the artboard would freeze
+    // both layers at a width computed against the wrong artboard the moment slot
+    // 0 actually resolves — so neither may get a real box yet.
+    const node = makeNode({ connectedSlots: [0, 1] })
+    migrateFrameToUnifiedLayers(node, { 1: { w: 400, h: 800 } })
+    const layers = node.data.properties.sailor_localLayers as any[]
+    expect(layers.find(l => l.slot === 0).w).toBe(UNRESOLVED_WIRED_W)
+    expect(layers.find(l => l.slot === 1).w).toBe(UNRESOLVED_WIRED_W)
   })
 
   it('tolerates a node whose properties bag does not exist yet', () => {

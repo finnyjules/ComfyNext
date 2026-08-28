@@ -904,6 +904,11 @@ export function localLayerBox(
     // absent property and yields a NaN box, which silently breaks selection,
     // corner-pin and every other consumer of this function. Resolved from the SAME
     // live content the draw uses, so the box always hugs what actually paints.
+    // `w <= 0` is the migration's UNRESOLVED_WIRED_W sentinel (content size not
+    // known yet) — a zero-size box at the layer centre, not `wiredBoxPx`'s
+    // negative-width result, so selection/handles/hit-testing see "nothing here"
+    // instead of a flipped, wrong-sized box.
+    if (layer.w <= 0) return { w: 0, h: 0 }
     return wiredBoxPx(layer, W, wiredLive !== undefined ? wiredLive : wiredContent(layer))
   }
   return { w: (layer as RectLayer).w * W, h: (layer as RectLayer).h * W }
@@ -1406,6 +1411,10 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     // opacity, blend, effects, crop/stroke/layer masks, cloner, motion — comes from
     // the shared LayerCommon machinery, because a wired layer reaches here through
     // exactly the same paintLayer path as a rect or an image.
+    // `w <= 0` is the migration's UNRESOLVED_WIRED_W sentinel (content size not
+    // known yet) — draw nothing rather than let a negative width reach
+    // `ctx.drawImage`, which treats it as a horizontal flip instead of "skip".
+    if (layer.w <= 0) return
     const live = wiredLive !== undefined ? wiredLive : wiredContent(layer)
     // No content this frame: draw NOTHING. The layer keeps its last-known box (see
     // localLayerBox, which falls back to `lastAspect` the same way) so selection and

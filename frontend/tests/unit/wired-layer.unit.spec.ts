@@ -293,4 +293,21 @@ describe('wired layer paint dispatch', () => {
     expect(Number.isFinite(box.h)).toBe(true)
     expect(draws).toHaveLength(0)       // zero-sized content is not drawable
   })
+
+  // The migration's UNRESOLVED_WIRED_W sentinel (w: -1) must paint and measure as
+  // NOTHING, not as a negative-width box — canvas drawImage FLIPS on a negative
+  // width instead of skipping the draw, so a naive path would render a mirrored,
+  // wrong-sized layer until the first real paint resolves it.
+  it('draws nothing for a sentinel (w <= 0) wired layer, even with live content available', () => {
+    _registerWiredContent(() => content(200, 100))
+    const { ctx, draws } = recordingCtx()
+    paint(ctx, wired({ w: -1, lastAspect: 1 }))
+    expect(draws).toHaveLength(0)
+  })
+
+  it('bboxes a sentinel wired layer as a zero-size box at the layer centre', () => {
+    const box = localLayerBox(null, wired({ w: -1, lastAspect: 1 }), 100, 100)
+    expect(box.w).toBe(0)
+    expect(box.h).toBe(0)
+  })
 })

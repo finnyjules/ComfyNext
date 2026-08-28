@@ -42,8 +42,12 @@ export const FRAME_SCHEMA_UNIFIED = 2
 /**
  * `w` for a wired layer migrated before its content size was known. The first
  * paint that resolves real content finalizes it through `wiredBoxFromWidgets`
- * and persists — a negative width can never be mistaken for a real one, and it
- * paints nothing in the meantime.
+ * and persists — a negative width can never be mistaken for a real one. The
+ * `layer.w <= 0` guards in `useCompositorLayers.ts`'s wired draw branch and
+ * `localLayerBox` are what actually make that true: they skip `drawImage`
+ * entirely (a negative width there flips the image instead of skipping it)
+ * and report a zero-size box, so a sentinel layer paints and measures as
+ * nothing until it resolves.
  */
 export const UNRESOLVED_WIRED_W = -1
 
@@ -89,18 +93,22 @@ function widgetNum(data: NonNullable<FrameNodeShape['data']>, name: string, fall
 }
 
 /** The artboard the legacy contain-fit was computed against. Explicit W/H wins;
- *  otherwise the frame took the BOTTOM (lowest connected) slot's aspect — see
- *  `baseAspect` in CompositorModal.vue and `aspect` in ArtifactFrameNode.vue. */
+ *  otherwise the frame took the BOTTOM (lowest connected) slot's aspect ONLY —
+ *  see `baseAspect` in CompositorModal.vue and `aspect` in ArtifactFrameNode.vue,
+ *  neither of which ever falls through to a higher slot. Borrowing a different
+ *  slot's aspect here would freeze every unresolved layer at the wrong width, so
+ *  when the bottom slot's dims aren't known yet this returns `null` and the
+ *  caller sentinels everything instead of guessing. */
 function canvasDims(
   data: NonNullable<FrameNodeShape['data']>, slots: number[], dims: SlotDims,
-): ContentDims {
+): ContentDims | null {
   const w = widgetNum(data, 'width'), h = widgetNum(data, 'height')
   if (w > 0 && h > 0) return { w, h }
-  for (const s of slots) {
-    const d = dims[s]
-    if (d && d.w > 0 && d.h > 0) return d
-  }
-  return FALLBACK_CANVAS
+  const base = slots[0]
+  const d = base !== undefined ? dims[base] : undefined
+  if (d && d.w > 0 && d.h > 0) return d
+  if (slots.length === 0) return FALLBACK_CANVAS
+  return null
 }
 
 /**
@@ -149,9 +157,12 @@ export function migrateFrameToUnifiedLayers(node: FrameNodeShape, naturalDims: S
       opacity: clamp01(widgetNum(data, `layer${n}_opacity`, 1)),
     }
     const natural = naturalDims[slot]
-    // Known content size ⇒ the exact legacy contain-fit box. Unknown ⇒ keep the
-    // placement the widgets DO pin down and leave the width for first paint.
-    const box = natural && natural.w > 0 && natural.h > 0
+    // Known content size AND a known artboard ⇒ the exact legacy contain-fit box.
+    // Either unknown ⇒ keep the placement the widgets DO pin down and leave the
+    // width for first paint (sentinel) — an unknown artboard sentinels EVERY slot,
+    // not just the ones missing their own dims, since the contain-fit math needs
+    // the artboard to mean anything.
+    const box = canvas && natural && natural.w > 0 && natural.h > 0
       ? wiredBoxFromWidgets(tf, natural, canvas)
       : null
 
@@ -170,7 +181,7 @@ export function migrateFrameToUnifiedLayers(node: FrameNodeShape, naturalDims: S
       ...(blend && blend !== 'normal' ? { blend } : {}),
       ...(hidden.has(n) ? { visible: false } : {}),
       ...(locked.has(n) ? { locked: true } : {}),
-      ...(cloners[n] ? { cloner: cloners[n] } : {}),
+      ...(cloners[n] ? { cloner: { ...cloners[n] } } : {}),
       ...(name ? { name } : {}),
       ...(treatment.maskedByKey ? { maskedByKey: String(treatment.maskedByKey) } : {}),
       ...(treatment.showSource ? { maskShowSource: true } : {}),
