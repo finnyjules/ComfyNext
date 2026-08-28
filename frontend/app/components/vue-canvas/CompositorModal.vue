@@ -1489,7 +1489,8 @@ watch(layers, (ls) => {
   // Schema-2 frames leave these arrays untouched on disk (rollback safety —
   // see wiredMigration's header); pruning them here would contradict that
   // contract even though nothing reads them anymore.
-  if (legacyWiredFlagsActive((compositor.value.data.properties as any) ?? null)) {
+  const legacyFlags = legacyWiredFlagsActive((compositor.value.data.properties as any) ?? null)
+  if (legacyFlags) {
     for (const key of ['sailor_hiddenWired', 'sailor_lockedWired'] as const) {
       const pruned = pruneWiredSlotFlags(readSlotArr(key), live)
       if (pruned) writeSlotArr(key, pruned)   // null ⇒ unchanged, skip the write
@@ -1498,20 +1499,28 @@ watch(layers, (ls) => {
   // Same trap for the sibling slot-keyed state: a stale mask/cloner would be
   // inherited by the NEXT image wired into that port (invisible or half-erased).
   const props = (compositor.value.data.properties ?? {}) as any
+  // UNGATED deliberately: `maskUrl` never migrated onto the layer model, so a
+  // schema-2 frame still reads `sailor_wiredTreatments` BY SLOT and a stale
+  // entry would still leak onto the next image wired into that port.
   const treatments = props.sailor_wiredTreatments as Record<string, unknown> | undefined
   if (treatments) {
     const next = pruneSlotKeyedRecord(treatments, live, k => { const m = /^w:(\d+)$/.exec(k); return m ? Number(m[1]) : null })
     if (next) props.sailor_wiredTreatments = next
   }
-  const cloners = props.sailor_wiredCloners as Record<string, unknown> | undefined
-  if (cloners) {
-    const next = pruneSlotKeyedRecord(cloners, live, k => (/^\d+$/.test(k) ? Number(k) : null))
-    if (next) props.sailor_wiredCloners = next
-  }
-  const names = props.sailor_wiredNames as Record<string, unknown> | undefined
-  if (names) {
-    const next = pruneSlotKeyedRecord(names, live, k => (/^\d+$/.test(k) ? Number(k) : null))
-    if (next) props.sailor_wiredNames = next
+  // Cloners and names DID migrate onto the layer (`cloner` / `name`), so on a
+  // schema-2 frame these registries are dead weight kept only for rollback —
+  // same contract as hidden/locked above, hence the same gate.
+  if (legacyFlags) {
+    const cloners = props.sailor_wiredCloners as Record<string, unknown> | undefined
+    if (cloners) {
+      const next = pruneSlotKeyedRecord(cloners, live, k => (/^\d+$/.test(k) ? Number(k) : null))
+      if (next) props.sailor_wiredCloners = next
+    }
+    const names = props.sailor_wiredNames as Record<string, unknown> | undefined
+    if (names) {
+      const next = pruneSlotKeyedRecord(names, live, k => (/^\d+$/.test(k) ? Number(k) : null))
+      if (next) props.sailor_wiredNames = next
+    }
   }
 }, { immediate: true })
 /** LEGACY (schema < 2) only: toggle a slot-keyed hidden/locked flag. A schema-2

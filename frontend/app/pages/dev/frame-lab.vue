@@ -1,10 +1,29 @@
 <script setup lang="ts">
-/** Dev harness for the Compositor MODAL — exercises the new text typography
- * controls (letter-spacing / underline / strikethrough / case transform) and
- * nested layer groups. Mounts the real CompositorModal with a fixture node.
- * Reachable only at /dev/frame-lab. */
+/** Dev harness for the Frame — BOTH surfaces of it.
+ *
+ *  - the CARD (`ArtifactFrameNode`, mounted inside a one-node `<VueFlow>` so its
+ *    `<Handle>`s find a real Vue Flow store), and
+ *  - the MODAL (`CompositorModal`), opened over it.
+ *
+ *  The fixture node is deliberately PRE-MIGRATION: no `sailor_frameSchema`, two
+ *  connected input slots whose transforms live only in `layer{N}_*` widget
+ *  values, and a full spread of legacy per-slot registries
+ *  (`sailor_hiddenWired`, `sailor_wiredNames`, `sailor_wiredTreatments`,
+ *  `sailor_stackOrder` in `w:` keys). Opening the page therefore runs
+ *  `migrateFrameToUnifiedLayers` for real, and what you see is the migrated
+ *  result — not a hand-written schema-2 blob that could agree with a broken
+ *  migration. Reachable only at /dev/frame-lab.
+ *
+ *  Hard-reload after editing (HMR keeps the ALREADY-MIGRATED node object alive,
+ *  so a soft reload silently skips the very thing this page exists to exercise). */
+import { VueFlow } from '@vue-flow/core'
+import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
 import CompositorModal from '~/components/vue-canvas/CompositorModal.vue'
+import ArtifactFrameNode from '~/components/vue-canvas/ArtifactFrameNode.vue'
 import { createTextLayer, createRectLayer, createImageLayer } from '~/composables/useCompositorLayers'
+
+definePageMeta({ layout: false })
 
 // Text layers exercising every new control.
 const plain = createTextLayer({ text: 'Plain text', x: 0.5, y: 0.12, fontSize: 0.06, color: '#ffffff' })
@@ -25,6 +44,20 @@ const a2 = createRectLayer({ id: 'a2', x: 0.3, y: 0.9, w: 0.2, h: 0.03, fill: '#
 const b1 = createTextLayer({ id: 'b1', text: 'Subtitle', x: 0.7, y: 0.85, fontSize: 0.04 } as any)
 ;(a1 as any).groupId = 'A'; (a2 as any).groupId = 'A'; (b1 as any).groupId = 'B'
 
+// ── Unified wired-layer fixture ─────────────────────────────────────────────
+// The rect the migrated wired layer for slot 1 is masked BY. Fixed id so the
+// legacy `sailor_wiredTreatments` registry below can name it before the wired
+// layer that references it exists (migration mints that layer's id at runtime).
+const MASK_RECT_ID = 'maskrect1'
+const maskRect = createRectLayer({
+  id: MASK_RECT_ID, x: 0.42, y: 0.5, w: 0.5, h: 0.42, radius: 0.06, fill: '#ffffff',
+} as any)
+// A plain text layer for the multi-select / align / group checks against a
+// wired layer (shift-click this + a wired row).
+const caption = createTextLayer({
+  id: 'caption1', text: 'Wired + native', x: 0.5, y: 0.93, fontSize: 0.05, color: '#ffffff',
+} as any)
+
 // Motion fixtures: exercise in/loop/out, the window, and a utility preset.
 ;(plain as any).animation = {
   offset: 0.3, duration: 3,
@@ -37,45 +70,201 @@ const b1 = createTextLayer({ id: 'b1', text: 'Subtitle', x: 0.7, y: 0.85, fontSi
   loop: { presetId: 'wiggle', duration: 2, stagger: 0, params: { amplitude: 0.2, cycles: 2 } },
 }
 
+// ── Widgets (the PRE-migration home of every wired transform) ────────────────
+// defs[i] ↔ values[i], the same pairing the real graph loader builds. Only the
+// two wired slots get a full set; higher slots are absent on purpose (a missing
+// widget must read as its default, not throw).
+const widgetDefs: { name: string }[] = []
+const widgetsValues: any[] = []
+function w(name: string, value: any) { widgetDefs.push({ name }); widgetsValues.push(value) }
+w('width', 1280)   // explicit artboard ⇒ the contain-fit has a canvas from tick 0
+w('height', 720)
+// Slot 1 (input-0): nudged left/down, rotated, scaled down a touch.
+w('layer1_x', -0.12); w('layer1_y', 0.08); w('layer1_rotation', -6)
+w('layer1_scale', 0.85); w('layer1_opacity', 1); w('layer1_blend', 'normal')
+// Slot 2 (input-1): the one the stale `sailor_hiddenWired` entry hides, and the
+// one carrying a non-default blend + opacity so migration has something to move.
+w('layer2_x', 0.18); w('layer2_y', -0.1); w('layer2_rotation', 10)
+w('layer2_scale', 0.6); w('layer2_opacity', 0.85); w('layer2_blend', 'screen')
+
 const node = reactive({
   id: 'n1',
   data: {
     nodeType: 'CompositorNode',
     title: 'Frame',
     inputs: [], outputs: [{ name: 'image', type: 'IMAGE', links: null }],
-    widgetsValues: [], widgetDefs: [{ name: 'width' }, { name: 'height' }],
+    widgetsValues, widgetDefs,
     images: [] as string[],
     properties: {
-      sailor_localLayers: [pic, plain, tracked, underlined, struck, upper, combo, a1, a2, b1],
+      // NOTE: no `sailor_frameSchema` — this frame has never been migrated.
+      sailor_localLayers: [pic, plain, tracked, underlined, struck, upper, combo, a1, a2, b1, maskRect, caption],
       sailor_localGroups: [
         { id: 'A', parentId: 'C', name: 'Row' },
         { id: 'B', parentId: 'C', name: 'Side' },
         { id: 'C', name: 'Header' },
       ],
       sailor_localBg: '#12131a',
+      // Big enough on the canvas to read the composite (and to drag a wired
+      // layer's corner handle) without zooming in first.
+      sailor_frame: { displayEdge: 620 },
+      // Legacy per-slot registries, 1-BASED (registry index = slot + 1):
+      //  - 2 is CONNECTED ⇒ its wired layer must migrate to `visible: false`
+      //    (click the eye in the layer panel to bring it back).
+      //  - 5 has no wire ⇒ genuinely stale; migration ignores it and the modal's
+      //    prune drops it while the frame is still legacy.
+      sailor_hiddenWired: [2, 5],
+      sailor_wiredNames: { 1: 'Product shot', 2: 'Shader plate' },
+      // `w:`-era registry shape. Migration reads `w:1`, moves `maskedByKey` onto
+      // the wired LAYER for slot 0, and repoints any `w:N` reference at the
+      // `l:<id>` that replaced it. The target here is already a local layer, so
+      // it stays `l:maskrect1` — what must change is WHERE it lives.
+      sailor_wiredTreatments: { 'w:1': { maskedByKey: `l:${MASK_RECT_ID}` } },
+      // Deliberately reversed vs. the natural bottom→top order, so the `w:N` →
+      // `l:<id>` remap in the stack is visible rather than coincidental.
+      sailor_stackOrder: ['w:2', 'w:1'],
     },
     mode: 0,
   },
 })
-// A wired image source (an Image node feeding input-0 ⇒ slot 1). Exercises the
-// wired-layer thumbnail and the new wired rename (double-click "Layer 1").
+// Two wired image sources with DIFFERENT aspects (1.51:1 and 1:1), served
+// straight from `public/` so the lab needs no ComfyUI backend running.
 const imgSrc = reactive({
   id: 'img1',
   data: {
     nodeType: 'Image',
-    images: ['/view?filename=1786471194089_pasted-1786471194089.png&type=input'],
+    images: ['/app_covers/productshot.png'],   // 768 × 509
     widgetsValues: [], widgetDefs: [],
   },
 })
-const edges = [{ source: 'img1', target: 'n1', sourceHandle: 'output-0', targetHandle: 'input-0' }]
-const nodes = [node, imgSrc]
+const imgSrc2 = reactive({
+  id: 'img2',
+  data: {
+    nodeType: 'Image',
+    images: ['/finn_shader.png'],              // 1024 × 1024
+    widgetsValues: [], widgetDefs: [],
+  },
+})
+// Both hosts derive their connected slots from EDGES, never from `data.inputs`.
+const edges = ref([
+  { id: 'e1', source: 'img1', target: 'n1', sourceHandle: 'output-0', targetHandle: 'input-0' },
+  { id: 'e2', source: 'img2', target: 'n1', sourceHandle: 'output-0', targetHandle: 'input-1' },
+])
+const nodes = ref<any[]>([node, imgSrc, imgSrc2])
+// The card reads the graph through these injections (VueNodeCanvas provides the
+// same two keys, as refs) — that is how it resolves each wired slot's content.
+provide('vueFlowNodes', nodes)
+provide('vueFlowEdges', edges)
+
+// Only the Frame is rendered by Vue Flow; the image sources exist for slot
+// resolution only, so giving them a node component would be dead weight.
+// `data` is the SAME reactive object the modal edits, so card and modal stay in
+// step exactly as they do on the real canvas.
+const flowNodes = [
+  { id: 'n1', type: 'artifact-frame', position: { x: 48, y: 96 }, data: node.data },
+]
+const nodeTypes = { 'artifact-frame': markRaw(ArtifactFrameNode) } as any
+
+// ── Save / reload round-trip ────────────────────────────────────────────────
+// The fixture above is rebuilt from source on every page load, so without this a
+// reload could only ever re-run migration from scratch — the one thing the
+// round-trip check needs to NOT happen. Persisting `properties` + `widgetsValues`
+// to localStorage stands in for the project store: reload and the frame comes
+// back already schema 2, which is when "no re-migration, no duplicate layers"
+// becomes a real assertion. Bump the version suffix whenever the fixture above
+// changes, so an old blob can never masquerade as a saved edit.
+const SAVE_KEY = 'frameLab:save:v1'
+const persisted = ref(false)
+if (import.meta.client) {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY)
+    if (raw) {
+      const saved = JSON.parse(raw)
+      // Restored during setup — BEFORE the card/modal mount (they are gated on
+      // `ready`), so both hosts see the saved schema-2 frame on their first tick.
+      if (saved?.properties) node.data.properties = saved.properties
+      if (Array.isArray(saved?.widgetsValues)) node.data.widgetsValues = saved.widgetsValues
+      persisted.value = true
+    }
+  } catch { /* a corrupt blob just falls back to the pristine fixture */ }
+}
+function saveFixture() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      properties: node.data.properties, widgetsValues: node.data.widgetsValues,
+    }))
+    persisted.value = true
+  } catch { /* quota / private mode — the lab still works, just doesn't persist */ }
+}
+function resetFixture() {
+  try { localStorage.removeItem(SAVE_KEY) } catch { /* nothing to clear */ }
+  location.reload()
+}
+
+const modalOpen = ref(true)
+// SSR renders the markup before hydration wires the handlers, so the first click
+// after a goto lands on dead HTML. Gate everything on onMounted and let tests
+// wait for [data-ready] — see the dev-harness hydration-race note.
+const ready = ref(false)
+onMounted(() => {
+  ready.value = true
+  // Read-only handle on the live fixture so a browser pass can assert the
+  // MIGRATED state (schema flag, layer array, stack order) instead of inferring
+  // it from pixels. Dev page only — nothing in the app reads this.
+  ;(window as any).__frameLab = { node, nodes, edges, save: saveFixture, reset: resetFixture }
+})
 </script>
 
 <template>
-  <div class="fixed inset-0 bg-[#0b0d12]">
+  <div class="fixed inset-0 bg-[#0b0d12]" :data-ready="ready ? '' : undefined">
     <div class="absolute inset-0 grid place-items-center text-white/[0.06] text-[80px] font-bold select-none">
       frame lab
     </div>
-    <CompositorModal :node-id="'n1'" :nodes="nodes" :edges="edges" @close="() => {}" />
+
+    <!-- The CARD, in a minimal Vue Flow so its handles have a real store. -->
+    <VueFlow
+      v-if="ready"
+      class="absolute inset-0"
+      :nodes="flowNodes"
+      :edges="[]"
+      :node-types="nodeTypes"
+      :min-zoom="0.2"
+      :max-zoom="2"
+      :nodes-draggable="true"
+      :pan-on-scroll="true"
+    />
+
+    <!-- Above the modal's own z-[100] backdrop, so the card can be revealed
+         without hunting for the modal's close button. -->
+    <div v-if="ready" class="absolute top-3 right-3 z-[200] flex items-center gap-2">
+      <span v-if="persisted" class="rounded-md bg-emerald-400/15 px-2 py-1 text-[11px] text-emerald-300">saved fixture</span>
+      <button
+        data-testid="frame-lab-toggle-modal"
+        class="rounded-md bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white/80 hover:bg-white/20"
+        @click="modalOpen = !modalOpen"
+      >
+        {{ modalOpen ? 'Close modal' : 'Open modal' }}
+      </button>
+      <button
+        data-testid="frame-lab-save"
+        class="rounded-md bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white/80 hover:bg-white/20"
+        title="Persist the frame's properties + widgets, then reload to prove it comes back schema 2"
+        @click="saveFixture()"
+      >
+        Save
+      </button>
+      <button
+        data-testid="frame-lab-reset"
+        class="rounded-md bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white/80 hover:bg-white/20"
+        title="Drop the saved state and reload the pristine pre-migration fixture"
+        @click="resetFixture()"
+      >
+        Reset
+      </button>
+    </div>
+
+    <CompositorModal
+      v-if="ready && modalOpen"
+      :node-id="'n1'" :nodes="nodes" :edges="edges" @close="modalOpen = false"
+    />
   </div>
 </template>
