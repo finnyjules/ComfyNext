@@ -25,6 +25,7 @@ import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoin
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
 import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, parseSeedreamLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
 import { framePresentKeys } from '~/lib/compositor/frameStack'
+import { FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
 import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
@@ -5559,8 +5560,14 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
     // the end interrupts the run. Stack index = z, so all depths are distinct.
     // Hidden layers are skipped entirely; a local layer with a non-normal blend
     // mode bakes as its own single-layer run so the backend applies the mode.
+    // LEGACY (schema < 2) only: on a unified frame a wired slot is a layer and its
+    // `visible` is the one flag (see the `layer.kind === 'wired'` branch below).
+    // The array survives on disk for rollback, so read it on the SAME terms both
+    // hosts do — otherwise the submit could hide a slot the editor was showing.
     const hiddenWired = new Set<number>(
-      ((comp.properties?.sailor_hiddenWired as number[] | undefined) ?? []).map(Number),
+      Number(comp.properties?.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED
+        ? []
+        : ((comp.properties?.sailor_hiddenWired as number[] | undefined) ?? []).map(Number),
     )
     let run: LocalLayer[] = []
     let runZ = 0

@@ -7,7 +7,7 @@ import {
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor, aspectLockedResizeKind } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, type WiredLayer as UnifiedWiredLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
-import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
+import { migrateFrameToUnifiedLayers, FRAME_SCHEMA_UNIFIED } from '~/lib/compositor/wiredMigration'
 import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { libraryFamily } from '~/data/library-fonts'
@@ -255,11 +255,17 @@ async function pullLiveFrame(l: WiredLayer, t01: number) {
   } catch (e) { console.warn('[Frame] live slot pull failed for', l.url, e) }
 }
 
-// Per-wired-layer visibility/lock, persisted on node properties as 1-BASED
-// slot arrays (layerN numbering, same as the w:N stack keys and the modal).
-// Internal WiredLayer.slot stays 0-based — hence the +1 at every lookup.
-const hiddenWiredSet = computed(() =>
-  new Set((((props.data.properties as any)?.sailor_hiddenWired as number[]) ?? []).map(Number)))
+// LEGACY (schema < 2) per-wired-slot visibility, persisted on node properties as
+// a 1-BASED slot array (layerN numbering, same as the w:N stack keys). Internal
+// WiredLayer.slot stays 0-based — hence the +1 at every lookup.
+// Schema 2 retired it: a wired slot is a LAYER and carries its own `visible`.
+// The array is left on disk for rollback, so it has to be actively IGNORED —
+// and ignored on the SAME terms the modal uses, or the two surfaces would
+// disagree about whether a slot is hidden and render the frame differently.
+const hiddenWiredSet = computed(() => {
+  if (Number((props.data.properties as any)?.sailor_frameSchema) >= FRAME_SCHEMA_UNIFIED) return new Set<number>()
+  return new Set((((props.data.properties as any)?.sailor_hiddenWired as number[]) ?? []).map(Number))
+})
 
 // Wired layers select through the SAME editor hit test as every other layer now
 // (their box resolves via this card's content provider), so the separate wired hit
