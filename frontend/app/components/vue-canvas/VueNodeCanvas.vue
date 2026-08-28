@@ -5303,8 +5303,10 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
 
     // Phase 2 masking: which wired content slots get a silhouette mask compiled
     // into their layer{N}_mask input at submit (mirroring the editor's masking).
+    // `locals` carries the schema-2 wired LAYERS, which own their slot's mask —
+    // the registry is only the base (see planWiredMaskJobs).
     const treatments = readWiredTreatments(liveNode)
-    const maskJobs = planWiredMaskJobs(treatments, connectedSlots.map(s => s + 1))
+    const maskJobs = planWiredMaskJobs(treatments, connectedSlots.map(s => s + 1), locals as any)
 
     // Bake resolution mirrors the Frame's aspect: explicit artboard dims win,
     // else the lowest wired layer's native size, else a square default (a
@@ -5474,7 +5476,18 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
       } else {
         const layer = localById.get(sourceKey.slice(2))
         if (!layer) { console.warn('[compositor mask] could not resolve local source', sourceKey); continue }
-        drawLayerSilhouette(ctx, { type: 'local', key: sourceKey, layer }, canvas.width, canvas.height)
+        // A migrated wired layer wears an `l:` key but its pixels still come down
+        // the wire, not from any local paint: drawing it as a local would silhouette
+        // NOTHING and the mask would erase the content it was meant to clip.
+        if ((layer as any).kind === 'wired') {
+          const w = resolveWiredSlot(((layer as any).slot as number) + 1)
+          if (!w) { console.warn('[compositor mask] could not resolve wired-layer source', sourceKey); continue }
+          let img: HTMLImageElement
+          try { img = await loadImage(w.url) } catch { console.warn('[compositor mask] image load failed', w.url); continue }
+          drawWiredImageLayer(ctx, img, { x: w.x, y: w.y, scale: w.scale, rotation: w.rotation, opacity: w.opacity, blend: 'normal' }, canvas.width, canvas.height)
+        } else {
+          drawLayerSilhouette(ctx, { type: 'local', key: sourceKey, layer }, canvas.width, canvas.height)
+        }
       }
 
       const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'))
@@ -5528,7 +5541,15 @@ async function injectCompositorOverlays(workflow: any): Promise<void> {
         if (sourceKey.startsWith('w:')) {
           setNamedWidget(comp, `layer${Number(sourceKey.slice(2))}_opacity`, 0, objectInfo.value)
         } else {
-          hiddenLocalMaskSources.add(sourceKey.slice(2))
+          // A migrated wired source is hidden the wired way — the stack walker's
+          // `kind === 'wired'` branch never consults hiddenLocalMaskSources (it
+          // stamps depth and moves on), so adding its id there would do nothing.
+          const src = localById.get(sourceKey.slice(2))
+          if ((src as any)?.kind === 'wired') {
+            setNamedWidget(comp, `layer${((src as any).slot as number) + 1}_opacity`, 0, objectInfo.value)
+          } else {
+            hiddenLocalMaskSources.add(sourceKey.slice(2))
+          }
         }
       }
     }

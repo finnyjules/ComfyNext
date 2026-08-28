@@ -127,6 +127,41 @@ export function finalizeWiredSentinels(
 }
 
 /**
+ * The watch key both hosts drive their finalize + reconcile pass from.
+ *
+ * The obvious source — per-slot content dims plus the canvas size — is not
+ * enough: a sentinel can APPEAR without either moving. `recordHistory()` between
+ * migration-on-open and the first image decode snapshots the layer at `w = -1`,
+ * and undoing back to that snapshot restores the sentinel while dims and canvas
+ * sit exactly where they were. The watcher never fired, so the layer stayed
+ * invisible (a sentinel measures and paints as nothing) until something resized
+ * the host. Folding the sentinel SLOTS into the key is what wakes the finalizer.
+ *
+ * Loop-safe by construction: the key only moves when a sentinel appears or is
+ * resolved, and `finalizeWiredSentinels` returns `null` (no commit) whenever
+ * there is nothing to resolve — including a sentinel whose slot has no dims yet,
+ * which holds the key still until real content arrives.
+ */
+export function wiredReconcileKey(
+  slots: readonly number[],
+  contentFor: (slot: number) => WiredContentInfo | undefined,
+  canvas: ContentDims,
+  layers: readonly LocalLayer[],
+): string {
+  const perSlot = slots.map((s) => {
+    const info = contentFor(s)
+    const d = info?.dims
+    return `${s}:${d ? `${d.w}x${d.h}` : '?'}:${info?.depthKey ?? ''}`
+  }).join('|')
+  const sentinels = layers
+    .filter(isWiredSentinel)
+    .map(l => (l as WiredLayer).slot)
+    .sort((a, b) => a - b)
+    .join(',')
+  return `${perSlot}|${canvas?.w}x${canvas?.h}|s:${sentinels}`
+}
+
+/**
  * Reconcile the layer stack against the graph's edges — the whole edge lifecycle
  * in one pure pass, so both hosts (and any future one) behave identically:
  *

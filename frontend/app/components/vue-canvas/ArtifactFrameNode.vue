@@ -8,7 +8,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks } from '~/lib/compositor/frameStack'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { libraryFamily } from '~/data/library-fonts'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
@@ -643,11 +643,15 @@ function wiredContentInfo(slot: number) {
 // aspect + depth key so the write-through's fit can't drift after an upstream
 // re-run. Committed WITHOUT recordHistory — reconciliation is bookkeeping, not an
 // edit, and must never become a step the user has to undo through.
+// The layer array is part of the key (via the sentinel set) so an undo that lands
+// BACK on a sentinel re-finalizes instead of leaving the layer invisible until the
+// next resize — see `wiredReconcileKey`.
 watch(
-  () => connectedSlotList.value.map((s) => {
-    const d = wiredDimsForSlot(s)
-    return `${s}:${d ? `${d.w}x${d.h}` : '?'}:${wiredUrlForSlot(s) ?? ''}`
-  }).join('|') + `|${box.value.w}x${box.value.h}`,
+  () => wiredReconcileKey(
+    connectedSlotList.value, wiredContentInfo,
+    { w: box.value.w, h: box.value.h },
+    editor.localLayers.value,
+  ),
   () => {
     const canvas = { w: box.value.w, h: box.value.h }
     const fin = finalizeWiredSentinels(editor.localLayers.value, props.data as any, canvas, wiredDimsForSlot)

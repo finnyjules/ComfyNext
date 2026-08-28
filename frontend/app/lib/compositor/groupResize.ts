@@ -52,6 +52,10 @@ export function scaleLayerAbout(layer: LocalLayer, anchor: { x: number; y: numbe
   if (l.kind === 'text') patch.fontSize = l.fontSize * f
   else if (l.kind === 'line') patch.w = l.w * f
   else if (l.kind === 'path') patch.scale = l.scale * f
+  // A wired layer has no `h` of its own — its height is `w * lastAspect`, so it
+  // scales aspect-locked from the width alone. Writing an `h` here would have
+  // been `undefined * f` = NaN, persisted onto the layer.
+  else if (l.kind === 'wired') patch.w = l.w * f
   else { patch.w = l.w * f; patch.h = l.h * f } // rect / ellipse / image
   return patch as Partial<LocalLayer>
 }

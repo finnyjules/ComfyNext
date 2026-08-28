@@ -12,7 +12,7 @@ import {
   hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
 } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks } from '~/lib/compositor/frameStack'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
@@ -327,9 +327,19 @@ function canvasRect(): DOMRect | null { return canvasRef.value?.getBoundingClien
 // shift lives HERE, at every boundary, spelled out — a silent off-by-one
 // produces wrong widths rather than a crash.
 const wiredMaskCache = createWiredMaskCache()
-/** 0-based slot → decoded content (per-slot mask already punched out). */
+/** 0-based slot → decoded content (per-slot mask already punched out).
+ *
+ *  Gated on the slots that are CONNECTED right now (`layers` is derived from the
+ *  graph's edges every tick). `wiredImageEls` is a decode cache and is never
+ *  pruned, so without the gate a slot whose edge was cut kept handing back its
+ *  last bitmap: the layer painted its old pixels while wearing the "unlinked"
+ *  badge, and export / motion bake baked that ghost. The Frame card has always
+ *  returned null for a disconnected slot (its url lookup only sees connected
+ *  ones) — this is the modal matching it. An unlinked layer keeps its BOX (from
+ *  `lastAspect`), so it stays selectable and re-wiring brings the pixels back. */
 function wiredContentForSlot(slot: number): CanvasImageSource | null {
   const n = slot + 1
+  if (!layers.value.some(l => l.slot === n)) return null
   return wiredMaskCache.apply(slot, wiredImageEls.value[n] ?? null, wiredMaskEls.value[n] ?? null)
 }
 /** 0-based slot → the content's real pixel dims, for the write-through's fit. */
@@ -1108,9 +1118,13 @@ function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min
 // no longer capture clicks meant for a visible layer below. A tainted canvas
 // (cross-origin wired image) can't be read → treat as a hit (falls back to bbox).
 let _hitCanvas: HTMLCanvasElement | null = null
-function layerHitAt(res: { type: 'wired'; layer: Layer } | { type: 'local'; layer: any }, px: number, py: number, W: number, H: number): boolean {
+function layerHitAt(res: { type: 'local'; layer: any }, px: number, py: number, W: number, H: number): boolean {
   const x = Math.round(px), y = Math.round(py)
   if (x < 0 || y < 0 || x >= W || y >= H) return false
+  // An unlinked (edge cut) wired layer paints NO pixels but keeps its box from
+  // `lastAspect` — so it takes the same bbox fallback the tainted-canvas case
+  // takes, and stays grabbable on canvas instead of becoming click-through.
+  if (res.layer?.kind === 'wired' && !wiredContentForSlot(res.layer.slot)) return true
   if (!_hitCanvas) _hitCanvas = document.createElement('canvas')
   const c = _hitCanvas
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H }
@@ -1118,11 +1132,11 @@ function layerHitAt(res: { type: 'wired'; layer: Layer } | { type: 'local'; laye
   if (!ctx) return true
   ctx.clearRect(0, 0, W, H)
   try {
-    if (res.type === 'wired') drawWiredLayer(ctx, res.layer, W, H)
-    // A migrated wired layer arrives here as a LOCAL item and needs this frame's
-    // slot resolver installed, or it would draw nothing and every click would
-    // fall through it to whatever is underneath.
-    else withWiredContent(wiredContentForSlot, () => drawLocalLayer(ctx, res.layer as LocalLayer, W, H))
+    // Only LOCAL items reach here — `hitTopStackKey` skips legacy `w:` rows, which
+    // have no selection state any more. A migrated wired layer arrives as a local
+    // item and needs this frame's slot resolver installed, or it would draw
+    // nothing and every click would fall through to whatever is underneath.
+    withWiredContent(wiredContentForSlot, () => drawLocalLayer(ctx, res.layer as LocalLayer, W, H))
   } catch { return true }
   try {
     const R = 2
@@ -1939,11 +1953,15 @@ function wiredContentInfo0(slot: number) {
 // cached aspect + depth key — without which the preview re-fits live while the
 // widget `scale` the server renders from drifts permanently. Committed WITHOUT
 // recordHistory: reconciliation is bookkeeping, not an undoable edit.
+// The layer array is part of the key (via the sentinel set) so an undo that
+// lands BACK on a sentinel re-finalizes instead of leaving the layer invisible
+// until the next resize — see `wiredReconcileKey`.
 watch(
-  () => connectedSlots0.value.map((s) => {
-    const d = wiredDimsForSlot(s)
-    return `${s}:${d ? `${d.w}x${d.h}` : '?'}:${wiredContentInfo0(s).depthKey ?? ''}`
-  }).join('|') + `|${canvasDisplay.w}x${canvasDisplay.h}`,
+  () => wiredReconcileKey(
+    connectedSlots0.value, wiredContentInfo0,
+    { w: canvasDisplay.w, h: canvasDisplay.h },
+    localLayers.value as LocalLayer[],
+  ),
   () => {
     const canvas = { w: canvasDisplay.w, h: canvasDisplay.h }
     const fin = finalizeWiredSentinels(localLayers.value as LocalLayer[], compositor.value?.data, canvas, wiredDimsForSlot)

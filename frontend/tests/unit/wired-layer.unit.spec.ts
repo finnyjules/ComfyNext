@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, afterAll, beforeAll, vi } from 'vitest'
 import { reactive } from 'vue'
 import {
   createWiredLayer, wiredBoxFromWidgets, widgetsFromWiredBox,
@@ -601,5 +601,67 @@ describe('editor write-through hook', () => {
     const { node, ed } = makeEditor([{ id: 'a', kind: 'rect', x: 0.5, y: 0.5, rotation: 0, opacity: 1, w: 0.1, h: 0.1 } as any])
     ed.setLocal('a', { x: 0.9 })
     expect(node.data.widgetsValues).toEqual(FIXTURE_WIDGETS.map(([, v]) => v))
+  })
+})
+
+// ── Handle drags on a wired layer never persist a NaN height ────────────────
+//
+// A wired layer has NO independent height (its height is `w * lastAspect`), but
+// both drag starters snapshotted `(l as RectLayer).h` — `undefined` — and the
+// pointer-move maths turned that into NaN, which the commit then persisted as
+// the layer's `h`. Both handle sets are reachable for a wired layer: the modal
+// falls back to `startScale` for any non-`resizableKind` selection, and the card
+// wires its corner handles straight to it.
+describe('wired layer handle drags', () => {
+  const listeners: Record<string, (e: any) => void> = {}
+  const realWindow = (globalThis as any).window
+  beforeAll(() => {
+    ;(globalThis as any).window = {
+      addEventListener: (type: string, fn: any) => { listeners[type] = fn },
+      removeEventListener: (type: string) => { delete listeners[type] },
+    }
+  })
+  afterAll(() => { (globalThis as any).window = realWindow })
+
+  const RECT = { left: 0, top: 0, width: 1024, height: 1024 } as DOMRect
+  function editorWith(layers: LocalLayer[]) {
+    const node = reactive({ data: { properties: { sailor_localLayers: layers } } })
+    const ed = useLocalLayerEditor({
+      node: () => node,
+      dims: () => ({ w: 1024, h: 1024 }),
+      getRect: () => RECT,
+      wiredDims: () => ({ w: 800, h: 600 }),
+    })
+    return { node, ed }
+  }
+  const ptr = (x: number, y: number) => ({ clientX: x, clientY: y, preventDefault() {}, stopPropagation() {}, altKey: false, shiftKey: false }) as any
+  const layerAt = (node: any, i = 0) => (node.data.properties.sailor_localLayers as any[])[i]
+
+  it('corner SCALE grows the width and leaves h absent (not NaN)', () => {
+    const w = createWiredLayer(0, { x: 0.5, y: 0.5, w: 0.4, lastAspect: 0.75 })
+    const { node, ed } = editorWith([w as LocalLayer])
+    ed.selectLocal(w.id)
+    ed.startScale(ptr(612, 612))              // grab a corner, 100px from centre-ish
+    listeners.pointermove!(ptr(712, 712))     // drag outward
+    const l = layerAt(node)
+    expect(l.w).toBeGreaterThan(0.4)
+    expect(Number.isNaN(l.h)).toBe(false)
+    expect(l.h).toBeUndefined()
+  })
+
+  it('GROUP resize scales a wired member by width only', () => {
+    const w = createWiredLayer(0, { x: 0.4, y: 0.5, w: 0.3, lastAspect: 0.5 })
+    const rect = { id: 'r', kind: 'rect', x: 0.6, y: 0.5, rotation: 0, opacity: 1, w: 0.2, h: 0.2 } as any
+    const { node, ed } = editorWith([w as LocalLayer, rect])
+    ed.selectLocal(w.id)
+    ed.toggleSelect('r')
+    expect(ed.selectedIds.value.size).toBe(2)
+    ed.startGroupResize('br', ptr(900, 700))
+    listeners.pointermove!(ptr(1000, 800))
+    const l = layerAt(node)
+    expect(Number.isNaN(l.h)).toBe(false)
+    expect(l.h).toBeUndefined()
+    expect(Number.isNaN(l.w)).toBe(false)
+    expect(l.w).toBeGreaterThan(0.3)
   })
 })

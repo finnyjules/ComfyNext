@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, isWiredSentinel,
+  wiredReconcileKey,
   syncWiredLayerLinks,
 } from '~/lib/compositor/frameStack'
 import { createWiredLayer, wiredFitWidth } from '~/lib/compositor/wiredLayer'
@@ -205,5 +206,52 @@ describe('reconcileWiredContent — lastAspect refresh', () => {
 
   it('ignores native layers entirely', () => {
     expect(reconcileWiredContent([local('a')], () => ({ dims: { w: 4, h: 2 } }))).toBeNull()
+  })
+})
+
+// The watch key both hosts feed their finalize/reconcile pass. It used to be
+// (slot dims + canvas size) ONLY, which meant a sentinel that appeared without
+// either of those moving never re-finalized: `recordHistory()` between
+// migration-on-open and the first decode snapshots `w = -1`, and undoing back to
+// that snapshot left the layer invisible until the window was resized. The
+// sentinel set is part of the key, so undo wakes the finalizer.
+describe('wiredReconcileKey — undo onto a sentinel re-finalizes', () => {
+  const info = () => ({ dims: { w: 800, h: 400 }, depthKey: 'a.png' })
+  const canvas = { w: 1024, h: 1024 }
+
+  it('changes when a sentinel appears with dims and canvas unchanged', () => {
+    const resolved = createWiredLayer(0, { w: 0.5, lastAspect: 0.5 }) as LocalLayer
+    const sentinel = { ...resolved, w: UNRESOLVED_WIRED_W } as LocalLayer
+    const before = wiredReconcileKey([0], info, canvas, [resolved])
+    const after = wiredReconcileKey([0], info, canvas, [sentinel])
+    expect(after).not.toBe(before)
+  })
+
+  it('is stable while nothing moves, so the watcher cannot loop', () => {
+    const l = createWiredLayer(0, { w: 0.5, lastAspect: 0.5 }) as LocalLayer
+    expect(wiredReconcileKey([0], info, canvas, [l])).toBe(wiredReconcileKey([0], info, canvas, [l]))
+    // An unresolvable sentinel (no dims for its slot) also holds still — the
+    // finalizer leaves it alone, so the key must not oscillate.
+    const s = createWiredLayer(1, { w: UNRESOLVED_WIRED_W }) as LocalLayer
+    const noDims = () => ({ dims: undefined })
+    expect(wiredReconcileKey([1], noDims, canvas, [s])).toBe(wiredReconcileKey([1], noDims, canvas, [s]))
+  })
+
+  it('still tracks slot dims, depth key and canvas size', () => {
+    const l = createWiredLayer(0, { w: 0.5, lastAspect: 0.5 }) as LocalLayer
+    const base = wiredReconcileKey([0], info, canvas, [l])
+    expect(wiredReconcileKey([0], () => ({ dims: { w: 400, h: 400 }, depthKey: 'a.png' }), canvas, [l])).not.toBe(base)
+    expect(wiredReconcileKey([0], () => ({ dims: { w: 800, h: 400 }, depthKey: 'b.png' }), canvas, [l])).not.toBe(base)
+    expect(wiredReconcileKey([0], info, { w: 512, h: 512 }, [l])).not.toBe(base)
+  })
+
+  it('distinguishes WHICH slot is a sentinel (a per-slot partial still fires)', () => {
+    const a = createWiredLayer(0, { w: UNRESOLVED_WIRED_W }) as LocalLayer
+    const b = createWiredLayer(1, { w: 0.5, lastAspect: 1 }) as LocalLayer
+    const one = wiredReconcileKey([0, 1], info, canvas, [a, b])
+    const other = wiredReconcileKey([0, 1], info, canvas, [
+      { ...a, w: 0.5 } as LocalLayer, { ...b, w: UNRESOLVED_WIRED_W } as LocalLayer,
+    ])
+    expect(one).not.toBe(other)
   })
 })

@@ -27,7 +27,7 @@ import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipbo
 import { resizeBox, type Handle, type Box } from '~/lib/compositor/resizeBox'
 import { unionBox, cornerOf, anchorOf, groupScaleFactor, scaleLayerAbout, type Handle as GHandle, type Box as GBox } from '~/lib/compositor/groupResize'
 import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
-import { syncAllWiredWidgets, type ContentDims } from '~/lib/compositor/wiredLayer'
+import { syncAllWiredWidgets, wiredLayerHeight, type ContentDims } from '~/lib/compositor/wiredLayer'
 import { inject, type Ref } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
 
@@ -587,6 +587,11 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     if (l.kind === 'text') start.fontSize = (l as TextLayer).fontSize
     else if (l.kind === 'line') start.w = (l as LineLayer).w
     else if (l.kind === 'path') start.scale = (l as PathLayer).scale
+    // A wired layer has NO independent height — it is `w * lastAspect`, so the
+    // corner scale is width-only and stays aspect-locked. Snapshotting
+    // `(l as RectLayer).h` (undefined) made onMove's clamp yield NaN, which the
+    // commit then persisted as the layer's `h`.
+    else if (l.kind === 'wired') start.w = (l as WiredLayer).w
     else { start.w = (l as RectLayer).w; start.h = (l as RectLayer).h }
     recordHistory()
     drag.value = { type: 'scale', id: l.id, cx, cy, startDist: Math.max(1, Math.hypot(e.clientX - cx, e.clientY - cy)), start }
@@ -630,6 +635,10 @@ export function useLocalLayerEditor(opts: EditorOpts) {
       if (ll.kind === 'text') s.fontSize = ll.fontSize
       else if (ll.kind === 'line') s.w = ll.w
       else if (ll.kind === 'path') s.scale = ll.scale
+      // Wired: width plus its DERIVED height, so the snapshot is a real box
+      // rather than `h: undefined`. `scaleLayerAbout` scales the width only —
+      // the height follows `lastAspect`, and no `h` is ever written back.
+      else if (ll.kind === 'wired') { s.w = ll.w; s.h = wiredLayerHeight(ll) }
       else { s.w = ll.w; s.h = ll.h }
       start[l.id] = { x: l.x, y: l.y, size: s }
     }

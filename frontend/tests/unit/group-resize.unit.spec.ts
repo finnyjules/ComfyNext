@@ -46,4 +46,15 @@ describe('scaleLayerAbout', () => {
     expect(scaleLayerAbout({ id: 'l', kind: 'line', x: 0.5, y: 0.5, rotation: 0, opacity: 1, w: 0.2 } as any, anchor, f, W, H)).toMatchObject({ w: 0.4 })
     expect(scaleLayerAbout({ id: 'p', kind: 'path', x: 0.5, y: 0.5, rotation: 0, opacity: 1, scale: 0.5 } as any, anchor, f, W, H)).toMatchObject({ scale: 1 })
   })
+  // A wired layer has NO independent height — its height is `w * lastAspect`. It
+  // used to fall into the rect branch, where `l.h * f` is `undefined * f` = NaN,
+  // and the NaN was persisted onto the layer.
+  it('scales a wired layer by width only, never writing an h', () => {
+    const p = scaleLayerAbout(
+      { id: 'w', kind: 'wired', slot: 0, x: 0.5, y: 0.5, rotation: 0, opacity: 1, w: 0.2, lastAspect: 0.75 } as any,
+      anchor, f, W, H,
+    )
+    expect(p).toMatchObject({ x: 0.9, y: 0.875, w: 0.4 })
+    expect('h' in p).toBe(false)
+  })
 })
