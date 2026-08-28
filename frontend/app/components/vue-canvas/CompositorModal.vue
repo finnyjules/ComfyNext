@@ -230,20 +230,31 @@ const baseAspect = computed(() => {
 })
 const canvasDisplay = reactive({ w: 680, h: 680 })
 const stageBoxRef = ref<HTMLElement | null>(null)
-// Matte reserved around the artboard inside the stage box. The side gutters give
-// selection handles room to spill out; the top reserve clears the rotation handle /
-// multi-select bar, and the larger bottom reserve leaves a clear gap above the
-// floating toolbar at any modal height. The artboard fits whatever space remains
-// (aspect preserved); stagePadBottom biases the centered artboard up so the top and
-// bottom reserves can differ.
-const STAGE_MATTE_X = 48
-const STAGE_MATTE_TOP = 56
-const STAGE_MATTE_BOTTOM = 92
+// The stage box is full-bleed (inset-0): the glass panels float ABOVE it, so
+// zoomed/panned content slides under them instead of cropping at their edge.
+// These gutters mirror the floating panels' own classes and are the only reason
+// Fit still respects them — keep them in sync with the template:
+//   left panel  `absolute left-4 w-60`  → 16 + 240 + 16 breathing = 272
+//   right panel `absolute right-4 w-72` → 16 + 288 + 16 breathing = 320
+const PANEL_GUTTER_LEFT = 272
+const PANEL_GUTTER_RIGHT = 320
+// Matte reserved around the artboard inside the stage box. The artboard fits
+// whatever space remains (aspect preserved); stagePadBottom biases the centered
+// artboard up so the top and bottom reserves can differ (0 while they match).
+const STAGE_MATTE_X = 24
+const STAGE_MATTE_TOP = 24
+const STAGE_MATTE_BOTTOM = 24
 const stagePadBottom = STAGE_MATTE_BOTTOM - STAGE_MATTE_TOP
 function fitCanvasToStage() {
   const a = baseAspect.value || 1
   const box = stageBoxRef.value
-  const availW = box ? Math.max(120, box.clientWidth - STAGE_MATTE_X * 2) : 680
+  // Fit must land the artboard in the PANEL GAP, not in the full-bleed stage,
+  // or "Fit" would tuck content under the glass. The artboard is centred on the
+  // stage (= on the modal), so the binding constraint is the WIDER gutter: half
+  // the artboard has to clear it on both sides.
+  const availW = box
+    ? Math.max(120, box.clientWidth - Math.max(PANEL_GUTTER_LEFT, PANEL_GUTTER_RIGHT) * 2 - STAGE_MATTE_X * 2)
+    : 680
   const availH = box ? Math.max(120, box.clientHeight - STAGE_MATTE_TOP - STAGE_MATTE_BOTTOM) : 600
   let w = availW, h = w / a
   if (h > availH) { h = availH; w = h * a }
@@ -3867,10 +3878,13 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Center canvas (sits in the gap between the layer + properties panels) -->
+    <!-- Full-bleed stage: spans the whole modal and passes UNDER the floating
+         glass panels (z-20) and the title / close chrome (z-30), so zoomed and
+         panned content slides beneath them instead of cropping at their edge.
+         Fit still respects the panel gap — see PANEL_GUTTER_* above. -->
     <div
       ref="stageBoxRef"
-      class="absolute top-16 bottom-4 left-[272px] right-[320px] flex items-center justify-center overflow-hidden"
+      class="absolute inset-0 flex items-center justify-center overflow-hidden"
       :class="panning ? 'cursor-grabbing' : spaceDown ? 'cursor-grab' : ''"
       :style="{ paddingBottom: stagePadBottom + 'px' }"
       @wheel="onStageWheel"
@@ -4198,10 +4212,14 @@ onUnmounted(() => {
         </template>
       </div>
 
+      <!-- Chrome below is positioned against the stage box, which is now full-bleed
+           (it used to start at top-16 / end at bottom-4). Their offsets carry a
+           +64px top / +16px bottom compensation so they sit exactly where they did. -->
+
       <!-- Multi-select bar: align/distribute (any ≥2) + booleans (≥2 paths) -->
       <div
         v-if="selectedCount >= 2 && !nodeEdit.active.value"
-        class="absolute top-[60px] left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
+        class="absolute top-[124px] left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
         @pointerdown.stop
       >
         <button v-for="a in ALIGN_BTNS" :key="a.mode"
@@ -4224,7 +4242,7 @@ onUnmounted(() => {
       </div>
       <div
         v-else-if="nodeEdit.active.value"
-        class="absolute top-[60px] left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 rounded-[10px] px-3 py-1.5 border border-white/20 shadow-lg text-[11px] text-white/80"
+        class="absolute top-[124px] left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 rounded-[10px] px-3 py-1.5 border border-white/20 shadow-lg text-[11px] text-white/80"
         @pointerdown.stop
       >
         Editing path nodes — drag points & handles · Del removes a point ·
@@ -4240,7 +4258,7 @@ onUnmounted(() => {
       >
       <div
         v-if="aiOpen"
-        class="absolute bottom-[68px] w-[340px] bg-[#1a1a1a]/97 rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
+        class="absolute bottom-[84px] w-[340px] bg-[#1a1a1a]/97 rounded-[12px] p-3 border border-[#2a2a2a] shadow-xl text-white/85"
         @pointerdown.stop
       >
         <div class="flex items-center gap-1.5 mb-2 text-[11px] uppercase tracking-wide text-white/40">
@@ -4292,7 +4310,7 @@ onUnmounted(() => {
 
       <!-- Zoom control (top-center of the stage). Scroll to pan, ⌘/pinch to zoom,
            space-drag to pan; these buttons + the % (reset) cover mouse users. -->
-      <div class="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-0.5 rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1 shadow-lg pointer-events-auto">
+      <div class="absolute top-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-0.5 rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1 shadow-lg pointer-events-auto">
         <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom out (⌘−)" @click="zoomBy(1 / 1.2)">
           <Minus class="size-4" />
         </button>
@@ -4307,7 +4325,7 @@ onUnmounted(() => {
       <!-- Bottom cluster: agent command bar + toolbar. The column is bottom-anchored
            and shrink-wraps to the toolbar's width (its widest child), so the bare
            prompt above stretches to exactly match the toolbar. -->
-      <div v-if="inspectorTab !== 'motion'" class="absolute bottom-4 flex flex-col items-stretch gap-2 pointer-events-none">
+      <div v-if="inspectorTab !== 'motion'" class="absolute bottom-8 flex flex-col items-stretch gap-2 pointer-events-none">
       <!-- Agent command bar — bare prompt; its progress + proposal render in the
            right inspector (see the Assistant takeover branch). -->
       <div class="pointer-events-auto">
@@ -4415,7 +4433,10 @@ onUnmounted(() => {
       </div>
 
       <!-- Docked motion timeline (replaces the agent bar + toolbar in Motion mode) -->
-      <div v-if="inspectorTab === 'motion'" class="absolute inset-x-4 bottom-4 z-20 pointer-events-auto"
+      <!-- Full-width chrome, so it is pinned to the panel gap by hand (the stage
+           behind it is full-bleed): panel gutter + the same 16px inset as before. -->
+      <div v-if="inspectorTab === 'motion'" class="absolute bottom-8 z-20 pointer-events-auto"
+        :style="{ left: (PANEL_GUTTER_LEFT + 16) + 'px', right: (PANEL_GUTTER_RIGHT + 16) + 'px' }"
         @pointerdown.stop @click.stop @dblclick.stop>
         <CompositorMotionTimeline
           :layers="localLayers" :selected-id="selectedLocal?.id ?? null"
