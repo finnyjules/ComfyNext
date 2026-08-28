@@ -46,6 +46,9 @@ import { depthImageFor, requestDepth } from '~/lib/compositor/depthRegistry'
 import { ensureFillBitmaps } from '~/lib/paint/imageFillCache'
 import { applyTornEdge, tornEdgeActive } from '~/lib/compositor/tornEdge'
 import { applyFeather, featherActive } from '~/lib/compositor/feather'
+// Runtime import is safe: wiredLayer.ts only imports the WiredLayer TYPE back from
+// this file, and type imports are erased — so this is not a module cycle.
+import { wiredLayerHeight } from '~/lib/compositor/wiredLayer'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -65,6 +68,79 @@ interface MotionPainter {
 }
 let _motionPainterImpl: MotionPainter | null = null
 export function _registerMotionPainter(impl: MotionPainter) { _motionPainterImpl = impl }
+
+// ── Wired content indirection ────────────────────────────────────────────────
+// A wired layer's pixels come from an upstream graph slot, which only the HOST
+// (the Frame node card, the Compositor modal, the bake) can resolve — it owns the
+// image cache / live studio surfaces keyed by slot. Rather than thread a resolver
+// argument through paintLayerStack → drawLocalLayer → paintLayer → drawLayerContent
+// (six signatures, every call site), the host registers one provider here, exactly
+// like `_registerMotionPainter` above.
+//
+// The provider is called on EVERY draw, never memoized: that IS the liveness
+// contract. Re-running the upstream node swaps the content behind the same slot
+// and the very next frame re-fits to its new aspect with no invalidation step.
+type WiredContentProvider = (slot: number) => CanvasImageSource | null
+let _wiredContentImpl: WiredContentProvider | null = null
+/** Register (or clear, with `null`) the host's slot → live content resolver. */
+export function _registerWiredContent(provider: WiredContentProvider | null) { _wiredContentImpl = provider }
+
+/**
+ * The live content for a wired layer's slot together with its pixel dimensions,
+ * or null when there is nothing drawable this frame (no provider, slot empty,
+ * `<img>` still decoding, zero-sized source). A null here is NOT an error state:
+ * the layer simply contributes no pixels, and hosts render the "unlinked" badge
+ * in the DOM from `layer.unlinked` — paint never draws placeholder art.
+ */
+function wiredContent(layer: WiredLayer): { src: CanvasImageSource; w: number; h: number } | null {
+  if (!_wiredContentImpl) return null
+  let src: CanvasImageSource | null = null
+  // A host provider reaches into caches/refs; a throw here must degrade to "no
+  // content this frame", never take the whole stack down mid-paint.
+  try { src = _wiredContentImpl(layer.slot) } catch { return null }
+  if (!src) return null
+  const s = src as unknown as Record<string, unknown>
+  if ('complete' in s && s.complete === false) return null      // undecoded <img>
+  // naturalW/H → <img>; videoW/H → <video>; displayW/H → VideoFrame; w/h → canvas,
+  // OffscreenCanvas, ImageBitmap. Anything else isn't measurable, so isn't drawable.
+  const num = (...keys: string[]) => {
+    for (const k of keys) { const v = s[k]; if (typeof v === 'number' && v > 0) return v }
+    return 0
+  }
+  const w = num('naturalWidth', 'videoWidth', 'displayWidth', 'width')
+  const h = num('naturalHeight', 'videoHeight', 'displayHeight', 'height')
+  if (!(w > 0) || !(h > 0)) return null
+  return { src, w, h }
+}
+
+/**
+ * The aspect (contentH / contentW) a wired layer RENDERS at this frame. Live
+ * content wins over the cached `lastAspect` so a re-run upstream node re-fits
+ * instead of stretching — except when the layer is `unlinked`, which is exactly
+ * the flag that means "keep the size I set, whatever the graph does now".
+ *
+ * Deliberately read-only: this never writes `lastAspect` back. Paint is pure —
+ * hosts reconcile the cached aspect in their own state layer, so a render pass
+ * (which also runs for hit tests, silhouettes and bakes) can't mutate the doc.
+ */
+function wiredAspect(layer: WiredLayer, live: { w: number; h: number } | null): number {
+  if (live && !layer.unlinked) return live.h / live.w
+  return layer.lastAspect || 1
+}
+
+/**
+ * Render box of a wired layer in PIXELS, centred on the layer origin like every
+ * other kind. Width is the layer's own width-normalized `w`; height follows the
+ * aspect it draws at this frame, through `wiredLayerHeight` so the "h = w ×
+ * aspect" rule has exactly one definition (the migration math in
+ * lib/compositor/wiredLayer.ts is the other consumer of it).
+ */
+function wiredBoxPx(layer: WiredLayer, W: number, live: { w: number; h: number } | null): { w: number; h: number } {
+  return {
+    w: layer.w * W,
+    h: wiredLayerHeight({ w: layer.w, lastAspect: wiredAspect(layer, live) }) * W,
+  }
+}
 
 // ── Paint (solid color or gradient) ──────────────────────────────────────────
 // Moved to lib/compositor/paint.ts so CPU-only lib/ modules (fillTile.ts) can
@@ -803,6 +879,14 @@ export function localLayerBox(
     const b = strokeBounds((layer as BrushLayer).strokes)
     return { w: Math.max(4, (b.maxX - b.minX) * W), h: Math.max(4, (b.maxY - b.minY) * W) }
   }
+  if (layer.kind === 'wired') {
+    // A wired layer has no stored `h` (the height follows the content aspect), so
+    // it must NOT fall through to the generic `w × h` return below — that reads an
+    // absent property and yields a NaN box, which silently breaks selection,
+    // corner-pin and every other consumer of this function. Resolved from the SAME
+    // live content the draw uses, so the box always hugs what actually paints.
+    return wiredBoxPx(layer, W, wiredContent(layer))
+  }
   return { w: (layer as RectLayer).w * W, h: (layer as RectLayer).h * W }
 }
 
@@ -1285,6 +1369,20 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
       ctx.fillStyle = 'rgba(255,255,255,0.06)'
       ctx.fillRect(-w / 2, -h / 2, w, h)
     }
+  } else if (layer.kind === 'wired') {
+    // Graph pixels, drawn like any other content: centred on the origin the caller
+    // already translated to, in the layer's own box. Everything around this draw —
+    // opacity, blend, effects, crop/stroke/layer masks, cloner, motion — comes from
+    // the shared LayerCommon machinery, because a wired layer reaches here through
+    // exactly the same paintLayer path as a rect or an image.
+    const live = wiredContent(layer)
+    // No content this frame: draw NOTHING. The layer keeps its last-known box (see
+    // localLayerBox, which falls back to `lastAspect` the same way) so selection and
+    // handles stay put, and the host shows the unlinked badge in the DOM. Painting a
+    // placeholder here would bake into exports.
+    if (!live) return
+    const box = wiredBoxPx(layer, W, live)
+    ctx.drawImage(live.src, -box.w / 2, -box.h / 2, box.w, box.h)
   } else if (layer.kind === 'brush') {
     if (!layer.strokes.length) return
     // Size the offscreen to the painted BOUNDS (a tight box), not the whole artboard,
