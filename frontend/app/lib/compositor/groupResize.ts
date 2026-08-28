@@ -16,6 +16,43 @@ export function unionBox(boxes: Box[]): Box {
   return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 }
 }
 
+/** A member's normalized position + rotation — the subset `rotatedUnionBoxPx`
+ *  needs, decoupled from `LocalLayer` so it stays trivially testable. */
+export interface RotatedBoxMember { x: number; y: number; rotation: number }
+
+/** Axis-aligned union of each member's ROTATED corner AABB (px) — same math as
+ *  the single-layer selection handles (`boxHandles` in useLocalLayerEditor.ts):
+ *  the four corners of the member's own box are rotated about its center, THEN
+ *  unioned, so a rotated member's full on-screen extent is included.
+ *
+ *  This is deliberately a different box than `selectionBox` (the un-rotated
+ *  `unionBox` above, used for the multi-select overlay RECTANGLE and its resize
+ *  handles): that overlay is drawn axis-aligned by design — an accurate rotated
+ *  outline would need to become a polygon, a bigger change than fixing zoom-to-
+ *  selection. `rotatedUnionBoxPx` exists only to feed ⌘2 (zoom to selection),
+ *  where "does the whole rotated layer fit on screen" is what matters, not what
+ *  shape the overlay draws. */
+export function rotatedUnionBoxPx<T extends RotatedBoxMember>(
+  members: T[],
+  boxPxFn: (m: T) => { w: number; h: number },
+  W: number, H: number,
+): Box | null {
+  if (!members.length) return null
+  const xs: number[] = []; const ys: number[] = []
+  for (const m of members) {
+    const b = boxPxFn(m)
+    const cx = m.x * W, cy = m.y * H, hw = b.w / 2, hh = b.h / 2
+    const rad = (m.rotation * Math.PI) / 180
+    const cosA = Math.cos(rad), sinA = Math.sin(rad)
+    for (const [dx, dy] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]] as [number, number][]) {
+      xs.push(cx + dx * cosA - dy * sinA)
+      ys.push(cy + dx * sinA + dy * cosA)
+    }
+  }
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys)
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 }
+}
+
 const SGN: Record<Handle, { sx: number; sy: number }> = {
   tl: { sx: -1, sy: -1 }, tr: { sx: 1, sy: -1 }, br: { sx: 1, sy: 1 }, bl: { sx: -1, sy: 1 },
 }

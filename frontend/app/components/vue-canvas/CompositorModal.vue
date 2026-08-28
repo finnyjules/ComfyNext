@@ -22,6 +22,7 @@ import {
   reparentGroup as reparentGroupOp, directLayerIds, upsertGroup,
 } from '~/lib/compositor/layerGroups'
 import { arrangeMembers, unionBBoxPx } from '~/lib/compositor/expressiveArrange'
+import { rotatedUnionBoxPx } from '~/lib/compositor/groupResize'
 import { insertStackKeyAbove, pruneWiredSlotFlags, pruneSlotKeyedRecord } from '~/lib/compositor/wiredSlots'
 import { defaultExpressiveBoxParams, type ExpressiveBoxParams } from '~~/shared/text-layout/boxes'
 import { useCompositorAgent } from '~/composables/useCompositorAgent'
@@ -350,6 +351,10 @@ function zoomAround(cx: number, cy: number, factor: number) {
   view.scale = s1
 }
 function zoomBy(factor: number) {
+  zoomMenuOpen.value = false // the −/+ toolbar buttons sit inside the menu's
+  // @click.stop wrapper (so their click doesn't trigger the stage's click-away),
+  // which meant clicking them left an already-open menu stuck open. Keyboard
+  // shortcuts route through here too; closing an already-closed menu is a no-op.
   const box = stageBoxRef.value; if (!box) return
   const r = box.getBoundingClientRect()
   zoomAround(r.left + r.width / 2, r.top + r.height / 2, factor)
@@ -377,10 +382,21 @@ function gapCentre(): { x: number, y: number, w: number, h: number } | null {
   const h = Math.max(120, r.height - STAGE_MATTE_TOP - STAGE_MATTE_BOTTOM - stageBottomReserve.value)
   return { x: r.left + gapLeft.value + w / 2, y: r.top + STAGE_MATTE_TOP + h / 2, w, h }
 }
-/** Selection bounds in ARTBOARD px (rotation-aware for a single layer). */
+/** Selection bounds in ARTBOARD px (rotation-aware, single layer or multi).
+ *
+ *  The multi-select branch deliberately does NOT read `selectionBox` (the
+ *  editor's un-rotated union, used for the overlay rectangle + resize handles):
+ *  a rotated member's on-screen extent is bigger than its un-rotated box, so
+ *  using `selectionBox` here would crop that member out of the ⌘2 zoom. Instead
+ *  this unions each member's ROTATED corner AABB via `rotatedUnionBoxPx` — the
+ *  same per-member math as the single-layer path below. See that helper's doc
+ *  comment for why the overlay keeps the plain union. */
 function selectionBoundsPx(): { cx: number, cy: number, w: number, h: number } | null {
-  const multi = selectionBox.value
-  if (multi) return { cx: multi.cx, cy: multi.cy, w: multi.w, h: multi.h }
+  if (selectedLayers.value.length >= 2) {
+    const W = canvasDisplay.w, H = canvasDisplay.h
+    const b = rotatedUnionBoxPx(selectedLayers.value, boxPx, W, H)
+    if (b) return { cx: b.cx, cy: b.cy, w: Math.max(1, b.w), h: Math.max(1, b.h) }
+  }
   const h = localHandlePositions.value
   if (!h) return null
   const xs = [h.tl.x, h.tr.x, h.br.x, h.bl.x], ys = [h.tl.y, h.tr.y, h.br.y, h.bl.y]
