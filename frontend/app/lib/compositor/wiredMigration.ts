@@ -35,6 +35,7 @@
 
 import type { LocalLayer, WiredLayer } from '~/composables/useCompositorLayers'
 import { createWiredLayer, wiredBoxFromWidgets, type ContentDims } from '~/lib/compositor/wiredLayer'
+import { widgetNum, widgetStr, type WidgetHostData } from '~/lib/compositor/nodeWidgets'
 
 /** `properties.sailor_frameSchema` value meaning "wired slots are layers". */
 export const FRAME_SCHEMA_UNIFIED = 2
@@ -65,11 +66,7 @@ export const UNRESOLVED_WIRED_W = -1
 export interface FrameNodeShape {
   /** 0-based input-port indices that currently have an edge. */
   connectedSlots: number[]
-  data?: {
-    properties?: Record<string, any>
-    widgetsValues?: any[]
-    widgetDefs?: { name: string }[]
-  }
+  data?: WidgetHostData & { properties?: Record<string, any> }
 }
 
 /** Content pixel dimensions per 0-based slot; a missing entry means "unknown". */
@@ -79,18 +76,6 @@ export type SlotDims = Record<number, ContentDims | undefined>
 const FALLBACK_CANVAS: ContentDims = { w: 1024, h: 1024 }
 
 function clamp01(v: number): number { return Math.max(0, Math.min(1, v)) }
-
-/** Mirrors `widgetIdx` in ArtifactFrameNode.vue: widget order comes from the
- *  node type's defs, and `widgetsValues` is positionally aligned with them. */
-function widgetIdx(data: NonNullable<FrameNodeShape['data']>, name: string): number {
-  return data.widgetDefs?.findIndex(w => w?.name === name) ?? -1
-}
-function widgetNum(data: NonNullable<FrameNodeShape['data']>, name: string, fallback = 0): number {
-  const i = widgetIdx(data, name)
-  if (i < 0) return fallback
-  const v = Number(data.widgetsValues?.[i])
-  return Number.isFinite(v) ? v : fallback
-}
 
 /** The artboard the legacy contain-fit was computed against. Explicit W/H wins;
  *  otherwise the frame took the BOTTOM (lowest connected) slot's aspect ONLY —
@@ -166,8 +151,7 @@ export function migrateFrameToUnifiedLayers(node: FrameNodeShape, naturalDims: S
       ? wiredBoxFromWidgets(tf, natural, canvas)
       : null
 
-    const blendIdx = widgetIdx(data, `layer${n}_blend`)
-    const blend = blendIdx >= 0 ? String(data.widgetsValues?.[blendIdx] ?? 'normal') : 'normal'
+    const blend = widgetStr(data, `layer${n}_blend`, 'normal')
     const treatment = treatments[`w:${n}`] ?? {}
     const name = typeof names[n] === 'string' ? names[n].trim() : ''
 

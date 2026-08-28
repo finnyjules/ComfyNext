@@ -26,6 +26,7 @@ import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipbo
 import { resizeBox, type Handle, type Box } from '~/lib/compositor/resizeBox'
 import { unionBox, cornerOf, anchorOf, groupScaleFactor, scaleLayerAbout, type Handle as GHandle, type Box as GBox } from '~/lib/compositor/groupResize'
 import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
+import { syncAllWiredWidgets, type ContentDims } from '~/lib/compositor/wiredLayer'
 import { inject, type Ref } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
 
@@ -33,6 +34,14 @@ interface EditorOpts {
   node: () => any                       // the compositor node (reactive)
   dims: () => { w: number; h: number }  // logical artboard size
   getRect: () => DOMRect | null         // canvas element's on-screen rect
+  /**
+   * Content pixel dimensions of a wired slot's upstream image / studio frame,
+   * for the `layer{N}_*` write-through's contain-fit. HOST-OWNED: only the host
+   * decodes wired content, so the editor never guesses — omit it and the
+   * write-through falls back to each layer's cached `lastAspect`, which pins the
+   * same ratio (see `syncWiredWidgets`).
+   */
+  wiredDims?: (slot: number) => ContentDims | undefined
 }
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -76,6 +85,16 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     const n = node(); if (!n) return
     if (!n.data.properties) n.data.properties = {}
     n.data.properties.sailor_localLayers = next
+    // One-way write-through: a `wired` layer's transform is still read by the
+    // Python Compositor node and the server Render out of its `layer{N}_*`
+    // widgets, which know nothing about the layer model. Mirroring here — the
+    // editor's single mutation choke point — is what makes "every wired edit
+    // reaches the backend" true for moves, resizes, rotation, opacity, blend,
+    // undo/redo and every future edit, with no call site having to remember.
+    // Layers absent from `next` are left alone on purpose: deleting a wired
+    // layer must not clear its widgets (disconnecting the edge is what removes
+    // it server-side).
+    syncAllWiredWidgets(n, next, dims(), opts.wiredDims)
   }
   // The unified z-order (wired + local StackKeys) lives alongside the layers;
   // history captures it too so reorders/grouping undo cleanly.

@@ -1,5 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { createWiredLayer, wiredBoxFromWidgets, widgetsFromWiredBox } from '~/lib/compositor/wiredLayer'
+import { reactive } from 'vue'
+import {
+  createWiredLayer, wiredBoxFromWidgets, widgetsFromWiredBox,
+  syncWiredWidgets, syncAllWiredWidgets,
+} from '~/lib/compositor/wiredLayer'
+import { widgetNum } from '~/lib/compositor/nodeWidgets'
+import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import {
   _registerWiredContent, localLayerBox, paintLayerStack,
   type LocalLayer, type WiredLayer,
@@ -309,5 +315,225 @@ describe('wired layer paint dispatch', () => {
     const box = localLayerBox(null, wired({ w: -1, lastAspect: 1 }), 100, 100)
     expect(box.w).toBe(0)
     expect(box.h).toBe(0)
+  })
+})
+
+// ── Widget write-through (Task 4) ────────────────────────────────────────────
+//
+// The Python Compositor node and the server Render path both read the legacy
+// `layer{N}_*` widgets, and neither knows about the unified layer model. So the
+// layer stays the single source of truth in the editor, and every mutation of a
+// wired layer is MIRRORED down into its slot's widgets. One-way, on purpose:
+// nothing reads the widgets back into the layer after migration.
+
+/** Widget names in the order the Frame node type declares them, for two slots.
+ *  `widgetsValues` is positionally aligned with `widgetDefs` — that alignment is
+ *  the whole contract `widgetIdx` depends on. */
+const FIXTURE_WIDGETS: [string, any][] = [
+  ['width', 1024], ['height', 1024],
+  ['layer1_x', 0], ['layer1_y', 0], ['layer1_rotation', 0], ['layer1_scale', 1],
+  ['layer1_opacity', 1], ['layer1_blend', 'normal'], ['layer1_protect', true], ['layer1_z', 0],
+  ['layer2_x', 0], ['layer2_y', 0], ['layer2_rotation', 0], ['layer2_scale', 1],
+  ['layer2_opacity', 1], ['layer2_blend', 'normal'], ['layer2_protect', false], ['layer2_z', 1],
+]
+
+function fixtureNode(overrides: Record<string, any> = {}) {
+  return {
+    data: {
+      widgetDefs: FIXTURE_WIDGETS.map(([name]) => ({ name })),
+      widgetsValues: FIXTURE_WIDGETS.map(([name, v]) => (name in overrides ? overrides[name] : v)),
+      properties: {} as Record<string, any>,
+    },
+  }
+}
+/** Read a widget back by name (the same positional lookup the hosts do). */
+function wv(node: any, name: string): any {
+  const i = node.data.widgetDefs.findIndex((w: any) => w.name === name)
+  return i >= 0 ? node.data.widgetsValues[i] : undefined
+}
+
+describe('wired widget write-through', () => {
+  const canvas = { w: 1024, h: 1024 }
+  const natural = { w: 800, h: 600 }          // landscape ⇒ width-limited fit (1)
+
+  it('writes the exact transform widgetsFromWiredBox derives', () => {
+    const node = fixtureNode()
+    const layer = createWiredLayer(0, { x: 0.62, y: 0.41, rotation: 23, opacity: 0.55, w: 1.4, lastAspect: 600 / 800 })
+    expect(syncWiredWidgets(node, layer, canvas, natural)).toBe(true)
+    const expected = widgetsFromWiredBox(layer, natural, canvas)
+    expect(wv(node, 'layer1_x')).toBeCloseTo(expected.x, 6)
+    expect(wv(node, 'layer1_y')).toBeCloseTo(expected.y, 6)
+    expect(wv(node, 'layer1_rotation')).toBeCloseTo(expected.rotation, 6)
+    expect(wv(node, 'layer1_scale')).toBeCloseTo(expected.scale, 6)
+    expect(wv(node, 'layer1_opacity')).toBeCloseTo(expected.opacity, 6)
+  })
+
+  it('addresses slot N through layer{N+1}_* and leaves every other slot alone', () => {
+    const node = fixtureNode()
+    const layer = createWiredLayer(1, { x: 0.25, y: 0.75, w: 0.5, lastAspect: 600 / 800 })
+    syncWiredWidgets(node, layer, canvas, natural)
+    expect(wv(node, 'layer2_x')).toBeCloseTo(-0.25, 6)
+    expect(wv(node, 'layer2_y')).toBeCloseTo(0.25, 6)
+    expect(wv(node, 'layer1_x')).toBe(0)         // untouched
+    expect(wv(node, 'layer1_scale')).toBe(1)
+  })
+
+  it('mirrors the blend mode, and writes "normal" when the layer has none', () => {
+    const node = fixtureNode({ layer1_blend: 'screen' })
+    syncWiredWidgets(node, createWiredLayer(0, { blend: 'multiply' }), canvas, natural)
+    expect(wv(node, 'layer1_blend')).toBe('multiply')
+    syncWiredWidgets(node, createWiredLayer(0), canvas, natural)
+    expect(wv(node, 'layer1_blend')).toBe('normal')
+  })
+
+  it('never touches the protect widget (a server flag the layer model does not carry)', () => {
+    const node = fixtureNode()
+    syncWiredWidgets(node, createWiredLayer(0, { x: 0.9 }), canvas, natural)
+    expect(wv(node, 'layer1_protect')).toBe(true)
+    expect(wv(node, 'layer2_protect')).toBe(false)
+  })
+
+  it('is a NO-OP for a sentinel (w <= 0) layer — the widgets still carry the truth', () => {
+    const node = fixtureNode({ layer1_x: 0.3, layer1_scale: 2 })
+    const layer = createWiredLayer(0, { x: 0.5, y: 0.5, w: -1, lastAspect: 1 })
+    expect(syncWiredWidgets(node, layer, canvas, natural)).toBe(false)
+    expect(wv(node, 'layer1_x')).toBe(0.3)
+    expect(wv(node, 'layer1_scale')).toBe(2)
+  })
+
+  it('derives the fit from lastAspect when the host supplies no content dims', () => {
+    const node = fixtureNode()
+    const portrait = { w: 600, h: 800 }
+    const layer = createWiredLayer(0, { x: 0.5, y: 0.5, w: 0.6, lastAspect: 800 / 600 })
+    syncWiredWidgets(node, layer, canvas)                       // no natural dims
+    const withDims = fixtureNode()
+    syncWiredWidgets(withDims, layer, canvas, portrait)
+    expect(wv(node, 'layer1_scale')).toBeCloseTo(wv(withDims, 'layer1_scale'), 10)
+    expect(wv(node, 'layer1_scale')).toBeCloseTo(0.6 / 0.75, 6)  // portrait fit = 0.75
+  })
+
+  it('prefers the host content dims over a stale lastAspect', () => {
+    const node = fixtureNode()
+    const layer = createWiredLayer(0, { w: 0.6, lastAspect: 1 })  // stale square cache
+    syncWiredWidgets(node, layer, canvas, { w: 600, h: 800 })     // live portrait
+    expect(wv(node, 'layer1_scale')).toBeCloseTo(0.6 / 0.75, 6)
+  })
+
+  it('round-trips a legacy transform untouched through box → widgets', () => {
+    const node = fixtureNode()
+    const tf = { x: 0.12, y: -0.08, rotation: -30, scale: 0.66, opacity: 0.9 }
+    const box = wiredBoxFromWidgets(tf, natural, canvas)
+    syncWiredWidgets(node, createWiredLayer(0, box), canvas, natural)
+    expect(wv(node, 'layer1_x')).toBeCloseTo(tf.x, 6)
+    expect(wv(node, 'layer1_y')).toBeCloseTo(tf.y, 6)
+    expect(wv(node, 'layer1_rotation')).toBeCloseTo(tf.rotation, 6)
+    expect(wv(node, 'layer1_scale')).toBeCloseTo(tf.scale, 6)
+    expect(wv(node, 'layer1_opacity')).toBeCloseTo(tf.opacity, 6)
+  })
+
+  it('is a no-op (never throws) when the node has no widget arrays at all', () => {
+    expect(syncWiredWidgets({ data: {} } as any, createWiredLayer(0), canvas, natural)).toBe(false)
+    expect(syncWiredWidgets(null as any, createWiredLayer(0), canvas, natural)).toBe(false)
+    expect(syncWiredWidgets(undefined as any, createWiredLayer(0), canvas, natural)).toBe(false)
+  })
+
+  it('is a no-op for a slot whose widgets this node type does not declare', () => {
+    const node = fixtureNode()
+    expect(syncWiredWidgets(node, createWiredLayer(9, { x: 0.9 }), canvas, natural)).toBe(false)
+    expect(node.data.widgetsValues).toEqual(FIXTURE_WIDGETS.map(([, v]) => v))
+  })
+
+  it('is a no-op on a degenerate canvas rather than writing a bogus scale', () => {
+    const node = fixtureNode()
+    expect(syncWiredWidgets(node, createWiredLayer(0, { x: 0.9 }), { w: 0, h: 0 }, natural)).toBe(false)
+    expect(wv(node, 'layer1_x')).toBe(0)
+  })
+
+  it('syncs every wired layer in a stack and ignores the native ones', () => {
+    const node = fixtureNode()
+    const layers: LocalLayer[] = [
+      createWiredLayer(0, { x: 0.75, w: 1, lastAspect: 600 / 800 }),
+      { id: 'r', kind: 'rect', x: 0.1, y: 0.1, rotation: 0, opacity: 1, w: 0.2, h: 0.2 } as any,
+      createWiredLayer(1, { y: 0.25, w: 1, lastAspect: 600 / 800 }),
+    ]
+    expect(syncAllWiredWidgets(node, layers, canvas)).toBe(2)
+    expect(wv(node, 'layer1_x')).toBeCloseTo(0.25, 6)
+    expect(wv(node, 'layer2_y')).toBeCloseTo(-0.25, 6)
+  })
+
+  it('reads back through the shared widgetIdx lookup the hosts and migration use', () => {
+    const node = fixtureNode()
+    syncWiredWidgets(node, createWiredLayer(0, { x: 0.7, w: 1, lastAspect: 600 / 800 }), canvas, natural)
+    expect(widgetNum(node.data, 'layer1_x')).toBeCloseTo(0.2, 6)
+  })
+})
+
+// ── The editor choke point actually fires it ─────────────────────────────────
+//
+// `useLocalLayerEditor.commit` is the single mutation choke point for the layer
+// document (see the history comment in that file), so hooking it there is what
+// makes "every mutation mirrors down" true for moves, nudges, opacity, undo and
+// every future edit without each call site remembering.
+
+describe('editor write-through hook', () => {
+  function makeEditor(layers: LocalLayer[], wiredDims?: (slot: number) => { w: number; h: number } | undefined) {
+    const fx = fixtureNode()
+    const node = reactive({ data: { ...fx.data, properties: { sailor_localLayers: layers } } })
+    const ed = useLocalLayerEditor({
+      node: () => node,
+      dims: () => ({ w: 1024, h: 1024 }),
+      getRect: () => null,
+      wiredDims,
+    })
+    return { node, ed }
+  }
+
+  it('mirrors a wired layer edit into its slot widgets', () => {
+    const { node, ed } = makeEditor([createWiredLayer(0, { x: 0.5, y: 0.5, w: 1, lastAspect: 600 / 800 })])
+    const id = (node.data.properties.sailor_localLayers as LocalLayer[])[0]!.id
+    ed.setLocal(id, { x: 0.75, opacity: 0.5 })
+    expect(wv(node, 'layer1_x')).toBeCloseTo(0.25, 6)
+    expect(wv(node, 'layer1_opacity')).toBeCloseTo(0.5, 6)
+  })
+
+  it('mirrors a keyboard nudge (proving the hook is on commit, not one call site)', () => {
+    const { node, ed } = makeEditor([createWiredLayer(0, { x: 0.5, y: 0.5, w: 1, lastAspect: 600 / 800 })])
+    const id = (node.data.properties.sailor_localLayers as LocalLayer[])[0]!.id
+    ed.selectLocal(id)
+    ed.handleEditorKey({ key: 'ArrowRight', shiftKey: false, metaKey: false, ctrlKey: false, preventDefault() {} } as any)
+    expect(wv(node, 'layer1_x')).toBeGreaterThan(0)
+  })
+
+  it('follows undo back to the previous widget values', () => {
+    const { node, ed } = makeEditor([createWiredLayer(0, { x: 0.5, y: 0.5, w: 1, lastAspect: 600 / 800 })])
+    const id = (node.data.properties.sailor_localLayers as LocalLayer[])[0]!.id
+    ed.setLocal(id, { x: 0.9 })
+    expect(wv(node, 'layer1_x')).toBeCloseTo(0.4, 6)
+    ed.undo()
+    expect(wv(node, 'layer1_x')).toBeCloseTo(0, 6)
+  })
+
+  it('leaves the widgets alone when a wired layer is deleted (the edge disconnect removes it)', () => {
+    const { node, ed } = makeEditor([createWiredLayer(0, { x: 0.75, y: 0.5, w: 1, lastAspect: 600 / 800 })])
+    const id = (node.data.properties.sailor_localLayers as LocalLayer[])[0]!.id
+    ed.setLocal(id, { x: 0.75 })
+    ed.deleteLocal(id)
+    expect(wv(node, 'layer1_x')).toBeCloseTo(0.25, 6)
+  })
+
+  it('uses the host-injected content dims when they are available', () => {
+    const { node, ed } = makeEditor(
+      [createWiredLayer(0, { x: 0.5, y: 0.5, w: 0.6, lastAspect: 1 })],
+      slot => (slot === 0 ? { w: 600, h: 800 } : undefined),
+    )
+    const id = (node.data.properties.sailor_localLayers as LocalLayer[])[0]!.id
+    ed.setLocal(id, { w: 0.6 })
+    expect(wv(node, 'layer1_scale')).toBeCloseTo(0.6 / 0.75, 6)  // portrait fit, not the square cache
+  })
+
+  it('does not touch widgets for a stack with no wired layers', () => {
+    const { node, ed } = makeEditor([{ id: 'a', kind: 'rect', x: 0.5, y: 0.5, rotation: 0, opacity: 1, w: 0.1, h: 0.1 } as any])
+    ed.setLocal('a', { x: 0.9 })
+    expect(node.data.widgetsValues).toEqual(FIXTURE_WIDGETS.map(([, v]) => v))
   })
 })
