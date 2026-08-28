@@ -244,6 +244,35 @@ describe('wired layer paint dispatch', () => {
     expect(draws).toHaveLength(3)
   })
 
+  // Regression for the "resolved twice per draw" bug: paintLayer used to call the
+  // wired provider once (via localLayerBox) to size a warp/DOF offscreen and again
+  // (via drawLayerContent) to actually draw — separately for EVERY clone. A provider
+  // that hands back a fresh surface each call (a live studio surface, not a static
+  // cached image) could then size one call's dimensions and draw a differently-sized
+  // one, producing a misfit warp. The corner-pin path itself needs a real 2D canvas
+  // context to rasterize (this suite runs with `environment: 'node'` — no DOM, see
+  // the file-level comment above), so it isn't reachable with the recordingCtx
+  // stand-in; a multi-clone plain wired layer exercises the same "one resolve must
+  // serve every consumer within a single paint call" contract without needing one:
+  // pre-fix, each clone's draw independently re-ran the provider (N calls for N
+  // clones, each potentially sized differently); post-fix, paintLayer resolves once
+  // up front and threads that single result to every clone's draw.
+  it('resolves the wired provider exactly once per paint, even across clones, so a provider returning different dimensions on every call cannot desync one clone from another within the same frame', () => {
+    let calls = 0
+    // A DIFFERENT size every call — if anything downstream re-resolved instead of
+    // reusing the one paintLayer-level result, later clones would render at a
+    // different size than earlier ones within this same paint.
+    const sizes: [number, number][] = [[200, 100], [50, 400], [300, 30]]
+    _registerWiredContent(() => content(...sizes[calls++]!))
+    const { ctx, draws } = recordingCtx()
+    paint(ctx, wired({ cloner: { ...DEFAULT_CLONER, enabled: true, countX: 3, countY: 1 } }))
+    expect(draws).toHaveLength(3)
+    expect(calls).toBe(1)
+    const h0 = draws[0]!.h
+    expect(draws[1]!.h).toBeCloseTo(h0, 5)
+    expect(draws[2]!.h).toBeCloseTo(h0, 5)
+  })
+
   it('bboxes a wired layer as w × w*lastAspect, centred', () => {
     const box = localLayerBox(null, wired({ w: 0.5, lastAspect: 0.5 }), 100, 100)
     expect(box.w).toBeCloseTo(50, 5)

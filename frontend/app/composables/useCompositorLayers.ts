@@ -80,10 +80,21 @@ export function _registerMotionPainter(impl: MotionPainter) { _motionPainterImpl
 // The provider is called on EVERY draw, never memoized: that IS the liveness
 // contract. Re-running the upstream node swaps the content behind the same slot
 // and the very next frame re-fits to its new aspect with no invalidation step.
+//
+// Because it's called fresh each time, it MUST be a cheap accessor (cache/ref
+// lookup, no decode/compute work) and MUST be stable WITHIN a single frame —
+// paintLayer resolves it once per layer per paint and reuses that one result
+// for both box-sizing and drawing (see `wiredLive` in paintLayer below); a
+// provider that returns a fresh surface with different dimensions on back-to-
+// back calls would size the corner-pin/DOF offscreen from one call and draw
+// into it from another, producing a misfit warp.
 type WiredContentProvider = (slot: number) => CanvasImageSource | null
 let _wiredContentImpl: WiredContentProvider | null = null
 /** Register (or clear, with `null`) the host's slot → live content resolver. */
 export function _registerWiredContent(provider: WiredContentProvider | null) { _wiredContentImpl = provider }
+
+/** Resolved wired-slot content: the source plus its native pixel dimensions. */
+type WiredLive = { src: CanvasImageSource; w: number; h: number }
 
 /**
  * The live content for a wired layer's slot together with its pixel dimensions,
@@ -92,7 +103,7 @@ export function _registerWiredContent(provider: WiredContentProvider | null) { _
  * the layer simply contributes no pixels, and hosts render the "unlinked" badge
  * in the DOM from `layer.unlinked` — paint never draws placeholder art.
  */
-function wiredContent(layer: WiredLayer): { src: CanvasImageSource; w: number; h: number } | null {
+function wiredContent(layer: WiredLayer): WiredLive | null {
   if (!_wiredContentImpl) return null
   let src: CanvasImageSource | null = null
   // A host provider reaches into caches/refs; a throw here must degrade to "no
@@ -845,6 +856,14 @@ export function localLayerBox(
   layer: LocalLayer,
   W: number,
   H: number,
+  // Pre-resolved wired content, threaded in by paintLayer so a single paint call
+  // resolves the provider once and reuses it for both box-sizing and drawing (see
+  // `wiredLive` there). `undefined` (the default) means "not supplied — resolve it
+  // here"; every caller outside paintLayer (editors, selection, hit-testing) omits
+  // this and gets that own-resolve behavior, each on its own separate frame, which
+  // is fine. `null` is a valid resolved value (no drawable content this frame) and
+  // must NOT trigger a second resolve.
+  wiredLive?: WiredLive | null,
 ): { w: number; h: number } {
   if (layer.kind === 'text') {
     const lines = wrappedTextLines(ctx, layer, W)
@@ -885,7 +904,7 @@ export function localLayerBox(
     // absent property and yields a NaN box, which silently breaks selection,
     // corner-pin and every other consumer of this function. Resolved from the SAME
     // live content the draw uses, so the box always hugs what actually paints.
-    return wiredBoxPx(layer, W, wiredContent(layer))
+    return wiredBoxPx(layer, W, wiredLive !== undefined ? wiredLive : wiredContent(layer))
   }
   return { w: (layer as RectLayer).w * W, h: (layer as RectLayer).h * W }
 }
@@ -1131,6 +1150,15 @@ function paintLayer(
 ) {
   const baseOpacity = Math.max(0, Math.min(1, layer.opacity * opacityMul))
   const blendOp = localBlendOp(layer)
+  // Resolve the wired provider (if any) exactly ONCE for this whole paint call, and
+  // thread that single result through both box-sizing (localLayerBox, for corner-pin
+  // and DOF offscreens) and the actual draw (drawLayerContent) below — including
+  // across every clone. Calling the provider twice per clone (once to size, once to
+  // draw) risked a provider that hands back a fresh surface each call sizing the
+  // offscreen from one call and drawing a differently-sized one into it, producing a
+  // misfit warp. `wiredLive` stays `undefined` for non-wired layers, so the callees'
+  // own-resolve fallback (used by callers outside paintLayer) never triggers here.
+  const wiredLive: WiredLive | null | undefined = layer.kind === 'wired' ? wiredContent(layer as WiredLayer) : undefined
   const fx = (layer.effects ?? []).filter(e => e.visible)
   const shadow = fx.find((e): e is DropShadowEffect => e.type === 'drop_shadow')
   const blur = fx.find((e): e is LayerBlurEffect => e.type === 'layer_blur')
@@ -1180,13 +1208,13 @@ function paintLayer(
     if (!depth) { requestDepth(filename); return dofMemo }
     if (!dofShouldRun(dof, true)) return dofMemo
 
-    const box = localLayerBox(measureCtx(), layer, W, H)
+    const box = localLayerBox(measureCtx(), layer, W, H, wiredLive)
     const bw = Math.max(1, Math.round(box.w)), bh = Math.max(1, Math.round(box.h))
     const src = document.createElement('canvas'); src.width = bw; src.height = bh
     const sctx = src.getContext('2d')
     if (!sctx) return dofMemo
     sctx.translate(bw / 2, bh / 2)
-    drawLayerContent(sctx, layer, W)
+    drawLayerContent(sctx, layer, W, wiredLive)
 
     const out = applyDof(src, depth, dof, W, bw, bh)
     if (!out) return dofMemo
@@ -1204,9 +1232,9 @@ function paintLayer(
         c.drawImage(dofCanvas, -dofCanvas.width / 2, -dofCanvas.height / 2)
         return
       }
-      drawLayerContent(c, layer, W); return
+      drawLayerContent(c, layer, W, wiredLive); return
     }
-    const box = localLayerBox(measureCtx(), layer, W, H)
+    const box = localLayerBox(measureCtx(), layer, W, H, wiredLive)
     const bw = Math.max(1, Math.round(box.w)), bh = Math.max(1, Math.round(box.h))
     // Corner-pin warps whatever the content is — including the defocused version, so
     // the two effects compose instead of one silently winning.
@@ -1216,9 +1244,9 @@ function paintLayer(
     } else {
       cc = document.createElement('canvas'); cc.width = bw; cc.height = bh
       const cctx = cc.getContext('2d')
-      if (!cctx) { drawLayerContent(c, layer, W); return }
+      if (!cctx) { drawLayerContent(c, layer, W, wiredLive); return }
       cctx.translate(bw / 2, bh / 2)
-      drawLayerContent(cctx, layer, W)
+      drawLayerContent(cctx, layer, W, wiredLive)
     }
     const hw = box.w / 2, hh = box.h / 2
     const quad: Quad = [
@@ -1317,7 +1345,10 @@ function paintLayer(
 
 // Per-kind shape rendering. Caller has already applied opacity + the layer's
 // translate/rotate to `ctx`; here we just paint the geometry at the origin.
-function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number) {
+// `wiredLive`: same pre-resolved-content seam as `localLayerBox` above — paintLayer
+// threads its once-per-call resolve through here too so the box a corner-pin/DOF
+// offscreen was sized from is the exact same content it then draws.
+function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, wiredLive?: WiredLive | null) {
   if (layer.kind === 'text') {
     drawText(ctx, layer, W)
   } else if (layer.kind === 'rect') {
@@ -1375,7 +1406,7 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     // opacity, blend, effects, crop/stroke/layer masks, cloner, motion — comes from
     // the shared LayerCommon machinery, because a wired layer reaches here through
     // exactly the same paintLayer path as a rect or an image.
-    const live = wiredContent(layer)
+    const live = wiredLive !== undefined ? wiredLive : wiredContent(layer)
     // No content this frame: draw NOTHING. The layer keeps its last-known box (see
     // localLayerBox, which falls back to `lastAspect` the same way) so selection and
     // handles stay put, and the host shows the unlinked badge in the DOM. Painting a
