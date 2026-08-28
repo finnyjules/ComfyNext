@@ -3327,10 +3327,10 @@ async function onClose() {
              OrbitControls, which setPointerCapture()s the pointer on the viewport —
              retargeting pointerup/click to the viewport so the button's @click never
              fires (and a stray orbit-drag starts). Stop it at the overlay boundary. -->
-        <!-- left-[316px] clears the floating Objects panel (left-4 + w-72 + gap);
+        <!-- var(--studio-panel-inset) (set by the shell in full-bleed) clears the floating panels;
              back to left-3 the moment ⌘\ takes the panel away. -->
         <div v-if="webglOk" class="absolute top-3 flex items-center gap-2 rounded-lg bg-black/60 p-1.5 backdrop-blur"
-             :class="panelsVisible ? 'left-[316px]' : 'left-3'" @pointerdown.stop>
+             :class="panelsVisible ? 'left-[var(--studio-panel-inset)]' : 'left-3'" @pointerdown.stop>
           <button type="button" class="rounded px-2 py-1 text-xs"
             :class="snap ? 'bg-white/25 text-white' : 'bg-white/10 text-white/70 hover:bg-white/15'"
             @click="snap = !snap">snap</button>
@@ -3343,7 +3343,7 @@ async function onClose() {
              surface. Opposite corner from the snap/light toolbar so the two never collide. -->
         <div v-if="webglOk && shaderFrozenCount > 0"
              class="pointer-events-none absolute top-3 max-w-[280px] rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90"
-             :class="panelsVisible ? 'right-[316px]' : 'right-3'">
+             :class="panelsVisible ? 'right-[var(--studio-panel-inset)]' : 'right-3'">
           {{ shaderFrozenCount }} shader fill{{ shaderFrozenCount > 1 ? 's' : '' }} frozen — too many live shader
           fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
         </div>
@@ -3353,7 +3353,7 @@ async function onClose() {
              cramped it). Transport header + the band tracks, video-editor style. -->
         <div v-if="webglOk && activeTab === 'motion'"
              class="absolute bottom-3 z-10 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-2.5 shadow-lg"
-             :class="panelsVisible ? 'left-[316px] right-[316px]' : 'left-3 right-3'" @pointerdown.stop>
+             :class="panelsVisible ? 'left-[var(--studio-panel-inset)] right-[var(--studio-panel-inset)]' : 'left-3 right-3'" @pointerdown.stop>
           <div class="mb-2 flex items-center gap-2 text-[11px] text-white/60">
             <StudioButton @click="togglePlay">{{ playing ? 'Pause' : 'Play' }}</StudioButton>
             <span class="tabular-nums">{{ playhead.toFixed(2) }} / {{ doc.motion.duration.toFixed(1) }}s</span>

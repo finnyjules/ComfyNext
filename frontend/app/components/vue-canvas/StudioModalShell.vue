@@ -120,8 +120,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
       <!-- Body. Boxed (default): three columns in a row. Full-bleed (opt-in): one
            positioned area, the preview underneath everything and the columns
-           floating over it. Every class string on the OFF side is the original. -->
-      <div :class="fullBleed ? 'relative min-h-0 flex-1 overflow-hidden' : 'flex min-h-0 flex-1 gap-4 p-4'">
+           floating over it. Every class string on the OFF side is the original.
+           --studio-panel-inset is the ONE source for "clear of a floating panel":
+           left-4 (16) + w-72 (288) + 12 gap — surfaces position overlays with it
+           (left-[var(--studio-panel-inset)]) so a panel resize can't desync them. -->
+      <div :class="fullBleed ? 'relative min-h-0 flex-1 overflow-hidden' : 'flex min-h-0 flex-1 gap-4 p-4'"
+           :style="fullBleed ? { '--studio-panel-inset': '316px' } : undefined">
         <!-- Optional dedicated panel column (e.g. 3D Studio's object list), on the
              left of the preview — mirrors the Smart Layout / Frame layers panel. -->
         <div v-if="$slots.aside"
