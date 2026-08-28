@@ -116,50 +116,57 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
 
       <div data-testid="take-divider" class="my-0.5 w-px shrink-0 bg-white/10" />
 
-      <!-- ② the takes — each a cell: the tile-button plus its own action row as a
-           sibling (a button cannot nest inside a button). -->
+      <!-- ② the takes — each a cell: a clipped "card" wrapper (tile-button plus
+           its own action row, siblings — a button cannot nest inside a button)
+           holding the rounded clip, and the tooltip as a cell-level sibling of
+           that wrapper so it still escapes upward, unclipped. -->
       <div v-for="(t, i) in takes" :key="i" data-testid="take-cell" class="group relative min-w-0 flex-1"
            @mouseenter="onHover(t)" @mouseleave="onHover(null)">
-        <button data-testid="take-tile" type="button"
-                :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
-                :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
-                :class="[TILE, 'h-[96px] w-full',
-                         selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
-                @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
-          <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
-          <!-- ③ still drawing — NOT a failure. -->
-          <span v-else-if="pending.has(t)" data-testid="take-pending"
-                class="block h-full w-full animate-pulse bg-white/[0.07]" />
-          <!-- ④ error tile: the render threw. Never a blank strip. -->
-          <span v-else data-testid="take-error"
-                class="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
-            couldn’t draw
-          </span>
-        </button>
+        <div class="relative h-[96px] w-full overflow-hidden rounded-[5px]">
+          <button data-testid="take-tile" type="button"
+                  :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
+                  :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
+                  :class="['relative h-full w-full border transition enabled:cursor-pointer',
+                           selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
+                  @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
+            <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
+            <!-- ③ still drawing — NOT a failure. -->
+            <span v-else-if="pending.has(t)" data-testid="take-pending"
+                  class="block h-full w-full animate-pulse bg-white/[0.07]" />
+            <!-- ④ error tile: the render threw. Never a blank strip. -->
+            <span v-else data-testid="take-error"
+                  class="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
+              couldn’t draw
+            </span>
+          </button>
+          <!-- per-card actions: always in the DOM (tests need them addressable),
+               revealed on hover / focus-within / when this take is selected.
+               Inside the clipped wrapper, with an inset from its padding, so
+               Keep never overhangs the card's rounded corner. -->
+          <div :class="['pointer-events-none absolute inset-x-0 bottom-0 flex justify-end gap-1.5 p-1.5 opacity-0 transition',
+                        'bg-gradient-to-t from-black/85 to-transparent',
+                        'group-hover:opacity-100 group-focus-within:opacity-100',
+                        selected === t ? '!opacity-100' : '']">
+            <StudioButton data-testid="take-keep" variant="primary" class="pointer-events-auto"
+                          :disabled="busy" @click.stop="emit('select', t); emit('keep')">
+              Keep
+            </StudioButton>
+          </div>
+        </div>
         <!-- styled description tooltip: supplementary weight, above its own card;
              replaces the native title (the unstyled OS box) with something on-brand
-             that fades in after a short pause so it never fights the reveal buttons. -->
+             that appears immediately on hover, unclipped, since the rounded card
+             wrapper it floats above doesn't contain it. -->
         <div v-if="t.rationale" data-testid="take-tip"
              :class="['pointer-events-none absolute bottom-[calc(100%+10px)] left-1/2 z-10 w-[210px] -translate-x-1/2',
                       'rounded-[8px] border border-white/15 bg-[#161a21] px-2.5 py-2',
                       'text-[11.5px] leading-normal text-white/70 shadow-[0_8px_24px_rgba(0,0,0,0.45)]',
-                      'opacity-0 transition-opacity duration-150 delay-[350ms]',
+                      'opacity-0 transition-opacity duration-150',
                       'group-hover:opacity-100 group-focus-within:opacity-100',
-                      selected === t ? '!opacity-100 !delay-0' : '']">
+                      selected === t ? '!opacity-100' : '']">
           {{ t.rationale }}
           <span class="absolute -bottom-[5px] left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45
                        border-b border-r border-white/15 bg-[#161a21]" />
-        </div>
-        <!-- per-card actions: always in the DOM (tests need them addressable),
-             revealed on hover / focus-within / when this take is selected. -->
-        <div :class="['pointer-events-none absolute inset-x-0 bottom-0 flex justify-end gap-1.5 p-1.5 opacity-0 transition',
-                      'bg-gradient-to-t from-black/85 to-transparent',
-                      'group-hover:opacity-100 group-focus-within:opacity-100',
-                      selected === t ? '!opacity-100' : '']">
-          <StudioButton data-testid="take-keep" variant="primary" class="pointer-events-auto"
-                        :disabled="busy" @click.stop="emit('select', t); emit('keep')">
-            Keep
-          </StudioButton>
         </div>
       </div>
     </div>
