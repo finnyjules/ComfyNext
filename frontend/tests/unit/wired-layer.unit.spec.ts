@@ -726,14 +726,14 @@ describe('wired layer verb parity (mixed selection)', () => {
     expect(rl.x).toBeCloseTo(0.71, 6); expect(rl.y).toBeCloseTo(0.78, 6)
   })
 
-  it('duplicate snapshots the wired member and clones the rest — never two live layers on one slot', () => {
+  it('duplicate snapshots the wired member and clones the rest — never two live layers on one slot', async () => {
     const seen: WiredLayer[] = []
     const { node, ed } = mixedEditor((l) => {
       seen.push(l)
       // What a host's materialize does: an ordinary image layer where the wire was.
       ed.addImageFromName('snap.png', 1 / (l.lastAspect || 1), { x: l.x, y: l.y, w: l.w } as any)
     })
-    ed.duplicateSelection()
+    await ed.duplicateSelection()
     const ls = read(node)
     expect(seen).toHaveLength(1)
     expect(seen[0]!.slot).toBe(0)
@@ -743,12 +743,40 @@ describe('wired layer verb parity (mixed selection)', () => {
     expect(ls.filter(l => l.kind === 'rect')).toHaveLength(2)      // the real clone
   })
 
-  it('duplicate without a host materializer drops the wired member rather than doubling it', () => {
+  it('duplicate without a host materializer drops the wired member rather than doubling it', async () => {
     const { node, ed } = mixedEditor()
-    ed.duplicateSelection()
+    await ed.duplicateSelection()
     const ls = read(node)
     expect(ls.filter(l => l.kind === 'wired')).toHaveLength(1)
     expect(ls.filter(l => l.kind === 'rect')).toHaveLength(2)
+  })
+
+  it('duplicate over MULTIPLE wired layers materializes them SEQUENTIALLY, in order — not racing a host re-entrancy guard', async () => {
+    // Regression for I2: `copyWiredIntoFrame`-style host materializers refuse to
+    // start a second copy while one is in flight (`if (copyingSlot.value != null)
+    // return`), set synchronously at call start. Firing every wired member's
+    // materialize at once used to race them all against that guard, so every
+    // member after the first silently vanished. `duplicateSelection` must await
+    // each materialize before starting the next.
+    const w0 = createWiredLayer(0, { x: 0.2, y: 0.2, w: 0.3, lastAspect: 1 })
+    const w1 = createWiredLayer(1, { x: 0.6, y: 0.6, w: 0.3, lastAspect: 1 })
+    const node = reactive({ data: { properties: { sailor_localLayers: [w0 as LocalLayer, w1 as LocalLayer] } } })
+    const seen: number[] = []
+    let inFlight = false
+    const materializeWired = async (l: WiredLayer) => {
+      expect(inFlight).toBe(false)   // fails if a second materialize starts before the first resolves
+      inFlight = true
+      await Promise.resolve(); await Promise.resolve()   // a couple microtask hops, like a real async snapshot
+      seen.push(l.slot)
+      inFlight = false
+    }
+    const ed = useLocalLayerEditor({
+      node: () => node, dims: () => ({ w: 1024, h: 1024 }), getRect: () => RECT,
+      materializeWired,
+    })
+    ed.selectLocal(w0.id); ed.toggleSelect(w1.id)
+    await ed.duplicateSelection()
+    expect(seen).toEqual([0, 1])   // both called, in selection order
   })
 
   it('copy keeps wired out of the clipboard, so paste can never re-create the slot', () => {

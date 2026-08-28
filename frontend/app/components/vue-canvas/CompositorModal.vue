@@ -13,7 +13,7 @@ import {
   hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
 } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey, legacyWiredFlagsActive } from '~/lib/compositor/frameStack'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey, legacyWiredFlagsActive, isWiredSentinel } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind, cornerResizableKind } from '~/composables/useLocalLayerEditor'
@@ -410,6 +410,11 @@ function zoomToSelection(): boolean {
   zoomMenuOpen.value = false
   const b = selectionBoundsPx(); const c = gapCentre(); const wrap = stageWrapRef.value
   if (!b || !c || !wrap) return false
+  // A degenerate (<2px) box is an unresolved wired sentinel or otherwise not yet
+  // visible — dividing the gap by it would push the zoom factor to ZOOM_MAX and
+  // strand the user on a blank, maxed-out canvas. No-op instead (menu hint stays
+  // as-is; the selection is real, it just has nothing to frame yet).
+  if (b.w < 2 || b.h < 2) return false
   const s1 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN,
     Math.min(c.w * ZOOM_SELECTION_FILL / b.w, c.h * ZOOM_SELECTION_FILL / b.h)))
   // transform-origin is 0 0 and the translate is applied BEFORE the scale, so
@@ -507,7 +512,7 @@ const editor = useLocalLayerEditor({
   // ⌘D / copy on a wired layer never clones the live link: it bakes what you SEE
   // into a normal image layer (the existing "Copy into frame" path), which is the
   // only copy that can stand on its own.
-  materializeWired: (w) => { void copyWiredIntoFrame(w.slot + 1) },
+  materializeWired: (w) => copyWiredIntoFrame(w.slot + 1),
 })
 const layerEdit = useLayerImageEdit()
 const {
@@ -2169,16 +2174,22 @@ watch(() => connectedSlots0.value.join(','), () => {
   if (slots.length) {
     migrateFrameToUnifiedLayers({ data: compositor.value.data, connectedSlots: [...slots] }, slotDimsMap0())
   }
-  // Edge lifecycle: a new edge mints a layer (selected, so you can place it
-  // straight away), a cut edge marks its layer `unlinked` rather than deleting it
-  // — placement, name, mask, cloner and z-position all survive — and re-wiring
-  // the same slot relinks it. Committed without a history step: this mirrors the
-  // graph, and undoing it would only fight the graph on the next tick.
+  // Edge lifecycle: a new edge mints a layer, a cut edge marks its layer
+  // `unlinked` rather than deleting it — placement, name, mask, cloner and
+  // z-position all survive — and re-wiring the same slot relinks it. Committed
+  // without a history step: this mirrors the graph, and undoing it would only
+  // fight the graph on the next tick.
   const linked = syncWiredLayerLinks(localLayers.value as LocalLayer[], slots)
   if (linked) {
     commit(linked.layers)
     const last = linked.addedIds[linked.addedIds.length - 1]
-    if (last) selectLocal(last)
+    // A freshly-minted wired layer is always a `w <= 0` sentinel (no content has
+    // resolved yet) — invisible and zero-size. Selecting it left the user staring
+    // at nothing, and ⌘2 (zoom to selection) maxed out the zoom on a degenerate
+    // box. Skip selection here; the layer becomes selectable once the finalizer
+    // resolves its box from real content.
+    const lastLayer = last ? linked.layers.find(l => l.id === last) : undefined
+    if (last && lastLayer && !isWiredSentinel(lastLayer)) selectLocal(last)
   }
 }, { immediate: true })
 
@@ -2817,7 +2828,7 @@ function compositorLayer(slot: number): Layer | undefined {
   return layers.value.find(l => l.slot === slot)
 }
 // Live per-slot mask canvas (capped image px) seeded from the slot's maskUrl.
-// Reset (see the selectedSlot/brush watchers above) whenever the target slot,
+// Reset (see the selectedLocalId/brush watchers above) whenever the target slot,
 // or brush activation, changes — so a stale slot's canvas is never reused.
 let wiredBrushMask: { slot: number; canvas: HTMLCanvasElement } | null = null
 async function ensureWiredBrushMask(slot: number, el: HTMLImageElement | HTMLCanvasElement): Promise<HTMLCanvasElement> {
@@ -3972,7 +3983,7 @@ onUnmounted(() => {
                    than letting it read as an empty layer. -->
               <span v-if="(row as any).layer?.kind === 'wired' && (row as any).layer?.unlinked"
                 class="shrink-0 rounded px-1 py-px text-[9.5px] uppercase tracking-wide bg-amber-400/15 text-amber-300/90 border border-amber-400/25"
-                title="This layer's input was disconnected — re-wire the slot to bring its pixels back">unlinked</span>
+                title="This layer's input was disconnected — reconnect the input to bring its pixels back">unlinked</span>
               <!-- Lock (locked layers render but ignore canvas clicks/drags) -->
               <button v-if="row.kind !== 'group'"
                 class="transition cursor-pointer"

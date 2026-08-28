@@ -64,8 +64,13 @@ interface EditorOpts {
    * paint twice and both would fight over that slot's widgets. The honest copy is
    * a SNAPSHOT (the host's "copy wired into frame" path); hosts that have one
    * pass it here, hosts that don't simply skip wired layers.
+   *
+   * May return a Promise. `duplicateSelection` awaits each call before starting
+   * the next, so a multi-wired ⌘D materializes them one at a time instead of
+   * racing several snapshots against the same host-side "one in flight" guard
+   * (which used to make every wired member but the first vanish silently).
    */
-  materializeWired?: (layer: WiredLayer) => void
+  materializeWired?: (layer: WiredLayer) => void | Promise<void>
 }
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -461,11 +466,15 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     return { ids: new Set([...selectedIds.value].filter(id => !drop.has(id))), wired }
   }
 
-  /** Duplicate the current multi-selection; the copies become the selection. */
-  function duplicateSelection() {
+  /** Duplicate the current multi-selection; the copies become the selection.
+   *  Wired members are materialized SEQUENTIALLY — awaiting each snapshot before
+   *  starting the next — because the host's materializer (e.g. "copy into frame")
+   *  guards against re-entrancy: firing all of them at once meant every wired
+   *  layer after the first silently no-op'd out from under the guard. */
+  async function duplicateSelection() {
     if (!selectedIds.value.size) return
     const { ids, wired } = clonableSelection()
-    for (const w of wired) opts.materializeWired?.(w)
+    for (const w of wired) await opts.materializeWired?.(w)
     if (!ids.size) return
     recordHistory()
     const r = duplicateLayers(

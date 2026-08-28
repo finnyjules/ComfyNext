@@ -8,7 +8,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor, aspectLockedResizeKind } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, type WiredLayer as UnifiedWiredLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill, withWiredContent } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
-import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey, legacyWiredFlagsActive } from '~/lib/compositor/frameStack'
+import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey, legacyWiredFlagsActive, isWiredSentinel } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { libraryFamily } from '~/data/library-fonts'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
@@ -302,7 +302,7 @@ const editor = useLocalLayerEditor({
   // slot). The honest copy is a SNAPSHOT of what the slot is showing, baked into
   // an ordinary image layer at the same place. Passed here so the card has verb
   // parity with the modal the moment it wires `handleEditorKey`.
-  materializeWired: (w) => { void snapshotWiredLayer(w) },
+  materializeWired: (w) => snapshotWiredLayer(w),
 })
 
 /**
@@ -685,7 +685,13 @@ watch(() => connectedSlotList.value.join(','), () => {
   if (linked) {
     editor.commit(linked.layers)
     const last = linked.addedIds[linked.addedIds.length - 1]
-    if (last && editMode.value) editor.selectLocal(last)
+    // A freshly-minted wired layer is always a `w <= 0` sentinel (no content has
+    // resolved yet) — invisible and zero-size. Selecting it left the user staring
+    // at nothing, and ⌘2 (zoom to selection) maxed out the zoom on a degenerate
+    // box. Skip selection here; the layer becomes selectable once the finalizer
+    // resolves its box from real content.
+    const lastLayer = last ? linked.layers.find(l => l.id === last) : undefined
+    if (last && editMode.value && lastLayer && !isWiredSentinel(lastLayer)) editor.selectLocal(last)
   }
 }, { immediate: true })
 
