@@ -14,7 +14,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import * as THREE from 'three'
 import {
   Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup, ClipboardPaste, Paintbrush, Combine,
-  Sticker, Type as TypeIcon, Image as ImageIcon,
+  ChevronUp,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup, createDecal,
@@ -35,6 +35,12 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import { libraryToken, resolveLibraryFace, libraryFamily } from '~/data/library-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
+import {
+  DEFAULT_PRIM_FACE, resolvePrimFace, primFaceLabel, primFaceIcon,
+  LIGHT_KIND_LABELS, DEFAULT_LIGHT_FACE, resolveLightFace, lightFaceLabel,
+  DECAL_ENTRIES, DEFAULT_DECAL_FACE, resolveDecalFace, decalFaceLabel, decalFaceIcon,
+  type DecalEntryId,
+} from '~/lib/scene3d/toolbarFaces'
 import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
 import { convertToMesh, remeshObject, remeshMeshData, solidifyObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
 import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, decodeMesh, encodeMesh, meshDataFromGeometry, geometryFromMeshData, type MeshData } from '~/lib/scene3d/mesh'
@@ -321,50 +327,86 @@ const svgPending = ref<{ paths: SvgLeafPath[]; name: string } | null>(null)
  *  frozen frame and lands two copies of the artwork in the scene. */
 const svgBusy = ref(false)
 
-// ── Add-primitive menu ──────────────────────────────────────────────────────
+// ── Add-pill menus: face + caret ────────────────────────────────────────────
+// The Frame toolbar's grammar (see lib/compositor/toolbarMenus.ts and
+// CompositorModal's shapes-face/shapes-menu-toggle pair), adapted to this pill's
+// labelled style: each of Primitive/Light/Decal is TWO real buttons — a face
+// that repeats the last-used entry in one click, and a slim caret that opens the
+// unchanged menu. Faces are plain refs: they reset per studio session, exactly
+// as the Frame's do, so no last-used state ever outlives the modal.
 const primMenuOpen = ref(false)
-
-function pickPrimitive(kind: PrimitiveKind) {
-  addPrimitive(kind)
-  primMenuOpen.value = false
-}
-
-// Outside click closes the menu (registered only while open).
-function onPrimMenuOutside(e: PointerEvent) {
-  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) primMenuOpen.value = false
-}
-watch(primMenuOpen, (open) => {
-  if (open) window.addEventListener('pointerdown', onPrimMenuOutside, true)
-  else window.removeEventListener('pointerdown', onPrimMenuOutside, true)
-})
-
-// ── Add-light menu ──────────────────────────────────────────────────────────
 const lightMenuOpen = ref(false)
-const LIGHT_KIND_LABELS: Record<LightKind, string> = { point: 'Point', spot: 'Spot', rect: 'Area' }
-
-function onLightMenuOutside(e: PointerEvent) {
-  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) lightMenuOpen.value = false
-}
-watch(lightMenuOpen, (open) => {
-  if (open) window.addEventListener('pointerdown', onLightMenuOutside, true)
-  else window.removeEventListener('pointerdown', onLightMenuOutside, true)
-})
-
-// ── Add-decal menu ──────────────────────────────────────────────────────────
-// Same outside-click mechanic as the primitive/light menus above (the `[data-prim-menu]`
-// hit test is the whole bottom pill, shared by all three).
 const decalMenuOpen = ref(false)
-function onDecalMenuOutside(e: PointerEvent) {
-  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) decalMenuOpen.value = false
+// Generate's own open flag lives HERE, with its three siblings, rather than down
+// in the Generate-panel block: the shared outside-click watch below takes all
+// four refs as an eagerly-evaluated source array, so a later `const genOpen`
+// would be read inside its own temporal dead zone during setup.
+const genOpen = ref(false)
+const primFace = ref<PrimitiveKind>(DEFAULT_PRIM_FACE)
+const lightFace = ref<LightKind>(DEFAULT_LIGHT_FACE)
+const decalFace = ref<DecalEntryId>(DEFAULT_DECAL_FACE)
+
+/** The one closer for all four popups (Generate included). Every toggle goes
+ *  close-then-open through it, so two can never be open at once, and the
+ *  outside-pointerdown and Escape closers route through it too — replacing the
+ *  four hand-rolled `x = false; y = false; …` chains the pill used to carry. */
+function closeAddMenus() {
+  primMenuOpen.value = false
+  lightMenuOpen.value = false
+  decalMenuOpen.value = false
+  genOpen.value = false
 }
-watch(decalMenuOpen, (open) => {
-  if (open) window.addEventListener('pointerdown', onDecalMenuOutside, true)
-  else window.removeEventListener('pointerdown', onDecalMenuOutside, true)
+function togglePrimMenu() { const next = !primMenuOpen.value; closeAddMenus(); primMenuOpen.value = next }
+function toggleLightMenu() { const next = !lightMenuOpen.value; closeAddMenus(); lightMenuOpen.value = next }
+function toggleDecalMenu() { const next = !decalMenuOpen.value; closeAddMenus(); decalMenuOpen.value = next }
+function toggleGenMenu() { const next = !genOpen.value; closeAddMenus(); genOpen.value = next }
+
+/** Menu row → add it now AND wear it, so repeating is one click. */
+function pickPrimitive(kind: PrimitiveKind) {
+  primFace.value = kind
+  primMenuOpen.value = false
+  addPrimitive(kind)
+}
+/** The face button: add the worn primitive without opening anything. */
+function addFacePrimitive() { closeAddMenus(); addPrimitive(resolvePrimFace(primFace.value)) }
+
+function pickLight(kind: LightKind) {
+  lightFace.value = kind
+  addLight(kind)
+}
+function addFaceLight() { closeAddMenus(); addLight(resolveLightFace(lightFace.value)) }
+
+/** Decal entries ARM a viewport placement rather than adding an object, so
+ *  "repeat the last-used entry" means re-arming the same placement. */
+function runDecalEntry(id: DecalEntryId) {
+  if (id === 'image') triggerDecalImageAdd()
+  else addTextDecal()
+}
+function pickDecalEntry(id: DecalEntryId) {
+  decalFace.value = id
+  decalMenuOpen.value = false
+  runDecalEntry(id)
+}
+function runDecalFace() {
+  const face = resolveDecalFace(decalFace.value)
+  closeAddMenus()
+  runDecalEntry(face)
+}
+
+// Outside click closes whichever popup is open (listener registered only while
+// one is). The `[data-prim-menu]` hit test is the whole bottom pill, shared by
+// all four popups.
+function onAddMenuOutside(e: PointerEvent) {
+  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) closeAddMenus()
+}
+watch([primMenuOpen, lightMenuOpen, decalMenuOpen, genOpen], (open) => {
+  if (open.some(Boolean)) window.addEventListener('pointerdown', onAddMenuOutside, true)
+  else window.removeEventListener('pointerdown', onAddMenuOutside, true)
 })
 
 // ── Generate panel (text → image review → make 3D → insert) ────────────────
 const GEN_3D_MODELS = ['hunyuan3d-v2', 'trellis-2', 'tripo-v2.5', 'triposr']
-const genOpen = ref(false)
+// (`genOpen` is declared with the other add-pill menu flags above.)
 const genPrompt = ref('')
 const genImageUrl = ref<string | null>(null)
 const genSeed = ref(Math.floor(Math.random() * 2e9))
@@ -373,13 +415,8 @@ const genTextured = ref(false)
 const genStage = ref<'idle' | 'image' | 'review' | 'making' | 'error'>('idle')
 const genError = ref('')
 
-function onGenMenuOutside(e: PointerEvent) {
-  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) genOpen.value = false
-}
-watch(genOpen, (open) => {
-  if (open) window.addEventListener('pointerdown', onGenMenuOutside, true)
-  else window.removeEventListener('pointerdown', onGenMenuOutside, true)
-})
+// (Generate's outside-click closer is the pill's shared one — see the
+// onAddMenuOutside watch above, which lists genOpen alongside the other three.)
 
 async function genImage() {
   genStage.value = 'image'
@@ -1551,9 +1588,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey, true)
   window.removeEventListener('pointerup', onGeometryDragRelease)
   window.removeEventListener('pointercancel', onGeometryDragRelease)
-  window.removeEventListener('pointerdown', onPrimMenuOutside, true)
-  window.removeEventListener('pointerdown', onLightMenuOutside, true)
-  window.removeEventListener('pointerdown', onGenMenuOutside, true)
+  window.removeEventListener('pointerdown', onAddMenuOutside, true)
   viewportEl.value?.removeEventListener('pointerdown', onSculptPointerDown)
   window.removeEventListener('pointermove', onSculptPointerMove)
   window.removeEventListener('pointerup', onSculptPointerUp)
@@ -1699,10 +1734,7 @@ function onKey(e: KeyboardEvent) {
     if (primMenuOpen.value || lightMenuOpen.value || decalMenuOpen.value || genOpen.value) {
       e.preventDefault()
       e.stopImmediatePropagation()
-      primMenuOpen.value = false
-      lightMenuOpen.value = false
-      decalMenuOpen.value = false
-      genOpen.value = false
+      closeAddMenus()
       return
     }
     // An open StudioColor popover owns Escape (its own capture listener closes
@@ -3317,24 +3349,43 @@ async function onClose() {
           <p v-else class="py-1.5 text-center text-[11px] text-white/40">Turn on “Animate scene” to add motion.</p>
         </div>
 
-        <!-- Bottom add-toolbar (Grid editor pill style): + Primitive menu · Upload GLB.
+        <!-- Bottom add-toolbar (Grid editor pill style): Primitive · Upload GLB ·
+             Light · Decal · Generate. Primitive/Light/Decal wear the Frame
+             toolbar's face+caret grammar — the face repeats the last-used entry
+             in one click, the slim caret beside it opens the unchanged menu.
              Hidden in Motion mode — the timeline panel above takes its place. -->
         <div v-if="webglOk && activeTab !== 'motion'" class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10" data-prim-menu @pointerdown.stop>
           <p v-if="uploadError" class="mb-2 text-center text-[11px] text-red-400/90">{{ uploadError }}</p>
           <div class="relative flex items-center gap-1 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1.5 shadow-lg">
-            <button
-              type="button"
-              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
-              :class="primMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="lightMenuOpen = false; decalMenuOpen = false; genOpen = false; primMenuOpen = !primMenuOpen"
-            >
-              <Plus class="size-4" /> Primitive
-            </button>
+            <!-- Two real buttons rather than hit-test zones inside one, so the
+                 narrow caret is still a real target (Frame toolbar's rule). -->
+            <div class="flex items-center">
+              <button
+                type="button"
+                class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-l px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                data-testid="prim-face"
+                :title="'Add ' + primFaceLabel(primFace).toLowerCase()"
+                @click="addFacePrimitive()"
+              >
+                <component :is="primFaceIcon(primFace)" class="size-4" /> {{ primFaceLabel(primFace) }}
+              </button>
+              <button
+                type="button"
+                class="flex h-8 w-4 items-center justify-center rounded-r transition-colors cursor-pointer"
+                :class="primMenuOpen ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/10 hover:text-white'"
+                data-testid="prim-menu-toggle"
+                title="Primitives"
+                @click="togglePrimMenu()"
+              >
+                <ChevronUp class="size-3" />
+              </button>
+            </div>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
             <button
               type="button"
               :disabled="uploading"
-              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer disabled:opacity-50"
+              class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer disabled:opacity-50"
+              data-testid="glb-upload"
               @click="triggerGlbUpload"
             >
               <Loader2 v-if="uploading" class="size-4 animate-spin" />
@@ -3342,29 +3393,58 @@ async function onClose() {
               {{ uploading ? 'Uploading…' : 'Upload GLB' }}
             </button>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
-            <button
-              type="button"
-              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
-              :class="lightMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="primMenuOpen = false; decalMenuOpen = false; genOpen = false; lightMenuOpen = !lightMenuOpen"
-            >
-              <Lightbulb class="size-4" /> Light
-            </button>
+            <div class="flex items-center">
+              <button
+                type="button"
+                class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-l px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                data-testid="light-face"
+                :title="'Add ' + lightFaceLabel(lightFace).toLowerCase() + ' light'"
+                @click="addFaceLight()"
+              >
+                <Lightbulb class="size-4" /> {{ lightFaceLabel(lightFace) }}
+              </button>
+              <button
+                type="button"
+                class="flex h-8 w-4 items-center justify-center rounded-r transition-colors cursor-pointer"
+                :class="lightMenuOpen ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/10 hover:text-white'"
+                data-testid="light-menu-toggle"
+                title="Lights"
+                @click="toggleLightMenu()"
+              >
+                <ChevronUp class="size-3" />
+              </button>
+            </div>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
-            <button
-              type="button"
-              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
-              :class="decalMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="primMenuOpen = false; lightMenuOpen = false; genOpen = false; decalMenuOpen = !decalMenuOpen"
-            >
-              <Sticker class="size-4" /> Decal
-            </button>
+            <div class="flex items-center">
+              <button
+                type="button"
+                class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-l px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                data-testid="decal-face"
+                :title="decalFaceLabel(decalFace) + ' — click a solid to place it'"
+                @click="runDecalFace()"
+              >
+                <component :is="decalFaceIcon(decalFace)" class="size-4" /> {{ decalFaceLabel(decalFace) }}
+              </button>
+              <button
+                type="button"
+                class="flex h-8 w-4 items-center justify-center rounded-r transition-colors cursor-pointer"
+                :class="decalMenuOpen ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/10 hover:text-white'"
+                data-testid="decal-menu-toggle"
+                title="Decals"
+                @click="toggleDecalMenu()"
+              >
+                <ChevronUp class="size-3" />
+              </button>
+            </div>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
+            <!-- Generate stays a plain toggle: it opens a flow panel, not a pick
+                 list, so there is nothing for a face to repeat. -->
             <button
               type="button"
-              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
+              class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="genOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="primMenuOpen = false; lightMenuOpen = false; decalMenuOpen = false; genOpen = !genOpen"
+              data-testid="gen-toggle"
+              @click="toggleGenMenu()"
             >
               <Sparkles class="size-4" /> Generate
             </button>
@@ -3372,6 +3452,7 @@ async function onClose() {
             <!-- Primitive menu: popup card above the button (Brand-panel mechanic) -->
             <div
               v-if="primMenuOpen"
+              data-testid="prim-menu"
               class="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
             >
               <div v-for="group in PRIM_GROUPS" :key="group.label" class="mb-1.5 last:mb-0">
@@ -3381,7 +3462,9 @@ async function onClose() {
                     v-for="p in group.kinds"
                     :key="p.kind"
                     type="button"
-                    class="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                    class="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                    :class="p.kind === primFace ? 'bg-white/10 text-white' : 'text-white/80'"
+                    :data-testid="'prim-menu-' + p.kind"
                     @click="pickPrimitive(p.kind)"
                   >
                     <component :is="p.icon" class="size-4 shrink-0 opacity-70" />
@@ -3395,14 +3478,17 @@ async function onClose() {
                  above its trigger since it's the last button in the pill. -->
             <div
               v-if="lightMenuOpen"
+              data-testid="light-menu"
               class="absolute bottom-full right-0 z-30 mb-2 w-36 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
             >
               <button
                 v-for="k in LIGHT_KINDS"
                 :key="k"
                 type="button"
-                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                @click="addLight(k)"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                :class="k === lightFace ? 'bg-white/10 text-white' : 'text-white/80'"
+                :data-testid="'light-menu-' + k"
+                @click="pickLight(k)"
               >
                 <Lightbulb class="size-4 shrink-0 opacity-70" />
                 {{ LIGHT_KIND_LABELS[k] }}
@@ -3414,21 +3500,19 @@ async function onClose() {
                  what creates the decal. -->
             <div
               v-if="decalMenuOpen"
+              data-testid="decal-menu"
               class="absolute bottom-full right-0 z-30 mb-2 w-44 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
             >
               <button
+                v-for="row in DECAL_ENTRIES"
+                :key="row.id"
                 type="button"
-                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                @click="addTextDecal"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                :class="row.id === decalFace ? 'bg-white/10 text-white' : 'text-white/80'"
+                :data-testid="'decal-menu-' + row.id"
+                @click="pickDecalEntry(row.id)"
               >
-                <TypeIcon class="size-4 shrink-0 opacity-70" /> Text label
-              </button>
-              <button
-                type="button"
-                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                @click="triggerDecalImageAdd"
-              >
-                <ImageIcon class="size-4 shrink-0 opacity-70" /> Image sticker
+                <component :is="row.icon" class="size-4 shrink-0 opacity-70" /> {{ row.label }}
               </button>
             </div>
 

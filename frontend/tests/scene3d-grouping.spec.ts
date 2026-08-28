@@ -156,11 +156,16 @@ async function selectOnly(page: Page, name: string) {
 
 /** Add a primitive from the viewport's add-menu. The menu click is scoped to the
  *  toolbar pill (`[data-prim-menu]`) so a kind label that also appears elsewhere
- *  in the inspector can never be picked up by accident. */
+ *  in the inspector can never be picked up by accident. The pill is a face+caret
+ *  split now (the face repeats the last-used kind, the caret opens the grid), so
+ *  this goes through the caret — the face's label is the last kind, not the word
+ *  "Primitive". */
 async function addPrimitive(page: Page, label: string) {
   const toolbar = page.locator('[data-prim-menu]')
-  await toolbar.getByRole('button', { name: 'Primitive', exact: true }).click()
-  await toolbar.getByRole('button', { name: label, exact: true }).click()
+  await toolbar.getByTestId('prim-menu-toggle').click()
+  // Scoped to the open MENU, not the pill: the face button wears the last-used
+  // kind's label too, so a pill-wide name match is ambiguous by design.
+  await toolbar.getByTestId('prim-menu').getByRole('button', { name: label, exact: true }).click()
 }
 
 // ── the test ─────────────────────────────────────────────────────────────────
