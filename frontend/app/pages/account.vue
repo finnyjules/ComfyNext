@@ -13,7 +13,7 @@ if (!hosted) navigateTo('/', { replace: true })
 const { data: wallet, refresh: refreshWallet } = await useFetch<{ mode: string; balance?: number; available?: number }>(
   '/api/wallet', { server: false })
 
-const { data: packsData } = await useFetch<{ packs: { id: string; usd: number; credits: number; baseCredits: number; bonusCredits: number; label: string; caption: string }[] }>(
+const { data: packsData } = await useFetch<{ packs: { id: string; usd: number; credits: number; baseCredits: number; bonusCredits: number; label: string; caption: string; covers: string }[] }>(
   '/api/billing/packs', { server: false })
 const packs = computed(() => packsData.value?.packs ?? [])
 
@@ -57,7 +57,7 @@ if (import.meta.client) {
 
 <template>
   <div v-if="hosted" class="min-h-screen bg-background text-white antialiased">
-    <div class="mx-auto max-w-md px-6 py-10">
+    <div class="mx-auto max-w-2xl px-6 py-10">
       <NuxtLink to="/" class="mb-8 inline-flex items-center gap-1.5 text-[12px] text-white/40 transition hover:text-white/80">
         <ArrowLeft class="size-3.5" />
         Back to Sailor
@@ -90,33 +90,46 @@ if (import.meta.client) {
           {{ checkoutError }}
         </div>
       </Transition>
-      <div class="mt-3 grid grid-cols-1 gap-2.5">
+      <div class="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <!-- Cards are inert; the explicit Buy button is the only affordance
              (user feedback: card-as-button hid the affordance, and the
              accent border on Creator read as a SELECTED state). Emphasis
-             now lives in the button variant, not the card chrome. -->
+             now lives in the button variant, not the card chrome.
+             Packs differ only by quantity, so the credit count is the hero
+             element; the bonus appears as "+N free" (framing rules: bonus
+             credits, never % off). -->
         <div
           v-for="pack in packs" :key="pack.id"
-          class="flex items-center gap-4 rounded-[8px] border border-white/10 bg-white/[0.04] p-4"
+          class="flex flex-col rounded-[8px] border border-white/10 bg-white/[0.04] p-4"
         >
-          <div class="flex-1">
-            <div class="flex items-center gap-2">
-              <span class="text-[14px] font-semibold">{{ pack.label }}</span>
-              <span v-if="pack.id === 'creator'" class="rounded-full border border-action/50 px-2 py-px font-mono text-[9px] uppercase tracking-wider text-action">Most popular</span>
-            </div>
-            <div class="text-[12px] text-white/55">{{ pack.caption }}</div>
-            <div class="mt-1 text-[12px] tabular-nums text-white/70">
-              {{ pack.credits.toLocaleString('en-US') }} credits
-              <span v-if="pack.bonusCredits" class="text-emerald-300/80">— includes {{ pack.bonusCredits.toLocaleString('en-US') }} free</span>
-            </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[11px] font-medium uppercase tracking-wide text-white/50">{{ pack.label }}</span>
+            <span v-if="pack.id === 'creator'" class="rounded-full border border-action/50 px-2 py-px font-mono text-[9px] uppercase tracking-wider text-action">Most popular</span>
           </div>
-          <StudioButton
-            :variant="pack.id === 'creator' ? 'primary' : 'outline'"
-            :disabled="buying !== null"
-            @click="buy(pack.id)"
-          >
-            {{ buying === pack.id ? 'Opening…' : `Buy for $${pack.usd}` }}
-          </StudioButton>
+          <div class="mt-2.5 flex items-baseline gap-1.5">
+            <span class="text-[26px] font-semibold leading-none tracking-tight tabular-nums">{{ pack.credits.toLocaleString('en-US') }}</span>
+            <span class="text-[12px] text-white/40">credits</span>
+          </div>
+          <!-- Bonus row height is reserved on sm+ so the three cards' captions
+               align across the grid; stacked (mobile) the empty row would just
+               read as a hole, so packs without a bonus collapse it there. -->
+          <div class="mt-2 h-[18px]" :class="pack.bonusCredits ? '' : 'hidden sm:block'">
+            <span v-if="pack.bonusCredits" class="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-px text-[10px] font-medium tabular-nums text-emerald-200/90">
+              +{{ pack.bonusCredits.toLocaleString('en-US') }} free
+            </span>
+          </div>
+          <div class="mt-2.5 text-[12px] leading-snug text-white/55">{{ pack.caption }}</div>
+          <div class="mt-1 text-pretty text-[11px] leading-snug text-white/40">{{ pack.covers }}</div>
+          <div class="mt-auto pt-4">
+            <StudioButton
+              class="w-full"
+              :variant="pack.id === 'creator' ? 'primary' : 'outline'"
+              :disabled="buying !== null"
+              @click="buy(pack.id)"
+            >
+              {{ buying === pack.id ? 'Opening…' : `Buy for $${pack.usd}` }}
+            </StudioButton>
+          </div>
         </div>
       </div>
       <p class="mt-3 text-pretty text-[11px] leading-relaxed text-white/35">

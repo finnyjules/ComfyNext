@@ -16,6 +16,15 @@ describe('credit packs (pricing decision 2026-08-13)', () => {
       expect(p.bonusCredits).toBeGreaterThanOrEqual(0)
     }
   })
+  it('covers lines are derived from the live price book, not hand-kept', () => {
+    // Starter: 1,000 cr at flux-dev 5 cr → ~200 images; seedance clip 90 cr → ~11 clips.
+    // If the book reprices either unit, these figures must move with it — the
+    // assertion checks shape (both units present, counts descend the ladder).
+    for (const p of PACKS) expect(p.covers).toMatch(/^Covers ~[\d,]+ image renders, or ~\d+ video clips$/)
+    const images = PACKS.map(p => Number(p.covers.match(/~([\d,]+) image/)![1]!.replace(/,/g, '')))
+    expect(images).toEqual([...images].sort((a, b) => a - b))
+    expect(images[0]).toBeGreaterThan(0)
+  })
   it('looks up by id and rejects unknown ids', () => {
     expect(packById('creator')?.credits).toBe(2750)
     expect(packById('mega')).toBeNull()
