@@ -3758,7 +3758,9 @@ function closeToolbarMenus() {
   zoomMenuOpen.value = false
   shapesMenuOpen.value = false
   aiMenuOpen.value = false
+  addMenuOpen.value = false
 }
+function toggleInsertMenu() { const next = !addMenuOpen.value; closeToolbarMenus(); addMenuOpen.value = next }
 function toggleZoomMenu() { const next = !zoomMenuOpen.value; closeToolbarMenus(); zoomMenuOpen.value = next }
 function toggleShapesMenu() { const next = !shapesMenuOpen.value; closeToolbarMenus(); shapesMenuOpen.value = next }
 function toggleAiMenu() { const next = !aiMenuOpen.value; closeToolbarMenus(); aiMenuOpen.value = next }
@@ -4700,9 +4702,9 @@ onUnmounted(() => {
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
         <!-- Insert: the add-image chooser, which now also carries Import SVG. -->
-        <div class="relative inline-flex">
+        <div class="relative inline-flex" @click.stop>
           <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer"
-            data-testid="insert-menu-toggle" title="Insert — image or SVG" @click="addMenuOpen = !addMenuOpen">
+            data-testid="insert-menu-toggle" title="Insert — image or SVG" @click="toggleInsertMenu">
             <ImageIcon class="size-4" />
           </button>
           <AddImageSourcePopover :open="addMenuOpen" show-import-svg @upload="onUploadChoice" @pick="onPickCanvasImage"
