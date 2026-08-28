@@ -2706,14 +2706,10 @@ const genShapeCandidate = computed(() => {
 })
 
 function enterGenMode() {
-  if (smartActive.value) { if (smartActionBusy.value) return; exitSmartMode() }
   // Lock the target to the selected image (if any) at the moment we enter;
   // nothing selected → new image.
   const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
-  selectTool(); exitNodeEdit()
-  if (pen.active.value) pen.setActive(false)
-  brush.setActive(false)
-  aiOpen.value = false
+  if (!exitOtherToolsFor('region')) return
   genActive.value = true
   genTargetId.value = sel
   genStyle.value = null
@@ -3358,11 +3354,7 @@ function enterSmartMode() {
   const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
   const wired = !sel ? selectedWiredImage() : null
   if (!sel && !wired) return
-  selectTool(); exitNodeEdit()
-  if (pen.active.value) pen.setActive(false)
-  brush.setActive(false)
-  aiOpen.value = false
-  if (genActive.value) exitGenMode()
+  exitOtherToolsFor('smart')   // smart has no busy-guard for its own entry
   smartActive.value = true
   smartTargetId.value = sel
   smartWiredSlot.value = wired ? wired.slot : null
@@ -3791,9 +3783,35 @@ function stampFaceShape() { closeToolbarMenus(); SHAPE_STAMP[resolveShapeFace(sh
 function smartRowState() {
   return smartSelectRowState(selectedLocal.value?.kind === 'image' || !!selectedWiredImage(), smartActive.value)
 }
+/** Shared gate for entering any of the three AI flows (and, via selectTool,
+ *  node-edit): exits pen, brush, and any OTHER running AI flow first, so the
+ *  three can never collide — mirrors what enterGenMode/enterSmartMode already
+ *  did ad hoc, factored so the trio can't drift apart again. `flow` is the one
+ *  about to become active; its own state is left untouched here, the caller
+ *  flips it on right after. Returns false when a smart-select action is
+ *  mid-flight, in which case the caller must abort rather than start
+ *  something new on top of it (same guard togglePen/toggleBrush/toggleDistort
+ *  already use). */
+function exitOtherToolsFor(flow: ToolbarAiId): boolean {
+  if (flow !== 'smart' && smartActive.value) {
+    if (smartActionBusy.value) return false
+    exitSmartMode()
+  }
+  selectTool(); exitNodeEdit()
+  if (pen.active.value) pen.setActive(false)
+  brush.setActive(false)
+  if (flow !== 'vector') aiOpen.value = false
+  if (flow !== 'region' && genActive.value) exitGenMode()
+  return true
+}
 /** Run a flow WITHOUT touching the face (the face button's own path). */
 function runAiFlow(id: ToolbarAiId) {
-  if (id === 'vector') { aiOpen.value = !aiOpen.value; return }
+  if (id === 'vector') {
+    if (aiOpen.value) { aiOpen.value = false; return }
+    if (!exitOtherToolsFor('vector')) return
+    aiOpen.value = true
+    return
+  }
   if (id === 'region') { toggleGenMode(); return }
   toggleSmartMode()
 }
@@ -3816,20 +3834,25 @@ function aiFaceState() {
     ? smartRowState()
     : { disabled: false, hint: TOOLBAR_AI.find(r => r.id === resolveAiFace(aiFace.value))!.hint }
 }
-/** Is the *faced* flow the one currently running? Drives the face highlight. */
-function aiFaceActive() {
-  const face = resolveAiFace(aiFace.value)
-  return face === 'vector' ? aiOpen.value : face === 'region' ? genActive.value : smartActive.value
-}
+/** True when ANY of the three AI flows is running, regardless of which one is
+ *  currently faced — drives the face+caret cluster's "AI is running" highlight
+ *  (the old single button OR'd all three the same way; a caret-entered flow
+ *  must read as active even while a different flow sits on the face). */
 const aiToolActive = computed(() => aiOpen.value || genActive.value || smartActive.value)
 
 // ── Insert ▾ ────────────────────────────────────────────────────────────────
 // Anchored flyout (same idiom/styling as Shapes). Upload and Import SVG act
-// immediately; "Pick from canvas…" is a second hop onto the picker surface.
+// immediately; "Pick from canvas…" is a second hop onto the picker surface —
+// driven by TOOLBAR_INSERT's `secondHop` flag rather than a hardcoded id list,
+// so the row data and the handler can't drift apart.
+const INSERT_ROW_ACTIONS: Partial<Record<ToolbarInsertId, () => void>> = {
+  upload: () => triggerAddImage(),
+  svg: () => triggerImportSvg(),
+}
 function runInsertRowAction(id: ToolbarInsertId) {
-  if (id === 'upload') { triggerAddImage(); return }
-  if (id === 'svg') { triggerImportSvg(); return }
-  pickerDialogOpen.value = true
+  const row = TOOLBAR_INSERT.find(r => r.id === id)!
+  if (row.secondHop) { pickerDialogOpen.value = true; return }
+  INSERT_ROW_ACTIONS[id]?.()
 }
 function pickInsertRow(id: ToolbarInsertId) {
   insertFace.value = id
@@ -4804,7 +4827,7 @@ onUnmounted(() => {
         <div class="relative flex items-center" @click.stop>
           <button
             class="flex items-center justify-center h-8 w-7 rounded-l cursor-pointer disabled:opacity-30 disabled:cursor-default"
-            :class="aiFaceActive() ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
+            :class="aiToolActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
             data-testid="ai-face" :title="aiFaceLabel(aiFace) + ' — ' + aiFaceState().hint"
             :disabled="aiFaceState().disabled"
             @click="runAiFace()">
