@@ -24,6 +24,17 @@ Bar order, left to right, with thin separators between groups:
 
 Net: 17 buttons → 10 visible. Every collapsed item ≤ 2 clicks. All keyboard shortcuts unchanged (V, B, ⌘Z…). Menus follow the zoom menu's existing idiom (same glass styling, `@click.stop` wrapper, close on stage click-away, Escape closes — reuse the existing pattern/state shape rather than inventing a new one; the zoom menu is the reference implementation).
 
+## Amendment 2026-08-28 — one grammar for every grouped control (approved: "generalize the shapes pattern")
+
+The Shapes face+caret pattern becomes the toolbar's grammar for grouped controls:
+
+- **AI ✦** becomes face+caret. Face = last-used flow's icon (AI vector by default, not persisted); face click re-enters that flow in one click; caret opens the three rows. When the last-used flow is Smart select and no image is selected, the face renders the same disabled state + hint as its row (caret always works).
+- **Insert** becomes face+caret with an ANCHORED flyout (same idiom as Shapes) replacing the centered dialog as the first hop, in the modal only: rows Upload image · Pick from canvas… · Import SVG. Upload and Import SVG act immediately; "Pick from canvas…" opens the existing picker surface (the current centered popover's FillImagePicker) as the second hop. Face = last-used row (Upload default). The Frame card keeps its current centered AddImageSourcePopover unchanged (its overflow-clip constraint is why that dialog exists).
+- Zoom keeps its existing form — its % readout is already its face.
+- All faces reset per modal session (no persistence), matching Shapes. The shared exclusion (`closeToolbarMenus`) covers all flyouts.
+
+Testing addendum: extend the toolbarMenus unit lists (AI + Insert rows + face reducers); live checks: AI face re-enters last-used flow one-click; disabled smart face state; Insert flyout rows act; Pick-from-canvas second hop opens the picker; card's popover unchanged.
+
 ## Non-goals
 
 - No new tools, no removals — every current action stays reachable.
