@@ -123,9 +123,147 @@ def test_z_order_respected():
     assert cx[0] > 0.8 and cx[2] < 0.1, f"higher-z layer should win; got {cx.tolist()}"
 
 
+# ---------------------------------------------------------------------------
+# GEOMETRY conformance. The tests above deliberately use identity transforms so
+# the alpha math is tested in isolation — which is exactly why a units bug in
+# `_transform` slipped through: the server placed every offset layer at HALF the
+# authored displacement for months without a red test.
+#
+# The contract is the CLIENT, `drawWiredImageLayer`:
+#     ctx.translate(W / 2 + layer.x * W, H / 2 + layer.y * H)
+#     ctx.rotate(rot); ctx.scale(s, s); drawImage(src, -fitW/2, -fitH/2, ...)
+# i.e. one unit of x = one FULL canvas width, and the rotation is a true rotation
+# in PIXEL space (unaffected by the canvas aspect). Users author these numbers by
+# dragging in that preview, so the preview is the source of truth and the node
+# must reproduce it.
+# ---------------------------------------------------------------------------
+GEO_TOL_PX = 1.0
+
+
+def _marker(w, h, bw, bh):
+    """A canvas-sized tensor (1,3,h,w) holding one centered white block."""
+    t = torch.zeros(1, 3, h, w)
+    t[:, :, h // 2 - bh // 2:h // 2 + bh // 2, w // 2 - bw // 2:w // 2 + bw // 2] = 1.0
+    return t
+
+
+def _centroid(plane):
+    """Intensity-weighted centroid (x, y) in pixels of a (h, w) plane."""
+    h, w = plane.shape
+    ys, xs = torch.meshgrid(torch.arange(h, dtype=torch.float32),
+                            torch.arange(w, dtype=torch.float32), indexing="ij")
+    total = plane.sum()
+    return (xs * plane).sum().item() / total, (ys * plane).sum().item() / total
+
+
+def _bbox(plane, thresh=0.5):
+    ys, xs = torch.nonzero(plane > thresh, as_tuple=True)
+    return int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
+
+
+def test_x_offset_moves_a_full_canvas_width_per_unit():
+    """x_off = 0.25 must move content 0.25 * W, not 0.125 * W.
+
+    Regression gate for the live-verified defect where `_transform` read x/y in
+    affine_grid's [-1,1] space (one unit = HALF a canvas width) while the client
+    and this node's own tooltip define one unit = a full canvas width.
+    """
+    m = _node()
+    w = h = 256
+    src = _marker(w, h, 32, 32)
+    rest_x, rest_y = _centroid(_transform_plane(m, src, 0.0, 0.0))
+    for x_off in (0.125, 0.25, -0.25):
+        cx, cy = _centroid(_transform_plane(m, src, x_off, 0.0))
+        moved = cx - rest_x
+        want = x_off * w
+        assert abs(moved - want) <= GEO_TOL_PX, (
+            f"x_off={x_off}: content moved {moved:.2f}px, client contract is "
+            f"{want:.2f}px (= x * W); off by {moved - want:+.2f}px")
+        assert abs(cy - rest_y) <= GEO_TOL_PX, f"x_off={x_off} must not move y ({cy - rest_y:+.2f}px)"
+
+
+def test_y_offset_moves_a_full_canvas_height_per_unit():
+    m = _node()
+    w = h = 256
+    src = _marker(w, h, 32, 32)
+    rest_x, rest_y = _centroid(_transform_plane(m, src, 0.0, 0.0))
+    for y_off in (0.25, -0.125):
+        cx, cy = _centroid(_transform_plane(m, src, 0.0, y_off))
+        moved = cy - rest_y
+        want = y_off * h  # +y is DOWN, matching canvas 2D
+        assert abs(moved - want) <= GEO_TOL_PX, (
+            f"y_off={y_off}: content moved {moved:.2f}px, want {want:.2f}px (= y * H)")
+        assert abs(cx - rest_x) <= GEO_TOL_PX, f"y_off={y_off} must not move x ({cx - rest_x:+.2f}px)"
+
+
+def test_offset_is_independent_of_canvas_aspect():
+    """A 0.25 offset is 0.25 of W (or H) on a wide canvas too, not 0.25 of the
+    short side — the client normalizes each axis by its own dimension."""
+    m = _node()
+    w, h = 384, 128
+    src = _marker(w, h, 32, 32)
+    rest_x, rest_y = _centroid(_transform_plane(m, src, 0.0, 0.0))
+    cx, _ = _centroid(_transform_plane(m, src, 0.25, 0.0))
+    assert abs((cx - rest_x) - 0.25 * w) <= GEO_TOL_PX, \
+        f"wide canvas: moved {cx - rest_x:.2f}px, want {0.25 * w:.2f}px"
+    _, cy = _centroid(_transform_plane(m, src, 0.0, 0.25))
+    assert abs((cy - rest_y) - 0.25 * h) <= GEO_TOL_PX, \
+        f"wide canvas: moved {cy - rest_y:.2f}px, want {0.25 * h:.2f}px"
+
+
+def test_rotation_is_a_pixel_space_rotation_on_a_wide_canvas():
+    """90 deg must turn an 80x16 bar into a 16x80 bar whatever the canvas aspect.
+
+    affine_grid's normalized space is anisotropic when W != H, so a rotation
+    matrix written straight into `theta` shears instead of rotating (this bar
+    used to come out 48x26 on a 384x128 canvas).
+    """
+    m = _node()
+    for (w, h) in ((256, 256), (384, 128), (128, 384)):
+        src = _marker(w, h, 80, 16)
+        turned = _transform_plane(m, src, 0.0, 0.0, rotation=90.0)
+        bw, bh = _bbox(turned)
+        assert abs(bw - 16) <= 2 and abs(bh - 80) <= 2, \
+            f"canvas {w}x{h}: 90deg of an 80x16 bar gave {bw}x{bh}, want 16x80"
+
+
+def test_rotation_handedness_matches_canvas_2d():
+    """ctx.rotate(+90deg) with y-down sends +x to +y (visually clockwise)."""
+    m = _node()
+    w = h = 256
+    src = torch.zeros(1, 3, h, w)
+    src[:, :, h // 2 - 8:h // 2 + 8, w // 2 + 40:w // 2 + 56] = 1.0  # marker to the RIGHT
+    rest_x, rest_y = _centroid(_transform_plane(m, _marker(w, h, 16, 16), 0.0, 0.0))
+    cx, cy = _centroid(_transform_plane(m, src, 0.0, 0.0, rotation=90.0))
+    assert cy - rest_y > 20, f"+90deg should send a right-hand marker DOWN; y moved {cy - rest_y:+.2f}px"
+    assert abs(cx - rest_x) <= 4, f"+90deg should leave it near the vertical axis; x {cx - rest_x:+.2f}px"
+
+
+def test_scale_is_unit_free():
+    """Scale is relative, so no space conversion applies: 2x doubles the block."""
+    m = _node()
+    for (w, h) in ((256, 256), (384, 128)):
+        src = _marker(w, h, 32, 32)
+        bw, bh = _bbox(_transform_plane(m, src, 0.0, 0.0, scale=2.0))
+        assert abs(bw - 64) <= 2 and abs(bh - 64) <= 2, \
+            f"canvas {w}x{h}: scale=2 gave {bw}x{bh}, want 64x64"
+
+
+def _transform_plane(m, src, x_off, y_off, rotation=0.0, scale=1.0):
+    """Run `_transform` and return the red plane (h, w) of the warped result."""
+    rgb, _alpha = m._transform(src, x_off, y_off, rotation, scale)
+    return rgb[0, 0]
+
+
 if __name__ == "__main__":
     tests = [test_opacity_over_black, test_alpha_over_normal,
-             test_mask_polarity_and_fold, test_z_order_respected]
+             test_mask_polarity_and_fold, test_z_order_respected,
+             test_x_offset_moves_a_full_canvas_width_per_unit,
+             test_y_offset_moves_a_full_canvas_height_per_unit,
+             test_offset_is_independent_of_canvas_aspect,
+             test_rotation_is_a_pixel_space_rotation_on_a_wide_canvas,
+             test_rotation_handedness_matches_canvas_2d,
+             test_scale_is_unit_free]
     ok = True
     for t in tests:
         try:

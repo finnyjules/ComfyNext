@@ -84,21 +84,63 @@ def _transform(layer: torch.Tensor, x_off: float, y_off: float, rotation: float,
 
     Returns (rgb, alpha) where alpha is 1 where the source mapped within the
     layer and 0 outside.
+
+    UNITS — the client is the contract. `drawWiredImageLayer` (the single source
+    of truth for the Frame node and the Compositor modal) does
+
+        ctx.translate(W / 2 + layer.x * W, H / 2 + layer.y * H)
+        ctx.rotate(rot); ctx.scale(s, s); drawImage(src, -fitW/2, -fitH/2, ...)
+
+    so ONE unit of x = ONE FULL canvas width (and y = a full height), and the
+    rotation is a true rotation in PIXEL space. That is also what this node's own
+    tooltip promises ("-1 = full canvas width"), and what the sibling timeline
+    node does (`nodes_timeline._transform_and_alpha`: `x * canvas_w`, PIL rotate).
+
+    `affine_grid` works in its own normalized space, where each axis spans
+    [-1, 1] across the canvas *independently of the pixel aspect*. Two things
+    follow, and this node used to get both wrong:
+
+      1. A normalized unit is HALF a canvas width, so the pixel-space offset
+         (x * W) is `2 * x` in normalized units. Without the ×2 the server placed
+         every offset layer at half the authored displacement (proven live:
+         client applied 99 % of the offset, server 49 %).
+      2. Because the space is anisotropic when W != H, a rotation matrix written
+         straight into `theta` is a shear, not a rotation. Conjugating by the
+         axis scale (the H/W factors on the off-diagonal terms) turns it back
+         into a real pixel-space rotation. A 90° turn of an 80×16 bar on a
+         384×128 canvas used to come out 48×26 instead of 16×80.
+
+    Scale needs no correction: a uniform scale commutes with the axis scaling,
+    so `s` means the same thing in both spaces.
+
+    SAVED WORKFLOWS: every `layer{N}_x/y` (and every cloner spacing, which adds
+    into the same x/y) was authored by dragging in the client preview, against
+    the full-width convention above. So this correction makes existing saved
+    graphs render the way they were authored and the way their editor preview
+    always showed them — it is a repair of the server, not a re-interpretation of
+    the data. Graphs whose numbers were hand-typed against the old server output
+    (never the normal path — the widgets are driven by the editor) would move.
     """
     b, c, h, w = layer.shape
     device, dtype = layer.device, layer.dtype
     rad = math.radians(rotation)
     cos_a, sin_a = math.cos(rad), math.sin(rad)
     s = max(0.01, float(scale))
-    # Inverse affine: output (qx, qy) → input pixel.
-    # input_x = (cos_a * (qx - x_off) + sin_a * (qy - y_off)) / s
-    # input_y = (-sin_a * (qx - x_off) + cos_a * (qy - y_off)) / s
+    # Client-space (pixel) forward transform:
+    #   out = R(rot) * (s * in) + (x_off * w, y_off * h)
+    # Rewritten as the inverse map affine_grid wants, in normalized coords
+    # (nx = 2*px/w, ny = 2*py/h), with `asp` = h/w carrying the axis anisotropy
+    # and the translation doubled into normalized units:
+    #   in_x = ( cos_a * (nx - 2*x_off) + sin_a * asp * (ny - 2*y_off)) / s
+    #   in_y = (-sin_a / asp * (nx - 2*x_off) + cos_a * (ny - 2*y_off)) / s
+    asp = float(h) / float(w)
+    tx, ty = 2.0 * x_off, 2.0 * y_off
     m00 = cos_a / s
-    m01 = sin_a / s
-    m02 = (-x_off * cos_a - y_off * sin_a) / s
-    m10 = -sin_a / s
+    m01 = sin_a * asp / s
+    m02 = (-tx * cos_a - ty * sin_a * asp) / s
+    m10 = -sin_a / asp / s
     m11 = cos_a / s
-    m12 = (x_off * sin_a - y_off * cos_a) / s
+    m12 = (tx * sin_a / asp - ty * cos_a) / s
     theta = torch.tensor([[m00, m01, m02], [m10, m11, m12]], dtype=dtype, device=device).unsqueeze(0).expand(b, -1, -1)
     grid = F.affine_grid(theta, (b, c, h, w), align_corners=False)
     rgb = F.grid_sample(layer, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
