@@ -4005,12 +4005,12 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-6"
+    class="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4"
     @click.self="emit('close')"
     @dragover.prevent
     @drop.prevent
   >
-    <div class="w-full h-full max-w-[1400px] max-h-[900px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative antialiased text-white/85 overflow-hidden">
+    <div class="w-full h-full max-w-[1720px] max-h-[1040px] bg-[#0a0a0a] rounded-xl border border-white/10 shadow-2xl relative antialiased text-white/85 overflow-hidden">
     <!-- Modal title (top-left, studio-style). The stage is full-bleed, so zoomed
          content passes UNDER this chip — it carries the same glass scrim as the
          floating panels so it stays readable over a bright layer. -->
