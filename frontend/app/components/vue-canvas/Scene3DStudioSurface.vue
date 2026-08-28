@@ -1434,8 +1434,16 @@ function updateLightLabels() {
  */
 onMounted(() => {
   ;(window as any).__scene3dDoc = () => JSON.parse(serializeDoc(doc))
+  // Camera truth, same contract, for the tests that assert whether a drag
+  // orbited: the doc carries no live camera, and comparing rendered pixels
+  // cannot tell "the camera moved" from "a frame differed".
+  ;(window as any).__scene3dCamera = () => {
+    if (!engine) return null
+    const p = engine.camera.position, t = interaction?.orbit.target
+    return { x: p.x, y: p.y, z: p.z, tx: t?.x ?? 0, ty: t?.y ?? 0, tz: t?.z ?? 0 }
+  }
 })
-onBeforeUnmount(() => { delete (window as any).__scene3dDoc })
+onBeforeUnmount(() => { delete (window as any).__scene3dDoc; delete (window as any).__scene3dCamera })
 
 onMounted(() => {
   webglOk.value = detectWebGL()
@@ -3286,8 +3294,13 @@ async function onClose() {
 </script>
 
 <template>
-  <StudioModalShell title="3D Studio" @close="onClose">
-    <template #preview>
+  <!-- Full-bleed: the viewport IS the modal body; the Objects list and the
+       inspector float over it as glass panels (⌘\ hides both). The bottom offset
+       lifts the shell's agent/takes cluster clear of the add-pill below.
+       `panelsVisible` comes down as a slot prop so the in-viewport overlays that
+       sit in a panel's corner can step inside it — and step back when it hides. -->
+  <StudioModalShell title="3D Studio" full-bleed :full-bleed-bottom-offset="72" @close="onClose">
+    <template #preview="{ panelsVisible = true }">
       <div ref="viewportEl" class="relative h-full w-full min-h-0" :class="placingDecal ? 'cursor-crosshair' : ''">
         <!-- NOTHING may be inserted between these two: they are one v-if/v-else pair
              (a sibling with its own v-if in the gap would steal the v-else). -->
@@ -3314,7 +3327,10 @@ async function onClose() {
              OrbitControls, which setPointerCapture()s the pointer on the viewport —
              retargeting pointerup/click to the viewport so the button's @click never
              fires (and a stray orbit-drag starts). Stop it at the overlay boundary. -->
-        <div v-if="webglOk" class="absolute left-3 top-3 flex items-center gap-2 rounded-lg bg-black/60 p-1.5 backdrop-blur" @pointerdown.stop>
+        <!-- left-[316px] clears the floating Objects panel (left-4 + w-72 + gap);
+             back to left-3 the moment ⌘\ takes the panel away. -->
+        <div v-if="webglOk" class="absolute top-3 flex items-center gap-2 rounded-lg bg-black/60 p-1.5 backdrop-blur"
+             :class="panelsVisible ? 'left-[316px]' : 'left-3'" @pointerdown.stop>
           <button type="button" class="rounded px-2 py-1 text-xs"
             :class="snap ? 'bg-white/25 text-white' : 'bg-white/10 text-white/70 hover:bg-white/15'"
             @click="snap = !snap">snap</button>
@@ -3326,7 +3342,8 @@ async function onClose() {
         <!-- Shader-fill frozen hint: mirrors ShapeStudioSurface.vue's — no silent caps on any
              surface. Opposite corner from the snap/light toolbar so the two never collide. -->
         <div v-if="webglOk && shaderFrozenCount > 0"
-             class="pointer-events-none absolute right-3 top-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
+             class="pointer-events-none absolute top-3 max-w-[280px] rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90"
+             :class="panelsVisible ? 'right-[316px]' : 'right-3'">
           {{ shaderFrozenCount }} shader fill{{ shaderFrozenCount > 1 ? 's' : '' }} frozen — too many live shader
           fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
         </div>
@@ -3335,7 +3352,8 @@ async function onClose() {
              Motion mode (a timeline wants horizontal room — the narrow right panel
              cramped it). Transport header + the band tracks, video-editor style. -->
         <div v-if="webglOk && activeTab === 'motion'"
-             class="absolute inset-x-3 bottom-3 z-10 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-2.5 shadow-lg" @pointerdown.stop>
+             class="absolute bottom-3 z-10 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-2.5 shadow-lg"
+             :class="panelsVisible ? 'left-[316px] right-[316px]' : 'left-3 right-3'" @pointerdown.stop>
           <div class="mb-2 flex items-center gap-2 text-[11px] text-white/60">
             <StudioButton @click="togglePlay">{{ playing ? 'Pause' : 'Play' }}</StudioButton>
             <span class="tabular-nums">{{ playhead.toFixed(2) }} / {{ doc.motion.duration.toFixed(1) }}s</span>
@@ -3600,7 +3618,10 @@ async function onClose() {
     <!-- Object list: its own dedicated panel (like Smart Layout / Frame), separate
          from the inspector column at right. -->
     <template #aside>
-      <div class="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
+      <!-- No border/background of its own any more: the shell's floating glass
+           panel already frames this column, and a second frame inside it read as
+           a panel-in-a-panel. -->
+      <div class="flex h-full w-full flex-col overflow-hidden">
         <div class="shrink-0 px-3 py-2.5 text-[11px] font-medium text-white/50">Objects</div>
         <div v-if="!sculpting && (canGroup || canUngroup || canConvertToMesh || canSculpt || canMerge)" class="flex shrink-0 flex-wrap gap-1 px-2 pb-2">
           <StudioButton v-if="canGroup" @click="groupSelection">

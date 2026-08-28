@@ -18,8 +18,45 @@ import TakeStrip from '~/components/vue-canvas/studio/TakeStrip.vue'
 // opt-in for 3D Studio's object list, then graduated to the default — the extra
 // preview room helps every editor, and one size keeps the studios from feeling
 // like different apps when you move between them.
-const props = defineProps<{ title?: string; breadcrumb?: string; agent?: any; agentPlaceholder?: string }>()
+//
+// `fullBleed` (opt-in, default OFF) swaps the boxed three-column body for one
+// full-bleed viewport: #preview becomes the ground layer (absolute inset-0) and
+// the aside / controls columns float over it as glass panels, Compositor-style.
+// Every studio that does NOT pass it renders the exact same DOM as before —
+// the off path below is untouched, branch by branch, on purpose.
+// `fullBleedBottomOffset` lifts the takes+agent cluster clear of a surface's own
+// bottom overlay (3D Studio's add-pill), in px.
+const props = defineProps<{
+  title?: string
+  breadcrumb?: string
+  agent?: any
+  agentPlaceholder?: string
+  fullBleed?: boolean
+  fullBleedBottomOffset?: number
+}>()
 const emit = defineEmits<{ close: [] }>()
+
+const bottomOffset = computed(() => props.fullBleedBottomOffset ?? 16)
+
+// ── Hideable chrome (⌘\), fullBleed only ────────────────────────────────────
+// Both floating panels slide out together, exactly like the Compositor's: the
+// content is never unmounted (scroll position, open sections and in-flight
+// edits survive a hide/show), and the viewport does NOT reflow because the
+// panels never occupied layout space in the first place. Per-session, read in
+// onMounted so SSR and the client agree.
+const PANELS_KEY = 'sailor:studio:panels'
+const panelsVisible = ref(true)
+function setPanelsVisible(v: boolean) {
+  panelsVisible.value = v
+  try { sessionStorage.setItem(PANELS_KEY, v ? '1' : '0') } catch { /* private mode / SSR */ }
+}
+
+// Glass panel chrome shared by the two floating columns. Split from the
+// per-side classes so left/right differ only in edge + slide direction.
+const PANEL_BASE = 'absolute top-4 bottom-4 z-20 w-72 rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl transition-all duration-200 ease-out'
+const HIDE_LEFT = '-translate-x-[130%] opacity-0 pointer-events-none'
+const HIDE_RIGHT = 'translate-x-[130%] opacity-0 pointer-events-none'
+const SHOWN = 'translate-x-0 opacity-100'
 
 const agentActive = computed(() => {
   const a = props.agent
@@ -45,9 +82,21 @@ function requestClose() {
 const rootEl = ref<HTMLElement | null>(null)
 function onKeydown(e: KeyboardEvent) {
   if (e.defaultPrevented) return
+  // ⌘\ toggles the floating panels — only meaningful in fullBleed, where there
+  // ARE floating panels. Allowed while typing (backslash means nothing to a text
+  // field, and someone who hid the chrome then clicked into a prompt must be able
+  // to bring it back), same rule as the Compositor's.
+  if (props.fullBleed && (e.metaKey || e.ctrlKey) && e.key === '\\') {
+    e.preventDefault(); e.stopPropagation()
+    setPanelsVisible(!panelsVisible.value)
+    return
+  }
   if (e.key === 'Escape') { e.stopPropagation(); requestClose() }
 }
 onMounted(() => {
+  if (props.fullBleed) {
+    try { panelsVisible.value = sessionStorage.getItem(PANELS_KEY) !== '0' } catch { /* private mode */ }
+  }
   window.addEventListener('keydown', onKeydown)
   rootEl.value?.focus()
 })
@@ -69,12 +118,57 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <button type="button" aria-label="Close" @click="requestClose()"
                 class="text-white/45 transition-colors hover:text-white/80">✕</button>
       </div>
-      <div class="flex min-h-0 flex-1 gap-4 p-4">
+      <!-- Body. Boxed (default): three columns in a row. Full-bleed (opt-in): one
+           positioned area, the preview underneath everything and the columns
+           floating over it. Every class string on the OFF side is the original. -->
+      <div :class="fullBleed ? 'relative min-h-0 flex-1 overflow-hidden' : 'flex min-h-0 flex-1 gap-4 p-4'">
         <!-- Optional dedicated panel column (e.g. 3D Studio's object list), on the
              left of the preview — mirrors the Smart Layout / Frame layers panel. -->
-        <div v-if="$slots.aside" class="flex w-72 shrink-0 min-h-0"><slot name="aside" /></div>
-        <div class="flex min-h-0 flex-1 flex-col">
-          <div class="flex min-h-0 flex-1 items-center justify-center"><slot name="preview" /></div>
+        <div v-if="$slots.aside"
+             :data-testid="fullBleed ? 'studio-shell-aside-panel' : undefined"
+             :data-hidden="fullBleed ? (panelsVisible ? '0' : '1') : undefined"
+             :class="fullBleed
+               ? [PANEL_BASE, 'left-4 flex overflow-hidden', panelsVisible ? SHOWN : HIDE_LEFT]
+               : 'flex w-72 shrink-0 min-h-0'"><slot name="aside" /></div>
+        <div :class="fullBleed ? 'absolute inset-0' : 'flex min-h-0 flex-1 flex-col'">
+          <div :data-testid="fullBleed ? 'studio-shell-preview-ground' : undefined"
+               :class="fullBleed ? 'absolute inset-0 flex items-center justify-center' : 'flex min-h-0 flex-1 items-center justify-center'">
+            <slot name="preview" :panels-visible="panelsVisible" />
+          </div>
+          <!-- Full-bleed: the takes strip + agent bar float bottom-centre over the
+               viewport as one cluster, lifted by `fullBleedBottomOffset` so a
+               surface with its own bottom overlay can clear it. Same components,
+               same capped width as the boxed path below — written out separately
+               rather than class-switched because the boxed path stacks them as
+               flow siblings and this one stacks them inside one absolute box. -->
+          <template v-if="fullBleed">
+            <div v-if="hasTakes || agent || $slots.agentBar"
+                 data-testid="studio-shell-bottom-cluster"
+                 class="pointer-events-none absolute left-1/2 z-20 w-full max-w-[640px] -translate-x-1/2 px-4"
+                 :style="{ bottom: bottomOffset + 'px' }">
+              <div v-if="hasTakes" class="pointer-events-auto mb-2">
+                <TakeStrip
+                  :takes="agent.takes.value" :thumbs="agent.takeThumbs.value"
+                  :current="agent.takeCurrentThumb.value" :selected="agent.selectedTake.value"
+                  :busy="agent.busy.value"
+                  :reviewing="agent.reviewingTakes?.value"
+                  @hover="agent.previewTake" @select="agent.selectTake"
+                  @keep="agent.keepTake" @dismiss="agent.dismissTakes"
+                  @more-directions="agent.moreDirections"
+                />
+              </div>
+              <div v-if="agent || $slots.agentBar" class="pointer-events-auto">
+                <slot name="agentBar">
+                  <AgentBar
+                    :busy="agent.busy.value" :error="agent.error.value" :notice="agent.notice.value"
+                    :chips="[]" :placeholder="agentPlaceholder"
+                    @submit="agent.ask" @chip="agent.ask"
+                  />
+                </slot>
+              </div>
+            </div>
+          </template>
+          <template v-else>
           <!-- Agent prompt: bare (no container), docked under the preview — mirrors
                the Compositor. Its output renders in the controls column at right.
                A studio with a bespoke agent (Space Type's vibe flow) provides its own
@@ -106,8 +200,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               />
             </slot>
           </div>
+          </template>
         </div>
-        <div class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0">
+        <div :data-testid="fullBleed ? 'studio-shell-controls-panel' : undefined"
+             :data-hidden="fullBleed ? (panelsVisible ? '0' : '1') : undefined"
+             :class="fullBleed
+               ? [PANEL_BASE, 'right-4 flex flex-col gap-2 overflow-y-auto p-3', panelsVisible ? SHOWN : HIDE_RIGHT]
+               : 'flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0'">
           <!-- Assistant takeover: the agent's progress / proposal replace the controls
                while it's working, then hand back the controls when done. -->
           <template v-if="agentActive">
