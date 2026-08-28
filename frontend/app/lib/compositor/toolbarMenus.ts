@@ -60,3 +60,47 @@ export function smartSelectRowState(hasImageSelection: boolean, active: boolean)
   if (active || hasImageSelection) return { disabled: false, hint: TOOLBAR_AI[2]!.hint }
   return { disabled: true, hint: 'Select an image layer first' }
 }
+
+/** The AI face a freshly-opened modal wears. Not persisted, same as Shapes. */
+export const DEFAULT_AI_FACE: ToolbarAiId = 'vector'
+
+/** Last-used-face reducer for AI ✦. Unknown ids fall back to the default so a
+ *  stale value can never leave the button without an icon or a handler. */
+export function resolveAiFace(id: string | null | undefined): ToolbarAiId {
+  return TOOLBAR_AI.some(r => r.id === id) ? id as ToolbarAiId : DEFAULT_AI_FACE
+}
+
+/** Label for an AI face id (used in the face button's tooltip). */
+export function aiFaceLabel(id: string | null | undefined): string {
+  const face = resolveAiFace(id)
+  return TOOLBAR_AI.find(r => r.id === face)!.label
+}
+
+export type ToolbarInsertId = 'upload' | 'canvas' | 'svg'
+
+export interface ToolbarInsertRow {
+  id: ToolbarInsertId
+  label: string
+  /** Upload and Import SVG act immediately; the canvas picker is a second hop
+   *  (it opens the picker surface), which the ellipsis in its label signals. */
+  secondHop?: boolean
+}
+
+/** Menu order, top to bottom. Upload first: it is the default face. */
+export const TOOLBAR_INSERT: readonly ToolbarInsertRow[] = [
+  { id: 'upload', label: 'Upload image' },
+  { id: 'canvas', label: 'Pick from canvas…', secondHop: true },
+  { id: 'svg', label: 'Import SVG' },
+]
+
+/** The Insert face a freshly-opened modal wears. Not persisted. */
+export const DEFAULT_INSERT_FACE: ToolbarInsertId = 'upload'
+
+export function resolveInsertFace(id: string | null | undefined): ToolbarInsertId {
+  return TOOLBAR_INSERT.some(r => r.id === id) ? id as ToolbarInsertId : DEFAULT_INSERT_FACE
+}
+
+export function insertFaceLabel(id: string | null | undefined): string {
+  const face = resolveInsertFace(id)
+  return TOOLBAR_INSERT.find(r => r.id === face)!.label
+}

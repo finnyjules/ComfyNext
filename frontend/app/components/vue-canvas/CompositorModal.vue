@@ -81,10 +81,13 @@ import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
 import { libraryFamily } from '~/data/library-fonts'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
-import { PenTool, Brush, Sparkles, Wand2, Lasso, Undo2, Redo2, ChevronRight, ChevronDown, ChevronUp, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
+import { PenTool, Brush, Sparkles, Wand2, Lasso, Undo2, Redo2, ChevronRight, ChevronDown, ChevronUp, GripVertical, Play, Palette, Check, RefreshCw, ImagePlus, FileUp, LayoutGrid } from 'lucide-vue-next'
 import {
-  TOOLBAR_SHAPES, TOOLBAR_AI, DEFAULT_SHAPE_FACE, resolveShapeFace, shapeFaceLabel, smartSelectRowState,
-  type ToolbarShapeId, type ToolbarAiId,
+  TOOLBAR_SHAPES, TOOLBAR_AI, TOOLBAR_INSERT,
+  DEFAULT_SHAPE_FACE, DEFAULT_AI_FACE, DEFAULT_INSERT_FACE,
+  resolveShapeFace, shapeFaceLabel, smartSelectRowState,
+  resolveAiFace, aiFaceLabel, resolveInsertFace, insertFaceLabel,
+  type ToolbarShapeId, type ToolbarAiId, type ToolbarInsertId,
 } from '~/lib/compositor/toolbarMenus'
 import type { Component, ComputedRef } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
@@ -3730,37 +3733,47 @@ async function onAddImageFile(e: Event) {
   input.value = ''
   if (file) { try { await addImageFromFile(file) } catch (err) { console.error('[Compositor] add image failed:', err) } }
 }
-const addMenuOpen = ref(false)
-function onUploadChoice() { addMenuOpen.value = false; triggerAddImage() }
+/** Second hop of the Insert flyout: the centered picker surface, rendering only
+ *  FillImagePicker. The anchored flyout is the first hop (see below). */
+const pickerDialogOpen = ref(false)
 async function onPickCanvasImage(src: string) {
-  addMenuOpen.value = false
+  pickerDialogOpen.value = false
   try { await addImageFromCanvasSrc(src) } catch (err) { console.error('[Compositor] add canvas image failed:', err) }
 }
-function onImportSvgChoice() { addMenuOpen.value = false; triggerImportSvg() }
 
-// ── Toolbar menus: Shapes ▾ and AI ✦ ▾ ──────────────────────────────────────
+// ── Toolbar menus: Shapes ▾, Insert ▾ and AI ✦ ▾ ────────────────────────────
 // Same idiom as the zoom menu: a ref per menu, the cluster wrapper stops the
 // click (the toolbar sits inside the stage, whose click handler is the
 // click-away), Escape closes the open one. Opening one closes the others so two
 // flyouts can never overlap.
 const shapesMenuOpen = ref(false)
 const aiMenuOpen = ref(false)
+const insertMenuOpen = ref(false)
 /** Last-used shape, worn by the Shapes button. Component state on purpose —
- *  the spec asks for no persistence beyond the open modal. */
+ *  the spec asks for no persistence beyond the open modal. Same for the AI and
+ *  Insert faces below: plain refs, so every session starts on the default. */
 const shapeFace = ref<ToolbarShapeId>(DEFAULT_SHAPE_FACE)
+const aiFace = ref<ToolbarAiId>(DEFAULT_AI_FACE)
+const insertFace = ref<ToolbarInsertId>(DEFAULT_INSERT_FACE)
 const SHAPE_ICONS: Record<ToolbarShapeId, Component> = {
   rect: Square, ellipse: Circle, line: Minus, polygon: Hexagon, star: Star,
 }
 const SHAPE_STAMP: Record<ToolbarShapeId, () => void> = {
   rect: addRect, ellipse: addEllipse, line: addLine, polygon: addPolygon, star: addStar,
 }
+const AI_ICONS: Record<ToolbarAiId, Component> = {
+  vector: Sparkles, region: Wand2, smart: Lasso,
+}
+const INSERT_ICONS: Record<ToolbarInsertId, Component> = {
+  upload: ImagePlus, canvas: LayoutGrid, svg: FileUp,
+}
 function closeToolbarMenus() {
   zoomMenuOpen.value = false
   shapesMenuOpen.value = false
   aiMenuOpen.value = false
-  addMenuOpen.value = false
+  insertMenuOpen.value = false
 }
-function toggleInsertMenu() { const next = !addMenuOpen.value; closeToolbarMenus(); addMenuOpen.value = next }
+function toggleInsertMenu() { const next = !insertMenuOpen.value; closeToolbarMenus(); insertMenuOpen.value = next }
 function toggleZoomMenu() { const next = !zoomMenuOpen.value; closeToolbarMenus(); zoomMenuOpen.value = next }
 function toggleShapesMenu() { const next = !shapesMenuOpen.value; closeToolbarMenus(); shapesMenuOpen.value = next }
 function toggleAiMenu() { const next = !aiMenuOpen.value; closeToolbarMenus(); aiMenuOpen.value = next }
@@ -3778,13 +3791,56 @@ function stampFaceShape() { closeToolbarMenus(); SHAPE_STAMP[resolveShapeFace(sh
 function smartRowState() {
   return smartSelectRowState(selectedLocal.value?.kind === 'image' || !!selectedWiredImage(), smartActive.value)
 }
-function runAiRow(id: ToolbarAiId) {
-  aiMenuOpen.value = false
+/** Run a flow WITHOUT touching the face (the face button's own path). */
+function runAiFlow(id: ToolbarAiId) {
   if (id === 'vector') { aiOpen.value = !aiOpen.value; return }
   if (id === 'region') { toggleGenMode(); return }
   toggleSmartMode()
 }
+/** Menu row → run it now AND wear it, so re-entering is one click. */
+function runAiRow(id: ToolbarAiId) {
+  aiFace.value = id
+  aiMenuOpen.value = false
+  runAiFlow(id)
+}
+/** The face button: re-enter the last-used flow without opening anything. */
+function runAiFace() {
+  const face = resolveAiFace(aiFace.value)
+  closeToolbarMenus()
+  runAiFlow(face)
+}
+/** The face mirrors its row's disabled+hint state (Smart select needs an image
+ *  layer). The caret is never disabled — the other two flows stay reachable. */
+function aiFaceState() {
+  return resolveAiFace(aiFace.value) === 'smart'
+    ? smartRowState()
+    : { disabled: false, hint: TOOLBAR_AI.find(r => r.id === resolveAiFace(aiFace.value))!.hint }
+}
+/** Is the *faced* flow the one currently running? Drives the face highlight. */
+function aiFaceActive() {
+  const face = resolveAiFace(aiFace.value)
+  return face === 'vector' ? aiOpen.value : face === 'region' ? genActive.value : smartActive.value
+}
 const aiToolActive = computed(() => aiOpen.value || genActive.value || smartActive.value)
+
+// ── Insert ▾ ────────────────────────────────────────────────────────────────
+// Anchored flyout (same idiom/styling as Shapes). Upload and Import SVG act
+// immediately; "Pick from canvas…" is a second hop onto the picker surface.
+function runInsertRowAction(id: ToolbarInsertId) {
+  if (id === 'upload') { triggerAddImage(); return }
+  if (id === 'svg') { triggerImportSvg(); return }
+  pickerDialogOpen.value = true
+}
+function pickInsertRow(id: ToolbarInsertId) {
+  insertFace.value = id
+  insertMenuOpen.value = false
+  runInsertRowAction(id)
+}
+function runInsertFace() {
+  const face = resolveInsertFace(insertFace.value)
+  closeToolbarMenus()
+  runInsertRowAction(face)
+}
 
 // ── Fill a brush layer with an image ────────────────────────────────────────
 // Reuses the add-image flow, then clips the freshly-added image to the brush
@@ -3820,7 +3876,8 @@ function handleKeydown(e: KeyboardEvent) {
     if (zoomMenuOpen.value) { zoomMenuOpen.value = false; return }
     if (shapesMenuOpen.value) { shapesMenuOpen.value = false; return }
     if (aiMenuOpen.value) { aiMenuOpen.value = false; return }
-    if (addMenuOpen.value) { addMenuOpen.value = false; return }
+    if (insertMenuOpen.value) { insertMenuOpen.value = false; return }
+    if (pickerDialogOpen.value) { pickerDialogOpen.value = false; return }
     if (editingId.value) { endEdit(); return }
     if (typing) return
     // The busy guard now lives inside exitSmartMode itself.
@@ -4701,24 +4758,64 @@ onUnmounted(() => {
           <Brush class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
-        <!-- Insert: the add-image chooser, which now also carries Import SVG. -->
-        <div class="relative inline-flex" @click.stop>
-          <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer"
-            data-testid="insert-menu-toggle" title="Insert — image or SVG" @click="toggleInsertMenu">
-            <ImageIcon class="size-4" />
+        <!-- Insert: face+caret like Shapes. The face repeats the last-used row;
+             the caret opens the anchored flyout. "Pick from canvas…" is the one
+             row with a second hop (the centered picker surface). -->
+        <div class="relative flex items-center" @click.stop>
+          <button
+            class="flex items-center justify-center h-8 w-7 rounded-l hover:bg-white/10 text-white/80 cursor-pointer"
+            data-testid="insert-face" :title="insertFaceLabel(insertFace)"
+            @click="runInsertFace()">
+            <component :is="INSERT_ICONS[insertFace]" class="size-4" />
           </button>
-          <AddImageSourcePopover :open="addMenuOpen" show-import-svg @upload="onUploadChoice" @pick="onPickCanvasImage"
-            @import-svg="onImportSvgChoice" @close="addMenuOpen = false" />
+          <button
+            class="flex items-center justify-center h-8 w-4 rounded-r cursor-pointer"
+            :class="insertMenuOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/50'"
+            data-testid="insert-menu-toggle" title="Insert — image or SVG"
+            @click="toggleInsertMenu()">
+            <ChevronUp class="size-3" />
+          </button>
+          <Transition
+            enter-active-class="transition-all duration-150 ease-out"
+            leave-active-class="transition-all duration-100 ease-in"
+            enter-from-class="opacity-0 translate-y-1"
+            leave-to-class="opacity-0 translate-y-1"
+          >
+            <div v-if="insertMenuOpen"
+              data-testid="insert-menu"
+              class="absolute bottom-full left-0 mb-2 w-[176px] rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/97 p-1 shadow-xl"
+              @pointerdown.stop>
+              <button v-for="row in TOOLBAR_INSERT" :key="row.id"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-[12px] cursor-pointer text-white/85"
+                :class="row.id === insertFace ? 'bg-white/10' : 'hover:bg-white/10'"
+                :data-testid="'insert-menu-' + row.id" @click="pickInsertRow(row.id)">
+                <component :is="INSERT_ICONS[row.id]" class="size-3.5 text-white/60" />
+                <span class="flex-1 text-left">{{ row.label }}</span>
+              </button>
+            </div>
+          </Transition>
+          <!-- Second hop: the picker surface only (the Frame card keeps the
+               full chooser, hence `picker-only` rather than a new component). -->
+          <AddImageSourcePopover :open="pickerDialogOpen" picker-only
+            @pick="onPickCanvasImage" @close="pickerDialogOpen = false" />
         </div>
         <!-- AI: the three generative flows, one button. Rows keep their old
              tooltips as subtitles; Smart select greys out without an image. -->
         <div class="relative flex items-center" @click.stop>
           <button
-            class="flex items-center justify-center size-8 rounded cursor-pointer"
-            :class="aiMenuOpen || aiToolActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
+            class="flex items-center justify-center h-8 w-7 rounded-l cursor-pointer disabled:opacity-30 disabled:cursor-default"
+            :class="aiFaceActive() ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
+            data-testid="ai-face" :title="aiFaceLabel(aiFace) + ' — ' + aiFaceState().hint"
+            :disabled="aiFaceState().disabled"
+            @click="runAiFace()">
+            <component :is="AI_ICONS[aiFace]" class="size-4" />
+          </button>
+          <button
+            class="flex items-center justify-center h-8 w-4 rounded-r cursor-pointer"
+            :class="aiMenuOpen ? 'bg-white text-neutral-900' : aiToolActive ? 'hover:bg-white/10 text-white/80' : 'hover:bg-white/10 text-white/50'"
             data-testid="ai-menu-toggle" title="AI — vector, generate in region, smart select"
             @click="toggleAiMenu()">
-            <Sparkles class="size-4" />
+            <ChevronUp class="size-3" />
           </button>
           <Transition
             enter-active-class="transition-all duration-150 ease-out"
