@@ -3358,8 +3358,10 @@ async function onClose() {
           <p v-if="uploadError" class="mb-2 text-center text-[11px] text-red-400/90">{{ uploadError }}</p>
           <div class="relative flex items-center gap-1 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1.5 shadow-lg">
             <!-- Two real buttons rather than hit-test zones inside one, so the
-                 narrow caret is still a real target (Frame toolbar's rule). -->
-            <div class="flex items-center">
+                 narrow caret is still a real target (Frame toolbar's rule).
+                 Each group is `relative` so its popup anchors ABOVE ITS OWN
+                 trigger, not the pill's far edge. -->
+            <div class="relative flex items-center">
               <button
                 type="button"
                 class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-l px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
@@ -3379,6 +3381,30 @@ async function onClose() {
               >
                 <ChevronUp class="size-3" />
               </button>
+              <!-- Primitive menu: popup card above its own group (Brand-panel mechanic) -->
+              <div
+                v-if="primMenuOpen"
+                data-testid="prim-menu"
+                class="absolute bottom-full left-0 z-30 mb-3 w-64 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
+              >
+                <div v-for="group in PRIM_GROUPS" :key="group.label" class="mb-1.5 last:mb-0">
+                  <p class="mb-1 px-1 text-[10px] uppercase tracking-[0.12em] text-white/35">{{ group.label }}</p>
+                  <div class="grid grid-cols-2 gap-0.5">
+                    <button
+                      v-for="p in group.kinds"
+                      :key="p.kind"
+                      type="button"
+                      class="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                      :class="p.kind === primFace ? 'bg-white/10 text-white' : 'text-white/80'"
+                      :data-testid="'prim-menu-' + p.kind"
+                      @click="pickPrimitive(p.kind)"
+                    >
+                      <component :is="p.icon" class="size-4 shrink-0 opacity-70" />
+                      {{ p.label }}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
             <button
@@ -3393,7 +3419,7 @@ async function onClose() {
               {{ uploading ? 'Uploading…' : 'Upload GLB' }}
             </button>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
-            <div class="flex items-center">
+            <div class="relative flex items-center">
               <button
                 type="button"
                 class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-l px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
@@ -3413,9 +3439,28 @@ async function onClose() {
               >
                 <ChevronUp class="size-3" />
               </button>
+              <!-- Light menu: same popup mechanic, anchored to its own group. -->
+              <div
+                v-if="lightMenuOpen"
+                data-testid="light-menu"
+                class="absolute bottom-full left-0 z-30 mb-3 w-36 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
+              >
+                <button
+                  v-for="k in LIGHT_KINDS"
+                  :key="k"
+                  type="button"
+                  class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                  :class="k === lightFace ? 'bg-white/10 text-white' : 'text-white/80'"
+                  :data-testid="'light-menu-' + k"
+                  @click="pickLight(k)"
+                >
+                  <Lightbulb class="size-4 shrink-0 opacity-70" />
+                  {{ LIGHT_KIND_LABELS[k] }}
+                </button>
+              </div>
             </div>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
-            <div class="flex items-center">
+            <div class="relative flex items-center">
               <button
                 type="button"
                 class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-l px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
@@ -3435,92 +3480,47 @@ async function onClose() {
               >
                 <ChevronUp class="size-3" />
               </button>
+              <!-- Decal menu: same popup mechanic. Both entries ARM a placement
+                   rather than adding an object — the click on the viewport is
+                   what creates the decal. -->
+              <div
+                v-if="decalMenuOpen"
+                data-testid="decal-menu"
+                class="absolute bottom-full left-0 z-30 mb-3 w-44 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
+              >
+                <button
+                  v-for="row in DECAL_ENTRIES"
+                  :key="row.id"
+                  type="button"
+                  class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                  :class="row.id === decalFace ? 'bg-white/10 text-white' : 'text-white/80'"
+                  :data-testid="'decal-menu-' + row.id"
+                  @click="pickDecalEntry(row.id)"
+                >
+                  <component :is="row.icon" class="size-4 shrink-0 opacity-70" /> {{ row.label }}
+                </button>
+              </div>
             </div>
             <div class="mx-0.5 h-5 w-px bg-white/10" />
             <!-- Generate stays a plain toggle: it opens a flow panel, not a pick
-                 list, so there is nothing for a face to repeat. -->
-            <button
-              type="button"
-              class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded px-2.5 text-[12px] transition-colors cursor-pointer"
-              :class="genOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              data-testid="gen-toggle"
-              @click="toggleGenMenu()"
-            >
-              <Sparkles class="size-4" /> Generate
-            </button>
-
-            <!-- Primitive menu: popup card above the button (Brand-panel mechanic) -->
-            <div
-              v-if="primMenuOpen"
-              data-testid="prim-menu"
-              class="absolute bottom-full left-0 z-30 mb-2 w-64 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
-            >
-              <div v-for="group in PRIM_GROUPS" :key="group.label" class="mb-1.5 last:mb-0">
-                <p class="mb-1 px-1 text-[10px] uppercase tracking-[0.12em] text-white/35">{{ group.label }}</p>
-                <div class="grid grid-cols-2 gap-0.5">
-                  <button
-                    v-for="p in group.kinds"
-                    :key="p.kind"
-                    type="button"
-                    class="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                    :class="p.kind === primFace ? 'bg-white/10 text-white' : 'text-white/80'"
-                    :data-testid="'prim-menu-' + p.kind"
-                    @click="pickPrimitive(p.kind)"
-                  >
-                    <component :is="p.icon" class="size-4 shrink-0 opacity-70" />
-                    {{ p.label }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Light menu: same popup mechanic as the primitive menu, right-aligned
-                 above its trigger since it's the last button in the pill. -->
-            <div
-              v-if="lightMenuOpen"
-              data-testid="light-menu"
-              class="absolute bottom-full right-0 z-30 mb-2 w-36 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
-            >
+                 list, so there is nothing for a face to repeat. Wrapped `relative`
+                 so its panel anchors to it like the other groups. -->
+            <div class="relative flex items-center">
               <button
-                v-for="k in LIGHT_KINDS"
-                :key="k"
                 type="button"
-                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                :class="k === lightFace ? 'bg-white/10 text-white' : 'text-white/80'"
-                :data-testid="'light-menu-' + k"
-                @click="pickLight(k)"
+                class="flex h-8 items-center gap-1.5 whitespace-nowrap rounded px-2.5 text-[12px] transition-colors cursor-pointer"
+                :class="genOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+                data-testid="gen-toggle"
+                @click="toggleGenMenu()"
               >
-                <Lightbulb class="size-4 shrink-0 opacity-70" />
-                {{ LIGHT_KIND_LABELS[k] }}
+                <Sparkles class="size-4" /> Generate
               </button>
-            </div>
 
-            <!-- Decal menu: same popup mechanic as the light menu. Both entries ARM a
-                 placement rather than adding an object — the click on the viewport is
-                 what creates the decal. -->
-            <div
-              v-if="decalMenuOpen"
-              data-testid="decal-menu"
-              class="absolute bottom-full right-0 z-30 mb-2 w-44 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
-            >
-              <button
-                v-for="row in DECAL_ENTRIES"
-                :key="row.id"
-                type="button"
-                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                :class="row.id === decalFace ? 'bg-white/10 text-white' : 'text-white/80'"
-                :data-testid="'decal-menu-' + row.id"
-                @click="pickDecalEntry(row.id)"
-              >
-                <component :is="row.icon" class="size-4 shrink-0 opacity-70" /> {{ row.label }}
-              </button>
-            </div>
-
-            <!-- Generate menu: text → image review → make 3D. Same popup mechanic
-                 as the primitive/light menus, right-aligned above its trigger. -->
+            <!-- Generate menu: text → image review → make 3D. Right-aligned to
+                 its own wrapper so it hugs the trigger. -->
             <div
               v-if="genOpen"
-              class="absolute bottom-full right-0 z-30 mb-2 w-72 rounded-lg border border-white/10 bg-[#161616] p-3 shadow-2xl"
+              class="absolute bottom-full right-0 z-30 mb-3 w-72 rounded-lg border border-white/10 bg-[#161616] p-3 shadow-2xl"
             >
               <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Generate 3D model</p>
               <textarea
@@ -3573,6 +3573,7 @@ async function onClose() {
               </template>
 
               <p v-if="genStage === 'error' && genError" class="mt-2 text-[11px] text-red-400/90">{{ genError }}</p>
+            </div>
             </div>
           </div>
         </div>
