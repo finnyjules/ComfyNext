@@ -24,7 +24,7 @@ Bar order, left to right, with thin separators between groups:
 
 Net: 17 buttons → 10 visible. Every collapsed item ≤ 2 clicks. All keyboard shortcuts unchanged (V, B, ⌘Z…). Menus follow the zoom menu's existing idiom (same glass styling, `@click.stop` wrapper, close on stage click-away, Escape closes — reuse the existing pattern/state shape rather than inventing a new one; the zoom menu is the reference implementation).
 
-## Amendment 2026-08-28 — one grammar for every grouped control (approved: "generalize the shapes pattern")
+## Amendment 2026-08-28 — one grammar for every grouped control (LANDED same day, `773432ed9` + `51edf5954`)
 
 The Shapes face+caret pattern becomes the toolbar's grammar for grouped controls:
 

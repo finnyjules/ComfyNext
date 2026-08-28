@@ -74,7 +74,12 @@ stamps in one click, chevron opens the list), Import SVG folded into the Insert 
 three AI flows (AI vector · generate in region · smart select) behind one ✦ menu with the
 smart-select disabled-hint preserved. All shortcuts unchanged; menus share the zoom menu's
 idiom + a common exclusion (`closeToolbarMenus`). Live-verified 15/15 + 8/8 menu-exclusion
-checks. Spec: 2026-08-28-compositor-toolbar-regroup-design.md.
+checks. Same-day generalization (`773432ed9`+`51edf5954`): face+caret became the grammar for
+EVERY grouped control — AI and Insert faces remember the last-used action (one-click repeat),
+Insert's first hop is an anchored flyout (picker dialog is the second hop; the card keeps its
+dialog), all three AI entries exit pen/brush/each-other through one shared gate, and the AI
+highlight ORs all three flows so a side-door entry still lights the cluster.
+Spec: 2026-08-28-compositor-toolbar-regroup-design.md.
 
 The deepest Frame seam is closed: a wired input is now a normal layer (`kind:'wired'` in
 `sailor_localLayers`) whose pixels stay live from the slot feed — selection, align, group,
