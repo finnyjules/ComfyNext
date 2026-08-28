@@ -48,6 +48,24 @@ moving, dials not keyframes) is the declared bar for our timeline front door; th
 block ecosystem named a structural risk. **Elements queues behind this program by decision
 (2026-08-27)** — the door ships after the house stands. Next: implementation plan for the spec.
 
+**BRIDGE PROBE RUN 2026-08-27 — VERDICT: the shallow bridge works at HEAD, and the piece
+sings.** One real piece made end-to-end: a $0.20 PixVerse shot (matte black perfume bottle,
+golden mist) + a transparent Space Type "NOIR" Cylinder title, layered on the shipped
+Timeline, live-composited in preview, exported to a real mp4
+(`output/timeline_20260827_215758.mp4`). The probe caught and fixed TWO real export bugs
+(`ebffd64ae`, TDD, 3 regression tests): spacetype clips flattened to opaque in the Python
+composite (`preserve_alpha` only covered `motion` — title-over-black on every export while
+preview was correct; goldens never covered spacetype-over-video, which is why it lived) and
+bare clip filenames never input-joined in `_prepare_render_clips` (silent skip, now warns).
+**UX friction log for the next phase (the door is the problem, not the machinery):** send-to-
+timeline with no Timeline node silently no-ops · video artifact has no send-to-timeline (only
+studios do; wiring needs a canvas port-drag) · fresh AI video saves to `output/video/`,
+invisible to the media rail which lists `input/` flat (5,000+ files, newest not on top) ·
+double-click adds a clip twice · hidden-pane export stalls three ways (toBlob clamp, upload
+setTimeout throttling, and page reload killing the client bake outright — export died 3× to
+reloads before completing) · `input/` holds 23k+ orphaned bake PNGs, never cleaned ·
+duration row says "frames", means seconds · killing the backend hard-reloads the app.
+
 ### Four takes — the agent proposes four versions before committing — LANDED 2026-08-25 (Milestone A)
 
 Designed live with Julien via the visual-companion mockups (system C: canvas-shaped,
