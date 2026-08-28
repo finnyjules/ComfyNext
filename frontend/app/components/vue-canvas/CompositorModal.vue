@@ -14,7 +14,7 @@ import {
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
 import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent } from '~/lib/compositor/frameStack'
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
-import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, setWiredDof as writeWiredDof, maskCandidateKeys } from '~/composables/useWiredTreatments'
+import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
 import {
   allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
@@ -189,14 +189,6 @@ const layers = computed<Layer[]>(() => {
   return out
 })
 
-function setLayerProp(slot: number, prop: string, value: any) {
-  const node = compositor.value
-  if (!node) return
-  const defs = node.data.widgetDefs as any[]
-  const idx = defs.findIndex((d: any) => d.name === `layer${slot}_${prop}`)
-  if (idx >= 0) node.data.widgetsValues[idx] = value
-}
-
 // Wired layer cloner is stored as editor state on a node property (slot → Cloner,
 // 1-based to match layer{i}_cloner), NOT directly on the backend widget — so the
 // toggle + live preview work immediately, without a ComfyUI restart (mirrors how
@@ -320,18 +312,6 @@ function onStagePointerMovePan(e: PointerEvent) {
   view.ty = panFrom.ty + (e.clientY - panFrom.y)
 }
 function onStagePointerUpPan() { panFrom = null; panning.value = false }
-
-function fitSize(slot: number) {
-  const dims = naturalDims.value[slot]
-  if (!dims) return { w: canvasDisplay.w, h: canvasDisplay.h }
-  const cAspect = canvasDisplay.w / canvasDisplay.h
-  const iAspect = dims.w / dims.h
-  if (iAspect > cAspect) return { w: canvasDisplay.w, h: canvasDisplay.w / iAspect }
-  return { w: canvasDisplay.h * iAspect, h: canvasDisplay.h }
-}
-function layerCenter(layer: Layer) {
-  return { x: canvasDisplay.w / 2 + layer.x * canvasDisplay.w, y: canvasDisplay.h / 2 + layer.y * canvasDisplay.h }
-}
 
 const canvasRef = ref<HTMLDivElement | null>(null)
 function canvasRect(): DOMRect | null { return canvasRef.value?.getBoundingClientRect() ?? null }
@@ -690,8 +670,10 @@ const aiError = ref('')
 const vectorizableUrl = computed<string | null>(() => {
   const l = selectedLocal.value
   if (l && l.kind === 'image') return imageLayerUrl(l.filename)
-  if (selectedSlot.value != null) {
-    const w = layers.value.find((x: any) => x.slot === selectedSlot.value)
+  // A wired layer is an ordinary selection now; its pixels still come from the
+  // slot, so resolve the URL through this modal's 1-based slot numbering.
+  if (l && l.kind === 'wired') {
+    const w = layers.value.find((x: any) => x.slot === (l as any).slot + 1)
     if (w?.url) return w.url as string
   }
   return null
@@ -790,14 +772,13 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibility)
 })
 
-// ── Selection: image slot OR local layer, mutually exclusive ────────────────
-const selectedSlot = ref<number | null>(null)
-const selected = computed(() => layers.value.find(l => l.slot === selectedSlot.value) ?? null)
-function selectImage(slot: number) { selectedSlot.value = slot }
-watch(selectedLocalId, (id) => { if (id != null) selectedSlot.value = null })
-// Any slot change (including deselect) invalidates the live brush-mask canvas —
-// it's seeded per-slot from that slot's maskUrl and must not be reused stale.
-watch(selectedSlot, (s) => { wiredBrushMask = null; if (s != null) selectLocal(null) })
+// ── Selection ───────────────────────────────────────────────────────────────
+// There is only ONE selection now. A wired slot is a layer, so it selects into
+// `selectedIds` like any other and the old parallel `selectedSlot` ref is gone —
+// with it the whole "image slot OR local layer, mutually exclusive" dance.
+// Any selection change invalidates the live brush-mask canvas — it's seeded
+// per-slot from that slot's maskUrl and must not be reused stale.
+watch(selectedLocalId, () => { wiredBrushMask = null })
 // Leaving Brush entirely, or flipping to Paint mode, also drops the live mask
 // canvas so re-entering Mask mode re-seeds it from the persisted maskUrl.
 watch(brush.active, (on) => { if (!on) wiredBrushMask = null })
@@ -848,7 +829,6 @@ function resolveStackKey(key: StackKey): { type: 'wired'; layer: Layer } | { typ
 }
 const selectedStackKey = computed<StackKey | null>(() => {
   if (selectedLocalId.value) return localKey(selectedLocalId.value)
-  if (selectedSlot.value != null) return wiredKey(selectedSlot.value)
   return null
 })
 // Pre-resolved stack for the sidebar list (top-first).
@@ -955,12 +935,14 @@ const flatRows = computed<FlatRow[]>(() => {
 })
 function rowSelected(row: any) {
   if (row.kind === 'group') return isGroupSelected(row.groupId)
-  if (row.kind === 'wired') return selectedSlot.value === row.slot
+  // A `wired` ROW is now only ever a legacy, unmigrated slot (a schema-2 slot is
+  // a layer and renders as a `local` row). Those have no selection state left.
+  if (row.kind === 'wired') return false
   return selectedIds.value.has(row.layerId)
 }
 function onRowClick(row: any) {
   if (row.kind === 'group') selectGroup(row.groupId)
-  else if (row.kind === 'wired') selectImage(row.slot)
+  else if (row.kind === 'wired') { /* legacy unmigrated slot — nothing to select */ }
   else selectLocal(row.layerId)
 }
 function onRowDblClick(row: any) {
@@ -1078,80 +1060,13 @@ function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg:
     rot: transform(0, -hh - 30 / Math.max(scale, 0.1)), topCenter: transform(0, -hh), center: { x: cx, y: cy },
   }
 }
-const handlePositions = computed(() => {
-  const layer = selected.value
-  if (!layer || genActive.value) return null
-  const { w: fitW, h: fitH } = fitSize(layer.slot)
-  const c = layerCenter(layer)
-  return boxHandles(c.x, c.y, (fitW / 2) * layer.scale, (fitH / 2) * layer.scale, layer.rotation, layer.scale)
-})
+// Wired layers select, move, scale and rotate through the SAME handles as every
+// other layer now (`useLocalLayerEditor`), so the amber handle set and its
+// uniform-from-centre `onScalePointerDown` are gone. Corner resize on a wired
+// layer is the editor's aspect-locked corner scale — the text/line behaviour, not
+// the free 2D rect resize, because a wired layer has no independent height (its
+// height follows the live content aspect; see `resizableKind`).
 
-// ── Image-layer drag / scale / rotate (wired slot transforms) ───────────────
-interface DragMove { type: 'move'; slot: number; startMouseX: number; startMouseY: number; startX: number; startY: number }
-interface DragScale { type: 'scale'; slot: number; startScale: number; centerX: number; centerY: number; startDist: number }
-interface DragRotate { type: 'rotate'; slot: number; startAngle: number; startRotation: number; centerX: number; centerY: number }
-type Drag = DragMove | DragScale | DragRotate | null
-const drag = ref<Drag>(null)
-
-function onLayerPointerDown(slot: number, e: PointerEvent) {
-  // Hidden/locked wired layers don't respond to direct canvas presses (the
-  // invisible <img> hit targets stay mounted regardless).
-  if (hiddenWired.value.has(slot) || lockedWired.value.has(slot)) return
-  e.preventDefault(); e.stopPropagation()
-  selectImage(slot)
-  const layer = layers.value.find(l => l.slot === slot)
-  if (!layer) return
-  drag.value = { type: 'move', slot, startMouseX: e.clientX, startMouseY: e.clientY, startX: layer.x, startY: layer.y }
-  attachPointerListeners()
-}
-function onScalePointerDown(e: PointerEvent) {
-  e.preventDefault(); e.stopPropagation()
-  const layer = selected.value; const r = canvasRect()
-  if (!layer || !r) return
-  const c = layerCenter(layer)
-  drag.value = { type: 'scale', slot: layer.slot, startScale: layer.scale, centerX: c.x, centerY: c.y, startDist: Math.hypot(e.clientX - r.left - c.x, e.clientY - r.top - c.y) }
-  attachPointerListeners()
-}
-function onRotatePointerDown(e: PointerEvent) {
-  e.preventDefault(); e.stopPropagation()
-  const layer = selected.value; const r = canvasRect()
-  if (!layer || !r) return
-  const c = layerCenter(layer)
-  drag.value = { type: 'rotate', slot: layer.slot, startAngle: Math.atan2(e.clientY - r.top - c.y, e.clientX - r.left - c.x), startRotation: layer.rotation, centerX: c.x, centerY: c.y }
-  attachPointerListeners()
-}
-function onPointerMove(e: PointerEvent) {
-  const d = drag.value
-  if (!d) return
-  if (d.type === 'move') {
-    // Divide by the live on-screen rect (canvasRect().width === canvasDisplay.w
-    // * view.scale), not the fixed artboard size, so the layer tracks the cursor
-    // at any zoom — matching the scale/rotate handlers below. At 100% zoom this
-    // is identical to the previous canvasDisplay-based math.
-    const r = canvasRect(); if (!r) return
-    const dx = (e.clientX - d.startMouseX) / (r.width / 2)
-    const dy = (e.clientY - d.startMouseY) / (r.height / 2)
-    setLayerProp(d.slot, 'x', clamp(d.startX + dx, -1.5, 1.5))
-    setLayerProp(d.slot, 'y', clamp(d.startY + dy, -1.5, 1.5))
-  } else if (d.type === 'scale') {
-    const r = canvasRect(); if (!r) return
-    const dist = Math.hypot(e.clientX - r.left - d.centerX, e.clientY - r.top - d.centerY)
-    setLayerProp(d.slot, 'scale', clamp(d.startScale * (d.startDist > 0 ? dist / d.startDist : 1), 0.1, 3.0))
-  } else if (d.type === 'rotate') {
-    const r = canvasRect(); if (!r) return
-    const angle = Math.atan2(e.clientY - r.top - d.centerY, e.clientX - r.left - d.centerX)
-    let rot = d.startRotation + ((angle - d.startAngle) * 180) / Math.PI
-    while (rot > 180) rot -= 360
-    while (rot < -180) rot += 360
-    setLayerProp(d.slot, 'rotation', rot)
-  }
-}
-function onPointerUp() { drag.value = null; detachPointerListeners() }
-function attachPointerListeners() {
-  window.addEventListener('pointermove', onPointerMove)
-  window.addEventListener('pointerup', onPointerUp, { once: true })
-}
-function detachPointerListeners() { window.removeEventListener('pointermove', onPointerMove) }
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
 
 // ── Canvas pointer routing ──────────────────────────────────────────────────
@@ -1210,12 +1125,11 @@ function hitTopStackKey(clientX: number, clientY: number): StackKey | null {
     const res = resolveStackKey(k); if (!res) continue
     // Hidden or locked layers are transparent to canvas hits (Figma behavior:
     // the layers panel can still select a locked layer, the canvas can't).
-    if (res.type === 'wired') {
-      if (hiddenWired.value.has(res.layer.slot) || lockedWired.value.has(res.layer.slot)) continue
-      const { w: fw, h: fh } = fitSize(res.layer.slot)
-      const c = layerCenter(res.layer)
-      if (!inBox(c.x, c.y, (fw / 2) * res.layer.scale + 4, (fh / 2) * res.layer.scale + 4, res.layer.rotation)) continue
-    } else {
+    // A `wired` item here is a legacy unmigrated slot: it has no selection state
+    // any more, so it is transparent to hits rather than swallowing clicks meant
+    // for the layers below it.
+    if (res.type === 'wired') continue
+    {
       const l = res.layer
       if (l.visible === false || l.locked) continue
       const b = boxPx(l)
@@ -1241,18 +1155,12 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
   const key = hitTopStackKey(e.clientX, e.clientY)
   const res = key ? resolveStackKey(key) : null
-  if (res?.type === 'wired') {
-    // Topmost layer here is a wired image → move it, not a shape beneath it.
-    lastDownHitLayer = true
-    selectLocal(null)
-    onLayerPointerDown(res.layer.slot, e) // selects slot + starts move (+ stops propagation)
-  } else if (res?.type === 'local') {
+  if (res?.type === 'local') {
     lastDownHitLayer = true
     onCanvasPointerDown(e, res.layer.id) // select the EXACT layer the pixel-accurate hit found (not the editor's bbox re-test)
   } else {
     // Empty space → begin a marquee (rubber-band) selection.
     lastDownHitLayer = false
-    selectedSlot.value = null
     if (!e.shiftKey) selectLocal(null)
     const p = clientToNorm(e)
     if (p) startMarquee(p.nx, p.ny)
@@ -1301,7 +1209,7 @@ function onCanvasClick(e: MouseEvent) {
   if (smartActive.value) return // smart select owns the canvas
   if (genActive.value && genTool.value !== 'shape') return // region-paint owns the canvas
   if (lastDownHitLayer) { lastDownHitLayer = false; return }
-  if (e.target === canvasRef.value) { selectedSlot.value = null; selectLocal(null) }
+  if (e.target === canvasRef.value) selectLocal(null)
 }
 // Click in the empty stage gutter (outside the artboard) → deselect. A pan that
 // ends on the gutter also fires a click here, so swallow it.
@@ -1310,9 +1218,7 @@ function onStageBackgroundClick(e: MouseEvent) {
   if (smartActive.value) return // smart select owns the canvas
   if (genActive.value && genTool.value !== 'shape') return
   if (didPan) { didPan = false; return }
-  if (e.target === stageBoxRef.value || e.target === stageWrapRef.value) {
-    selectedSlot.value = null; selectLocal(null)
-  }
+  if (e.target === stageBoxRef.value || e.target === stageWrapRef.value) selectLocal(null)
 }
 
 // ── Text editing: focus the inline textarea when editing starts ─────────────
@@ -1435,12 +1341,18 @@ function wiredDepthSource(layer: Layer) {
   return depthSourceFromViewUrl(layer.url)
 }
 
-function wiredDof(slot: number) {
-  return wiredTreatments.value[wiredKey(slot)]?.dof ?? null
-}
-function setWiredDof(slot: number, dof: DofEffect | null) {
-  writeWiredDof(compositor.value, slot, dof)
-  renderStack()
+/**
+ * Depth source for whatever layer the ONE inspector is showing. An uploaded image
+ * keys depth by its filename; a wired layer keys it by the `/view` URL of the slot
+ * feeding it (`depthKey`, kept current by the content reconciler). Anything else —
+ * a shape, a live studio slot with no file behind it — has no depth, and the panel
+ * then hides Defocus instead of offering a control that could never render.
+ */
+function localDepthSource(l: any) {
+  if (!l) return undefined
+  if (l.kind === 'image') return l.filename
+  if (l.kind === 'wired') return depthSourceFromViewUrl(l.depthKey) ?? undefined
+  return undefined
 }
 
 function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
@@ -2483,8 +2395,12 @@ function toggleGenMode() { genActive.value ? exitGenMode() : enterGenMode() }
 // The wired image slot currently eligible as a brush mask target (a selected
 // wired image with a ready element), else null.
 function selectedWiredImage(): { slot: number; el: HTMLImageElement | HTMLCanvasElement } | null {
-  const slot = selectedSlot.value
-  if (slot == null) return null
+  // The selection is unified: a wired image is a selected LAYER whose kind is
+  // 'wired'. Its `slot` is 0-based; everything downstream (treatments, image
+  // elements) is this modal's 1-based numbering, so shift once, here.
+  const l = selectedLocal.value as any
+  if (!l || l.kind !== 'wired') return null
+  const slot = l.slot + 1
   const el = wiredImageEls.value[slot]
   return el ? { slot, el } : null
 }
@@ -3607,7 +3523,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('paste', onModalPaste, true)
-  detachPointerListeners()
   pause()
 })
 </script>
@@ -3821,24 +3736,20 @@ onUnmounted(() => {
         @pointerleave="genCursor.on = false; smartCursor.on = false; brush.cursor.value = null"
         @dblclick.capture="onCanvasDblClickCapture"
       >
-        <!-- Invisible <img> elements: kept for @load (natural dims) and pointer interaction.
-             The unified stack canvas below handles all visual rendering. -->
-        <!-- Live studio slots have no real URL — use a transparent 1×1 so the pointer
-             target still exists; their pixels + dims come from the live-pull watch. -->
+        <!-- Invisible <img> elements: kept ONLY for @load (natural dims + the decoded
+             element the stack canvas and the wired-content provider draw from). They are
+             no longer pointer targets: a wired slot is a layer, so it is hit-tested
+             pixel-accurately with every other layer by hitTopStackKey.
+             Live studio slots have no real URL — a transparent 1x1 keeps the element
+             mounted; their pixels + dims come from the live-pull watch. -->
         <img
           v-for="layer in layers"
           :key="layer.slot"
           :src="layer.live ? 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' : layer.url"
           draggable="false"
-          class="absolute inset-0 w-full h-full object-contain origin-center select-none touch-none"
-          :style="{
-            transform: `translate(${layer.x * 100}%, ${layer.y * 100}%) rotate(${layer.rotation}deg) scale(${layer.scale})`,
-            opacity: 0,
-            cursor: drag?.type === 'move' && drag.slot === layer.slot ? 'grabbing' : 'grab',
-            zIndex: 10,
-          }"
+          aria-hidden="true"
+          class="absolute inset-0 w-full h-full object-contain select-none pointer-events-none opacity-0"
           @load="(e: Event) => { if (!layer.live) { onImageLoad(layer.slot, e); onWiredImageReady(layer.slot, e.target as HTMLImageElement) } }"
-          @pointerdown="onLayerPointerDown(layer.slot, $event)"
         />
 
         <!-- Unified stack canvas: wired + local layers in z-order (WYSIWYG) -->
@@ -4040,39 +3951,6 @@ onUnmounted(() => {
 
       </div>
       <!-- end artboard (clipped) — selection controls below live in the wrapper, unclipped -->
-
-        <!-- Image-layer selection / handles -->
-        <svg
-          v-if="handlePositions && !brush.active.value"
-          class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
-          :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
-        >
-          <polygon
-            :points="`${handlePositions.tl.x},${handlePositions.tl.y} ${handlePositions.tr.x},${handlePositions.tr.y} ${handlePositions.br.x},${handlePositions.br.y} ${handlePositions.bl.x},${handlePositions.bl.y}`"
-            fill="none" stroke="#facc15" stroke-width="2" vector-effect="non-scaling-stroke"
-          />
-          <line
-            :x1="handlePositions.topCenter.x" :y1="handlePositions.topCenter.y"
-            :x2="handlePositions.rot.x" :y2="handlePositions.rot.y"
-            stroke="#facc15" stroke-width="2" vector-effect="non-scaling-stroke"
-          />
-        </svg>
-        <template v-if="handlePositions && !brush.active.value">
-          <div
-            v-for="corner in ['tl', 'tr', 'br', 'bl']"
-            :key="corner"
-            data-handle
-            class="absolute z-20 size-2.5 bg-white border border-yellow-400 cursor-nwse-resize"
-            :style="{ left: handlePositions[corner].x + 'px', top: handlePositions[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
-            @pointerdown="onScalePointerDown($event)"
-          />
-          <div
-            data-handle
-            class="absolute z-20 size-3 rounded-full bg-yellow-400 cursor-grab border-2 border-[#1a1a1a]"
-            :style="{ left: handlePositions.rot.x + 'px', top: handlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
-            @pointerdown="onRotatePointerDown($event)"
-          />
-        </template>
 
         <!-- Local-layer selection / handles (single selection only — multi-select uses the group box below) -->
         <svg
@@ -5306,7 +5184,7 @@ onUnmounted(() => {
                admit both — passing only isChainEffect would silently drop dof. -->
           <PostEffectsControls class="mt-3"
             :effects="(((selectedLocal as any).effects || []).filter(isPanelEffect) as any)"
-            :depth-source="selectedLocal?.kind === 'image' ? (selectedLocal as any).filename : undefined"
+            :depth-source="localDepthSource(selectedLocal)"
             @update="(fx: any[]) => setLocal(selectedLocal!.id, { effects: [...((selectedLocal as any).effects || []).filter((e: any) => !isPanelEffect(e)), ...fx] } as any)" />
 
           <!-- Layer mask: clip this layer to another layer's silhouette (cross-source) -->
@@ -5397,101 +5275,15 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <!-- Image-layer properties -->
+      <!-- Frame properties — shown when nothing is selected. A wired slot is a
+           layer now, so it uses the SAME layer inspector above; the parallel
+           "image-layer properties" panel it used to get is gone. -->
       <template v-else>
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
           <ImageIcon class="size-3.5 text-white/60" />
-          <span class="text-sm font-medium">{{ selected ? `Layer ${selected.slot}` : 'No selection' }}</span>
-          <div v-if="selected" class="ml-auto flex items-center gap-1">
-            <button class="text-white/40 hover:text-white/80 p-1" title="Bring forward" @click="moveStackZ(wiredKey(selected.slot), 1)"><ArrowUp class="size-3.5" /></button>
-            <button class="text-white/40 hover:text-white/80 p-1" title="Send backward" @click="moveStackZ(wiredKey(selected.slot), -1)"><ArrowDown class="size-3.5" /></button>
-          </div>
+          <span class="text-sm font-medium">No selection</span>
         </div>
-        <div v-if="selected" class="inspector-body p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
-          <!-- Depth of field, same as an uploaded image gets. Hidden for a live studio
-               slot, which has no file to estimate depth from. Only 'dof' is offered:
-               the 2D chain does not run on the wired draw path, so the rest would be
-               settings that silently never render. -->
-          <div v-if="wiredDepthSource(selected)">
-            <PostEffectsControls
-              :effects="wiredDof(selected.slot) ? [wiredDof(selected.slot)!] : []"
-              :depth-source="wiredDepthSource(selected)!"
-              :only="['dof']"
-              @update="(fx: any[]) => setWiredDof(selected!.slot, fx.find(e => e.type === 'dof') ?? null)" />
-          </div>
-
-          <div>
-            <div class="panel-label mb-1.5">Position</div>
-            <div class="flex gap-2">
-              <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
-                <span class="text-xs text-white/40">X</span>
-                <input type="number" step="0.01" :value="selected.x.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                  @input="setLayerProp(selected.slot, 'x', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-              </label>
-              <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
-                <span class="text-xs text-white/40">Y</span>
-                <input type="number" step="0.01" :value="selected.y.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                  @input="setLayerProp(selected.slot, 'y', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <div class="panel-label mb-1.5">Rotation</div>
-            <div class="flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
-              <input type="number" step="1" :value="selected.rotation.toFixed(1)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                @input="setLayerProp(selected.slot, 'rotation', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
-              <span class="text-xs text-white/40">°</span>
-            </div>
-          </div>
-
-          <div>
-            <div class="panel-label mb-1.5">Scale</div>
-            <div class="flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
-              <input type="number" step="0.05" min="0.1" max="3" :value="selected.scale.toFixed(2)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                @input="setLayerProp(selected.slot, 'scale', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
-              <span class="text-xs text-white/40">×</span>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <div class="panel-label mb-1.5">Opacity</div>
-              <div class="flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
-                <input type="number" min="0" max="100" step="1" :value="Math.round(selected.opacity * 100)" class="w-full bg-transparent text-xs text-white/90 outline-none"
-                  @input="setLayerProp(selected.slot, 'opacity', Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)))" />
-                <span class="text-xs text-white/40">%</span>
-              </div>
-            </div>
-            <div>
-              <div class="panel-label mb-1.5">Blend mode</div>
-              <select :value="selected.blend" class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
-                @change="setLayerProp(selected.slot, 'blend', ($event.target as HTMLSelectElement).value)">
-                <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ m.replace('_', ' ') }}</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Mask: clip this layer to another layer's silhouette (cross-source) -->
-          <div>
-            <div class="panel-label mb-1.5">Mask</div>
-            <select :value="currentMaskRef(wiredKey(selected.slot))"
-              class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
-              @change="setMaskRef(wiredKey(selected.slot), ($event.target as HTMLSelectElement).value)">
-              <option value="">No mask</option>
-              <option v-for="o in maskCandidates(wiredKey(selected.slot))" :key="o.key" :value="o.key">Mask with {{ o.label }}</option>
-            </select>
-            <label v-if="currentMaskRef(wiredKey(selected.slot))" class="mt-1.5 flex items-center gap-1.5 text-[11px] text-white/60 cursor-pointer select-none">
-              <input type="checkbox" :checked="maskShowSource(wiredKey(selected.slot))"
-                @change="setMaskShowSource(wiredKey(selected.slot), ($event.target as HTMLInputElement).checked)" />
-              Show mask layer
-            </label>
-          </div>
-
-          <!-- Cloner: repeat this layer (linear/grid/radial) with falloff -->
-          <CompositorClonerPanel :cloner="selected.cloner" @update="(cl) => setWiredCloner(selected!.slot, cl)" />
-        </div>
-        <div v-else class="p-4 flex flex-col gap-4">
+        <div class="p-4 flex flex-col gap-4">
           <!-- Canvas background fill (bottom-most; baked into the frame) -->
           <div>
             <div class="panel-label mb-1.5">Background</div>

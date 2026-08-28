@@ -56,12 +56,6 @@ const injectedNodes = inject<any>('vueFlowNodes', null)
 const { ensure: ensureGoogleFont } = useGoogleFontPreview()
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
-function boxHandles(cx: number, cy: number, hw: number, hh: number, rotationDeg: number) {
-  const rad = (rotationDeg * Math.PI) / 180
-  const cosA = Math.cos(rad), sinA = Math.sin(rad)
-  const t = (dx: number, dy: number) => ({ x: cx + dx * cosA - dy * sinA, y: cy + dx * sinA + dy * cosA })
-  return { tl: t(-hw, -hh), tr: t(hw, -hh), br: t(hw, hh), bl: t(-hw, hh), rot: t(0, -hh - 26), topCenter: t(0, -hh), center: { x: cx, y: cy } }
-}
 
 function outputIdx(name: string): number {
   const i = props.data.outputs?.findIndex(o => o.name === name) ?? -1
@@ -73,8 +67,6 @@ function setWidget(name: string, value: any) { const i = widgetIdx(name); if (i 
 const imageOutIdx = computed(() => outputIdx('image'))
 // Per-layer transform widgets — slot s (0-based input) maps to layer{s+1}_*.
 function layerTf(slot: number, prop: string): number { const v = widgetVal(`layer${slot + 1}_${prop}`); return prop === 'scale' ? (v || 1) : v }
-function setLayerTf(slot: number, prop: string, v: number) { setWidget(`layer${slot + 1}_${prop}`, v) }
-function layerProtect(slot: number): boolean { return !!widgetVal(`layer${slot + 1}_protect`) }
 
 // ── Artboard dimensions ─────────────────────────────────────────────────────
 interface Preset { id: string; label: string; w: number; h: number }
@@ -262,50 +254,15 @@ async function pullLiveFrame(l: WiredLayer, t01: number) {
   } catch (e) { console.warn('[Frame] live slot pull failed for', l.url, e) }
 }
 
-// Rendered geometry of a wired layer in artboard (box) coords — mirrors the
-// backend/preview: aspect-fit into the canvas, then translate + scale + rotate.
-function wiredGeom(l: WiredLayer) {
-  const W = box.value.w, H = box.value.h
-  const d = wiredDims.value[l.url]
-  const iAspect = d && d.h ? d.w / d.h : W / H
-  const cAspect = W / H
-  let fitW: number, fitH: number
-  if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
-  return { cx: W / 2 + l.x * W, cy: H / 2 + l.y * H, hw: (fitW * l.scale) / 2, hh: (fitH * l.scale) / 2, rotation: l.rotation }
-}
 // Per-wired-layer visibility/lock, persisted on node properties as 1-BASED
 // slot arrays (layerN numbering, same as the w:N stack keys and the modal).
 // Internal WiredLayer.slot stays 0-based — hence the +1 at every lookup.
 const hiddenWiredSet = computed(() =>
   new Set((((props.data.properties as any)?.sailor_hiddenWired as number[]) ?? []).map(Number)))
-const lockedWiredSet = computed(() =>
-  new Set((((props.data.properties as any)?.sailor_lockedWired as number[]) ?? []).map(Number)))
 
-function wiredHitTest(clientX: number, clientY: number): number | null {
-  const r = artboardRef.value?.getBoundingClientRect()
-  if (!r) return null
-  const W = box.value.w, H = box.value.h
-  const px = ((clientX - r.left) / r.width) * W, py = ((clientY - r.top) / r.height) * H
-  for (let i = wiredLayers.value.length - 1; i >= 0; i--) {
-    const slotN = wiredLayers.value[i].slot + 1
-    if (hiddenWiredSet.value.has(slotN) || lockedWiredSet.value.has(slotN)) continue
-    const g = wiredGeom(wiredLayers.value[i])
-    const rad = (-g.rotation * Math.PI) / 180
-    const dx = px - g.cx, dy = py - g.cy
-    const lx = dx * Math.cos(rad) - dy * Math.sin(rad)
-    const ly = dx * Math.sin(rad) + dy * Math.cos(rad)
-    if (Math.abs(lx) <= g.hw + 6 && Math.abs(ly) <= g.hh + 6) return wiredLayers.value[i].slot
-  }
-  return null
-}
-const selectedWiredSlot = ref<number | null>(null)
-const wiredHandlePositions = computed(() => {
-  if (selectedWiredSlot.value == null) return null
-  const l = wiredLayers.value.find(x => x.slot === selectedWiredSlot.value)
-  if (!l) return null
-  const g = wiredGeom(l)
-  return boxHandles(g.cx, g.cy, g.hw, g.hh, g.rotation)
-})
+// Wired layers select through the SAME editor hit test as every other layer now
+// (their box resolves via this card's content provider), so the separate wired hit
+// test, the `selectedWiredSlot` ref and the amber handle geometry are gone.
 
 const compositeUrl = computed<string | null>(() => props.data.images?.[0] ?? null)
 
@@ -323,73 +280,23 @@ const editor = useLocalLayerEditor({
 })
 const editMode = ref(false)
 function toggleEdit() { editMode.value ? exitEdit() : (editMode.value = true) }
-function exitEdit() { editMode.value = false; editor.endEdit(); editor.selectLocal(null); selectedWiredSlot.value = null }
+function exitEdit() { editMode.value = false; editor.endEdit(); editor.selectLocal(null) }
 function onArtboardDblClick(e: MouseEvent) {
   if (editor.onCanvasDblClick(e)) return
   if (!editMode.value) editMode.value = true
 }
 
-// Pointer down on the artboard: try local layers first (top), then wired layers.
+// Pointer down on the artboard: ONE selection path — the editor hit-tests every
+// layer, wired included.
 function onArtboardPointerDown(e: PointerEvent) {
   if (!editMode.value) return
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return
-  if (editor.onCanvasPointerDown(e)) { selectedWiredSlot.value = null; return }
-  const slot = wiredHitTest(e.clientX, e.clientY)
-  if (slot != null) {
-    e.preventDefault(); e.stopPropagation()
-    editor.selectLocal(null)
-    selectedWiredSlot.value = slot
-    startWiredMove(slot, e)
-  } else {
-    selectedWiredSlot.value = null
-  }
+  editor.onCanvasPointerDown(e)
 }
 
-// ── Wired-layer drag / scale / rotate (writes layer{N}_* widgets) ───────────
-let wiredDrag: any = null
-function wiredCenterScreen(slot: number) {
-  const r = artboardRef.value?.getBoundingClientRect()
-  const l = wiredLayers.value.find(x => x.slot === slot)
-  if (!r || !l) return null
-  const g = wiredGeom(l)
-  return { x: r.left + (g.cx / box.value.w) * r.width, y: r.top + (g.cy / box.value.h) * r.height }
-}
-function startWiredMove(slot: number, e: PointerEvent) {
-  wiredDrag = { type: 'move', slot, sx: e.clientX, sy: e.clientY, ox: layerTf(slot, 'x'), oy: layerTf(slot, 'y') }
-  attachWired()
-}
-function startWiredScale(e: PointerEvent) {
-  e.preventDefault(); e.stopPropagation()
-  const slot = selectedWiredSlot.value; if (slot == null) return
-  const c = wiredCenterScreen(slot); if (!c) return
-  wiredDrag = { type: 'scale', slot, cx: c.x, cy: c.y, startDist: Math.max(1, Math.hypot(e.clientX - c.x, e.clientY - c.y)), startScale: layerTf(slot, 'scale') }
-  attachWired()
-}
-function startWiredRotate(e: PointerEvent) {
-  e.preventDefault(); e.stopPropagation()
-  const slot = selectedWiredSlot.value; if (slot == null) return
-  const c = wiredCenterScreen(slot); if (!c) return
-  wiredDrag = { type: 'rotate', slot, cx: c.x, cy: c.y, startAngle: Math.atan2(e.clientY - c.y, e.clientX - c.x), startRot: layerTf(slot, 'rotation') }
-  attachWired()
-}
-function onWiredMove(e: PointerEvent) {
-  if (!wiredDrag) return
-  const r = artboardRef.value?.getBoundingClientRect(); if (!r) return
-  if (wiredDrag.type === 'move') {
-    setLayerTf(wiredDrag.slot, 'x', clamp(wiredDrag.ox + (e.clientX - wiredDrag.sx) / r.width, -1.5, 1.5))
-    setLayerTf(wiredDrag.slot, 'y', clamp(wiredDrag.oy + (e.clientY - wiredDrag.sy) / r.height, -1.5, 1.5))
-  } else if (wiredDrag.type === 'scale') {
-    const ratio = Math.max(0.05, Math.hypot(e.clientX - wiredDrag.cx, e.clientY - wiredDrag.cy) / wiredDrag.startDist)
-    setLayerTf(wiredDrag.slot, 'scale', clamp(wiredDrag.startScale * ratio, 0.1, 3))
-  } else if (wiredDrag.type === 'rotate') {
-    let rot = wiredDrag.startRot + ((Math.atan2(e.clientY - wiredDrag.cy, e.clientX - wiredDrag.cx) - wiredDrag.startAngle) * 180) / Math.PI
-    while (rot > 180) rot -= 360
-    while (rot < -180) rot += 360
-    setLayerTf(wiredDrag.slot, 'rotation', Math.round(rot))
-  }
-}
-function onWiredUp() { wiredDrag = null; window.removeEventListener('pointermove', onWiredMove) }
-function attachWired() { window.addEventListener('pointermove', onWiredMove); window.addEventListener('pointerup', onWiredUp, { once: true }) }
+// A wired layer's move/scale/rotate is the editor's, and it reaches the backend
+// through the editor's `layer{N}_*` write-through — so the hand-rolled drag loop
+// that wrote those widgets directly (and could not undo) is gone.
 
 // Inline text editor positioning (mirrors the modal).
 const editingStyle = computed(() => {
@@ -455,11 +362,9 @@ function resolveKey(key: StackKey):
   const layer = editor.localLayers.value.find(l => l.id === id)
   return layer ? { type: 'local', layer } : null
 }
-const selectedStackKey = computed<StackKey | null>(() => {
-  if (editor.selectedId.value) return localKey(editor.selectedId.value)
-  if (selectedWiredSlot.value != null) return wiredKey(selectedWiredSlot.value)
-  return null
-})
+const selectedStackKey = computed<StackKey | null>(() => (
+  editor.selectedId.value ? localKey(editor.selectedId.value) : null
+))
 // Reorder by swapping a key with its neighbour, then persist the full present
 // order (which also bakes in the current reconciliation).
 function moveStackZ(key: StackKey, dir: -1 | 1) {
@@ -477,9 +382,9 @@ function moveSelectedZ(dir: number) {
 }
 
 // ── Unified stack render (one canvas, wired + local in z-order → WYSIWYG) ─────
-// Wired drawing uses the shared `drawWiredImageLayer` (computing fit from the
-// actual image) so the node and the Compositor modal render pixel-identically.
-// `wiredGeom` is kept only for hit-testing / handle placement.
+// A MIGRATED wired slot draws through the generic layer pipeline (it is a layer);
+// this legacy draw survives only for a connected slot no layer has claimed yet,
+// and still shares `drawWiredImageLayer` with the modal so the two can't drift.
 function drawWiredLayer(ctx: CanvasRenderingContext2D, l: WiredLayer, W: number, H: number) {
   drawWiredImageLayer(ctx, wiredImages.value[l.url], l, W, H, wiredMasks.value[l.slot] ?? null)
 }
@@ -963,31 +868,16 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 // ── Floating inline toolbar — screen-space, tracks the active selection ──────
-// Works for local layers (full per-kind controls) AND wired/generated layers
-// (opacity + blend; their transform is handled by the amber handles).
+// One selection, so one branch: whatever the editor has selected, wired layers
+// included (their opacity/blend live on the layer and write through to the slot
+// widgets like every other edit).
 function blendOf(slot: number): string {
   const i = widgetIdx(`layer${slot + 1}_blend`)
   return i >= 0 ? String(props.data.widgetsValues?.[i] ?? 'normal') : 'normal'
 }
-const toolbarLayer = computed<any>(() => {
-  if (editor.selected.value) return editor.selected.value
-  if (selectedWiredSlot.value != null) {
-    const wl = wiredLayers.value.find(x => x.slot === selectedWiredSlot.value)
-    if (wl) return { kind: 'wired', slot: wl.slot, opacity: layerTf(wl.slot, 'opacity'), blend: blendOf(wl.slot), protect: layerProtect(wl.slot) }
-  }
-  return null
-})
+const toolbarLayer = computed<any>(() => editor.selected.value ?? null)
 function onToolbarSet(patch: Record<string, any>) {
-  const slot = selectedWiredSlot.value
-  if (slot != null && !editor.selectedId.value) {
-    for (const k in patch) {
-      if (k === 'blend') setWidget(`layer${slot + 1}_blend`, patch[k])
-      else if (k === 'protect') setWidget(`layer${slot + 1}_protect`, !!patch[k])
-      else setLayerTf(slot, k, patch[k])
-    }
-  } else if (editor.selectedId.value) {
-    editor.setLocal(editor.selectedId.value, patch)
-  }
+  if (editor.selectedId.value) editor.setLocal(editor.selectedId.value, patch)
 }
 
 const toolbarPos = ref<{ left: number; top: number; below: boolean } | null>(null)
@@ -1002,20 +892,13 @@ function updateToolbarPos() {
     cx = r.left + l.x * r.width
     cy = r.top + l.y * r.height
     halfH = (editor.boxPx(l).h / 2) * zoom
-  } else if (selectedWiredSlot.value != null) {
-    const wl = wiredLayers.value.find(x => x.slot === selectedWiredSlot.value)
-    if (!wl) { toolbarPos.value = null; return }
-    const g = wiredGeom(wl)
-    cx = r.left + (g.cx / box.value.w) * r.width
-    cy = r.top + (g.cy / box.value.h) * r.height
-    halfH = g.hh * zoom
   } else { toolbarPos.value = null; return }
   const aboveTop = cy - halfH - 12
   const below = aboveTop < 52
   toolbarPos.value = { left: cx, top: below ? cy + halfH + 12 : aboveTop, below }
 }
 function toolbarTick() { updateToolbarPos(); toolbarRaf = requestAnimationFrame(toolbarTick) }
-watch(() => editMode.value && (editor.selectedId.value != null || selectedWiredSlot.value != null), (on) => {
+watch(() => editMode.value && editor.selectedId.value != null, (on) => {
   cancelAnimationFrame(toolbarRaf)
   if (on) toolbarTick()
   else toolbarPos.value = null
@@ -1033,7 +916,6 @@ const toolbarStyle = computed(() => {
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('pointermove', onWiredMove)
   window.removeEventListener('pointermove', onResizeMove)
   cancelAnimationFrame(toolbarRaf)
 })
@@ -1117,23 +999,6 @@ onUnmounted(() => {
           <span class="text-[11px]">Empty frame</span>
           <span class="text-[10px] text-white/25">Wire or drop images · double-click to edit</span>
         </div>
-
-        <!-- Wired-layer selection (amber = connected/composited layer) -->
-        <template v-if="editMode && wiredHandlePositions">
-          <svg class="absolute inset-0 w-full h-full pointer-events-none" :viewBox="`0 0 ${box.w} ${box.h}`">
-            <polygon
-              :points="`${wiredHandlePositions.tl.x},${wiredHandlePositions.tl.y} ${wiredHandlePositions.tr.x},${wiredHandlePositions.tr.y} ${wiredHandlePositions.br.x},${wiredHandlePositions.br.y} ${wiredHandlePositions.bl.x},${wiredHandlePositions.bl.y}`"
-              fill="none" stroke="#fbbf24" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-            <line :x1="wiredHandlePositions.topCenter.x" :y1="wiredHandlePositions.topCenter.y" :x2="wiredHandlePositions.rot.x" :y2="wiredHandlePositions.rot.y" stroke="#fbbf24" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-          </svg>
-          <div v-for="corner in ['tl', 'tr', 'br', 'bl']" :key="'w-' + corner" data-handle
-            class="nopan nodrag absolute size-2.5 bg-white border border-amber-400 cursor-nwse-resize"
-            :style="{ left: (wiredHandlePositions as any)[corner].x + 'px', top: (wiredHandlePositions as any)[corner].y + 'px', transform: 'translate(-50%, -50%)' }"
-            @pointerdown="startWiredScale($event)" />
-          <div data-handle class="nopan nodrag absolute size-3 rounded-full bg-amber-400 cursor-grab border-2 border-[#0e0e0e]"
-            :style="{ left: wiredHandlePositions.rot.x + 'px', top: wiredHandlePositions.rot.y + 'px', transform: 'translate(-50%, -50%)' }"
-            @pointerdown="startWiredRotate($event)" />
-        </template>
 
         <!-- Local-layer selection (cyan = overlay layer) -->
         <template v-if="editMode && editor.handlePositions.value">
