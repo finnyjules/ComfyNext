@@ -3134,6 +3134,16 @@ function closeSpaceTypeEditor() {
   window.dispatchEvent(new CustomEvent('sailor:closeSpaceType'))
 }
 
+// Space Type CLIP editor (edit-in-place on the timeline). Separate from the node
+// editor above: it binds the studio to a clip's state, not a node's. The Timeline
+// editor stays mounted underneath — closing this returns to it.
+const spaceTypeClipEditId = ref<string | null>(null)
+function handleOpenSpaceTypeClip(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.clipId) spaceTypeClipEditId.value = String(detail.clipId)
+}
+function closeSpaceTypeClipEditor() { spaceTypeClipEditId.value = null }
+
 // Gradient Studio editor open-state (same pattern as Space Type).
 const gradientStudioOpenForId = ref<string | null>(null)
 function handleOpenGradientStudio(e: Event) {
@@ -5048,6 +5058,7 @@ onMounted(() => {
   // Frame Compositor output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:compositorOutput', handleSpaceTypeOutput)
   window.addEventListener('sailor:openSpaceType', handleOpenSpaceType)
+  window.addEventListener('sailor:openSpaceTypeClip', handleOpenSpaceTypeClip)
   window.addEventListener('sailor:spaceTypeOutput', handleSpaceTypeOutput)
   window.addEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
   // Gradient Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
@@ -5127,6 +5138,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:openCompositor', handleOpenCompositor)
   window.removeEventListener('sailor:compositorOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openSpaceType', handleOpenSpaceType)
+  window.removeEventListener('sailor:openSpaceTypeClip', handleOpenSpaceTypeClip)
   window.removeEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
   window.removeEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openMoodboard', handleOpenMoodboard)
@@ -8007,6 +8019,16 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="closeSpaceTypeEditor"
+      />
+    </Teleport>
+
+    <!-- Space Type CLIP editor (edit-in-place; teleported over the open Timeline) -->
+    <Teleport to="body">
+      <VueCanvasSpaceTypeSurface
+        v-if="spaceTypeClipEditId"
+        :clip-id="spaceTypeClipEditId"
+        :nodes="[]"
+        @close="closeSpaceTypeClipEditor"
       />
     </Teleport>
 
