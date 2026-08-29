@@ -85,4 +85,24 @@ describe('SketchReviewStrip — drag to place', () => {
     expect(w.emitted('select')![0]).toEqual([0])
     w.unmount()
   })
+  it('the trailing click that follows a real drag is swallowed, not a select — and the guard resets for the next plain click', async () => {
+    const w = mount(SketchReviewStrip, { props: base(), attachTo: document.body })
+    const dragged = tiles(w)[1]!
+    await dragged.trigger('pointerdown', { clientX: 50, clientY: 50, pointerId: 1 })
+    await dragged.trigger('pointermove', { clientX: 90, clientY: 90, pointerId: 1 })
+    await dragged.trigger('pointerup', { clientX: 90, clientY: 90, pointerId: 1 })
+    // jsdom/happy-dom fires a trailing click after pointerup on the same element.
+    await dragged.trigger('click')
+    expect(w.emitted('dropAt')).toHaveLength(1)
+    expect(w.emitted('select')).toBeUndefined()
+
+    // Guard must reset per-press: a later plain click (its own pointerdown
+    // rearms the guard) still selects.
+    const other = tiles(w)[3]!
+    await other.trigger('pointerdown', { clientX: 10, clientY: 10, pointerId: 2 })
+    await other.trigger('pointerup', { clientX: 10, clientY: 10, pointerId: 2 })
+    await other.trigger('click')
+    expect(w.emitted('select')![0]).toEqual([3])
+    w.unmount()
+  })
 })

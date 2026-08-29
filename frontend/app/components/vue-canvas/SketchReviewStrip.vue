@@ -42,6 +42,12 @@ const draggedThisPress = ref(false)
 function onPointerDown(i: number, e: PointerEvent) {
   draggedThisPress.value = false
   drag.value = { index: i, x: e.clientX, y: e.clientY, started: false }
+  // Keep receiving move/up on this element even once the pointer leaves the
+  // 64px tile — without capture the browser re-targets those events to
+  // whatever's under the cursor, which breaks the drag the moment it heads
+  // toward the canvas. happy-dom/jsdom may not implement this — guard it.
+  const el = e.currentTarget as Element
+  if (el?.setPointerCapture) { try { el.setPointerCapture(e.pointerId) } catch { /* no-op in test env */ } }
 }
 function onPointerMove(e: PointerEvent) {
   const d = drag.value
@@ -54,6 +60,8 @@ function onPointerUp(e: PointerEvent) {
   const d = drag.value
   drag.value = null
   draggedThisPress.value = !!d?.started
+  const el = e.currentTarget as Element
+  if (el?.releasePointerCapture) { try { el.releasePointerCapture(e.pointerId) } catch { /* no-op in test env */ } }
   if (d?.started) emit('dropAt', { index: d.index, clientX: e.clientX, clientY: e.clientY })
 }
 function onTileClick(i: number) {
