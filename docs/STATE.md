@@ -176,6 +176,36 @@ planner wait + the "…or sketch it?" chip; false sketch costs a wrong paid rend
 Known accepted misses: long diluted studio phrases still sketch; compound-noun
 modifier collisions ("this video game") defer harmlessly. Both reviews Approved.
 
+### Canvas sketch review strip — review-then-commit replaces the auto-placed pile — LANDED 2026-08-28
+
+The prompt-bar sketch flow used to drop an auto-placed **pile deck node** onto the
+canvas — four near-identical sketches stacked whether or not the user wanted them
+placed. It now ports the studio take strip's review-then-commit model to the canvas:
+the four sketches appear in a transient **strip docked above the prompt bar** (an
+overlay, not a node; canvas stays fully visible), the user reviews (hover → a full
+preview pops above the tile), then commits **exactly one** — **Keep** drops the
+selected sketch at an open spot, or **drag-to-place** (the tile lifts into a
+full-sketch ghost that follows the cursor) drops it exactly under the pointer — and
+the strip closes; the other three are discarded. **Cancel** lands nothing; **Re-roll**
+runs four fresh on the same pad. Generation is UNCHANGED (one prediction, one seed,
+four variations); the committed node is the same image-loader shape a kept sketch has
+always been (`planKeptCard` → `createNodeData` → `card.data.images=[img]`). Only the
+prompt-bar flow changed — the visible **Sketch NODE**'s own pile
+(`materializeSketchPileBeside`) is intentionally untouched; the now-unused
+`materializeSketchPileAt` was removed. New `SketchReviewStrip.vue` is presentation +
+gesture only (emits hover/select/keep/cancel/reroll/dropAt, knows nothing about
+nodes); the host `VueNodeCanvas.vue` owns node creation, teardown (no orphan pad/
+sink nodes after any commit or Cancel), and a `getBoundingClientRect`+`ResizeObserver`
+dock measurement of the real bottom-bar stack. Drop projects screen→graph coords so
+it lands under the cursor at any pan/zoom. Built subagent-driven across 4 tasks; live-
+verified in the browser (which caught two jsdom-invisible bugs: a hover preview clipped
+by the tile's `overflow-hidden`, and native `<img>` drag firing a spurious
+pointercancel — both fixed). Final whole-branch review READY TO MERGE; one Important
+(failed re-roll stranding the strip) fixed. 12 unit tests. Spec:
+[2026-08-28-canvas-sketch-review-strip-design.md](superpowers/specs/2026-08-28-canvas-sketch-review-strip-design.md)
+· plan: [2026-08-28-canvas-sketch-review-strip.md](superpowers/plans/2026-08-28-canvas-sketch-review-strip.md)
+(`6c70a1a61`..`ea469826c`).
+
 ### Shader tuner vocabulary — effect macro, stage enables, derived guidance — LANDED 2026-08-25
 
 The shader agent could only wiggle sliders on the already-active effect with
