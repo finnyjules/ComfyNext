@@ -96,6 +96,26 @@ Phase 2 must also fix the solver's dead in-loop early-break (burns full maxIter 
 per-pointer-move). Phases 3–4: draw-time inference chips + persistent constraint badges + selection
 verbs; agent verbs + curvature-comb overlay.
 
+### Sketch freeform bezier pen — M2 LANDED (dev-only) 2026-08-29 (`904157bb7`..`3d869d042`)
+
+The classic pen, constraint-native, on `/dev/sketch-draw`: **click = corner anchor, click-drag =
+smooth anchor** — smooth pulls out mirrored handle points (handles are construction `point`
+entities) held by a `collinear` rule, so dragging one arm mirrors the other and curves never kink.
+Cubic segments render as real `C` beziers; pen anchors snap onto existing geometry (a pen anchor
+snapped on a circle stays on it while the circle moves); handles render as hollow dots + arms only
+for selected/pending paths; deleting a handle demotes to a cusp (not path-delete); `Copy as SVG`
+excludes handles. **Perf program (spec's guard-scale requirement)**: 563ms/drag at 65 pts → **~20ms
+quiet / ~65ms on a 4-dev-server-loaded machine** via residual id-indexing, slot entity-ref caching,
+hard-slice reuse, plain-snapshot solving (Vue proxy tax removed), shared shadow-doc computed;
+perf regression test at 60ms. Final review caught + fix wave landed (`3d869d042`): stale `lastHOut`
+poisoned corner-after-smooth segments (Critical); handles were snap targets; Repeat dropped the
+smooth-first-anchor rule (close now wires `h2` — verified ×3 exact); abandoned pen pendings leaked.
+**LIVE EXIT TESTS**: smooth blob stays smooth under handle drag (cross-product 0.00000); snapped
+anchor on-circle err 0 under circle drag; repeat carries all smooth rules. 138/138 unit + 4/4 E2E.
+Plan: `superpowers/plans/2026-08-29-sketch-bezier-pen-m2.md`. **Carry**: handles don't translate
+with anchor drags (collinear-only can collapse arms in sparse docs — arm-length rule or drag-time
+translation next); analytic Jacobian headroom; curvature comb; **Shape Studio mount = the decision**.
+
 ### Sketch construction paths + Repeat/Mirror — M1 LANDED (dev-only) 2026-08-29 (`46816a00b`..`04dd4b39b`)
 
 The logo workflow from Opacity's demos, working in Sailor: **paths** (chains of anchors with
