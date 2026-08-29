@@ -787,6 +787,31 @@ describe('wired layer verb parity (mixed selection)', () => {
     expect(p.layers).toHaveLength(1)
     expect(p.layers[0]!.kind).toBe('rect')
   })
+
+  // Coverage for the copy-bake branch (useLocalLayerEditor.ts:531-536): when the
+  // selection has NO clonable member — it's wired-only — `copyIds` starts empty
+  // and the bake path is the only source of anything to copy at all. A host
+  // materializer that ADDS a snapshot image layer (the real "copy into frame"
+  // contract, same as duplicateSelection's) must have that fresh layer picked up
+  // and ride the clipboard payload as the baked kind, never the live 'wired' kind.
+  it('copy over a WIRED-ONLY selection bakes a snapshot and rides the clipboard as that baked layer (kind image, not wired)', async () => {
+    _resetClipboard()
+    const w = createWiredLayer(0, { x: 0.3, y: 0.3, w: 0.4, lastAspect: 0.5 })
+    const node = reactive({ data: { properties: { sailor_localLayers: [w as LocalLayer] } } })
+    const ed = useLocalLayerEditor({
+      node: () => node, dims: () => ({ w: 1024, h: 1024 }), getRect: () => RECT,
+      materializeWired: (l: WiredLayer) => {
+        // What a host's materialize does: bake the slot's live pixels into a
+        // real image layer where the wire was — the same path ⌘D uses.
+        ed.addImageFromName('snap.png', 1 / (l.lastAspect || 1), { x: l.x, y: l.y, w: l.w } as any)
+      },
+    })
+    ed.selectLocal(w.id)
+    await ed.copySelection()
+    const p = getClipboard()!
+    expect(p.layers).toHaveLength(1)
+    expect(p.layers[0]!.kind).toBe('image')
+  })
 })
 
 // Corner resize on a wired layer is ANCHORED, like every other layer: the grabbed

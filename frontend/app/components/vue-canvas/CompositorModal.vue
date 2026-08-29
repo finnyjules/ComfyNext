@@ -4172,20 +4172,42 @@ async function writeLayersToOSClipboard(payload: ClipboardPayload): Promise<void
   if (!nav?.clipboard) return
   const json = serializeLayersForOS(payload.layers, payload.groups)
   // Preferred: one ClipboardItem carrying our JSON + a composited PNG.
-  try {
-    if (typeof ClipboardItem !== 'undefined' && nav.clipboard.write) {
-      const items: Record<string, Blob> = { 'text/plain': new Blob([json], { type: 'text/plain' }) }
-      const png = await compositeSelectionBlob(payload)
-      if (png) items['image/png'] = png
+  //
+  // The ClipboardItem must be CONSTRUCTED and clipboard.write() must be CALLED
+  // synchronously, inside the ⌘C keydown handler's call stack — Safari and
+  // Firefox only honor a write that starts in the same gesture; `await`ing
+  // compositeSelectionBlob() (which itself awaits ensureLayerImages /
+  // ensureLayerFonts / canvas.toBlob) before calling write() opens an async gap
+  // that makes those browsers silently reject the whole call, degrading the
+  // cross-session paste feature to in-session-only. Passing a PROMISE as the
+  // item's value sidesteps this: write() fires synchronously and the browser
+  // awaits the blob itself. If the PNG promise resolves to null (composite
+  // skipped/failed) it re-rejects rather than shipping a broken 0-byte image —
+  // that fails this whole write() and falls through to the writeText-only
+  // fallback below, which is the same end state the old "only add the key
+  // when non-null" branch produced.
+  if (typeof ClipboardItem !== 'undefined' && nav.clipboard.write) {
+    try {
+      const png = compositeSelectionBlob(payload).then((b) => {
+        if (!b) throw new Error('[Compositor] selection PNG composite unavailable')
+        return b
+      })
+      const items: Record<string, Blob | Promise<Blob>> = {
+        'text/plain': new Blob([json], { type: 'text/plain' }),
+        'image/png': png,
+      }
       await nav.clipboard.write([new ClipboardItem(items)])
       return
+    } catch (err) {
+      // Permission denied, no gesture, PNG composite unavailable, or write()
+      // unsupported — in-session clipboard already holds the payload, so
+      // same-session paste is unaffected.
+      console.debug('[Compositor] OS clipboard write() failed; trying writeText', err)
     }
-  } catch (err) {
-    // Permission denied, no gesture, or write() unsupported — in-session
-    // clipboard already holds the payload, so same-session paste is unaffected.
-    console.debug('[Compositor] OS clipboard write() failed; trying writeText', err)
   }
-  // Fallback: JSON only (the load-bearing half).
+  // Fallback: JSON only (the load-bearing half). writeText() takes no gesture-
+  // sensitive async dependency, so calling it here (already outside the
+  // keydown's synchronous stack) is safe — it has nothing to await beforehand.
   try { await nav.clipboard.writeText?.(json) }
   catch (err) { console.debug('[Compositor] OS clipboard writeText failed', err) }
 }
