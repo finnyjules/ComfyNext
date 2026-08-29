@@ -93,6 +93,15 @@ function apply(kind: ConstraintKind, value?: number) {
   runSolve()
 }
 
+function applyWithValue(v: { kind: ConstraintKind; label: string; value?: boolean }) {
+  if (!v.value) { apply(v.kind); return }
+  const raw = window.prompt(v.label + ' value?', '3')
+  if (raw == null) return                 // cancelled → no constraint (Bug 3)
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return          // invalid → no constraint (Bug 3)
+  apply(v.kind, n)
+}
+
 function del() {
   for (const id of [...selection.value]) deleteEntity(doc.value, id)
   clearSel()
@@ -166,16 +175,17 @@ const marks = computed(() => constraintMarks(doc.value))
 
 // pointer handling
 let dragId: EntityId | null = null
+let moved = false
 function svgXY(ev: PointerEvent) {
   const r = (ev.currentTarget as SVGSVGElement).getBoundingClientRect()
   return { x: wx(ev.clientX - r.left), y: wy(ev.clientY - r.top) }
 }
 function onPointerDownPoint(id: EntityId, ev: PointerEvent) {
-  if (tool.value === 'select') { dragId = id; ev.stopPropagation() }
+  if (tool.value === 'select') { dragId = id; moved = false; ev.stopPropagation() }
 }
 function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
   // a click without a drag toggles selection
-  if (tool.value === 'select' && dragId === id) { pick(id); ev.stopPropagation() }
+  if (tool.value === 'select' && dragId === id && !moved) { pick(id); ev.stopPropagation() }
   dragId = null
 }
 function entityPathScreen(id: EntityId): string {
@@ -194,6 +204,7 @@ function onPointerDownSvg(ev: PointerEvent) {
 function onPointerMove(ev: PointerEvent) {
   if (!dragId || ev.buttons === 0) return
   const { x, y } = svgXY(ev)
+  moved = true
   runSolve({ point: dragId, x, y })
 }
 function onPointerUp() { dragId = null }
@@ -237,7 +248,7 @@ onMounted(() => {
     <div style="display: flex; gap: 6px; margin: 8px 0; min-height: 28px; align-items: center">
       <span style="font-size: 12px; color: #9ca3af">sel: {{ selection.length }}</span>
       <button v-for="v in availableConstraints()" :key="v.kind" :data-verb="v.kind"
-              @click="() => v.value ? apply(v.kind, Number(window.prompt(v.label + ' value?', '3')) || undefined) : apply(v.kind)"
+              @click="() => applyWithValue(v)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">{{ v.label }}</button>
       <button v-if="selection.length" data-verb="fix" @click="() => { for (const id of selection) { const e = doc.entities.find(x => x.id === id); if (e && e.kind === 'point') (e as any).fixed = true } clearSel(); runSolve() }"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Fix</button>
