@@ -1,4 +1,4 @@
-import type { SketchDoc, EntityId, ConstraintKind, LineEntity, CircleEntity, SegmentSpec } from './model'
+import type { SketchDoc, EntityId, ConstraintKind, LineEntity, CircleEntity, PathEntity, SegmentSpec } from './model'
 import { getEntity, getPoint } from './model'
 import { freshId } from './ids'
 
@@ -30,6 +30,41 @@ export function removeConstraint(doc: SketchDoc, id: EntityId): void {
   doc.constraints = doc.constraints.filter(c => c.id !== id)
 }
 
+// true if a path references the given point as an anchor, an arc-segment center, or a cubic handle
+function pathReferencesPoint(p: PathEntity, pid: EntityId): boolean {
+  if (p.anchors.includes(pid)) return true
+  for (const s of p.segments) {
+    if (s.kind === 'arc' && s.center === pid) return true
+    if (s.kind === 'cubic' && (s.h1 === pid || s.h2 === pid)) return true
+  }
+  return false
+}
+
+// every point id a path references (anchors + arc centers + cubic handles), deduped
+function pathMemberPoints(p: PathEntity): EntityId[] {
+  const out = new Set<EntityId>()
+  for (const a of p.anchors) out.add(a)
+  for (const s of p.segments) {
+    if (s.kind === 'arc') out.add(s.center)
+    else if (s.kind === 'cubic') { if (s.h1) out.add(s.h1); if (s.h2) out.add(s.h2) }
+  }
+  return [...out]
+}
+
+// is this point still referenced by any entity currently in the doc?
+function isPointReferenced(doc: SketchDoc, pid: EntityId): boolean {
+  for (const e of doc.entities) {
+    if (e.kind === 'line' && (e.p1 === pid || e.p2 === pid)) return true
+    if (e.kind === 'circle' && e.center === pid) return true
+    if (e.kind === 'path' && pathReferencesPoint(e, pid)) return true
+  }
+  return false
+}
+
+function refsEqual(a: EntityId[], b: EntityId[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
 // Delete an entity and everything that structurally depends on it.
 export function deleteEntity(doc: SketchDoc, id: EntityId): void {
   const e = getEntity(doc, id)
@@ -40,12 +75,36 @@ export function deleteEntity(doc: SketchDoc, id: EntityId): void {
     for (const other of doc.entities) {
       if (other.kind === 'line' && (other.p1 === id || other.p2 === id)) dependents.push(other.id)
       else if (other.kind === 'circle' && other.center === id) dependents.push(other.id)
+      else if (other.kind === 'path' && pathReferencesPoint(other, id)) dependents.push(other.id)
     }
+  }
+  // capture path-specific info before the entity is removed
+  let arcEqualDistRefs: EntityId[][] = []
+  let memberPoints: EntityId[] = []
+  if (e.kind === 'path') {
+    memberPoints = pathMemberPoints(e)
+    e.segments.forEach((s, i) => {
+      if (s.kind === 'arc') {
+        const a = e.anchors[i]!
+        const b = e.anchors[(i + 1) % e.anchors.length]!
+        arcEqualDistRefs.push([s.center, a, s.center, b])
+      }
+    })
   }
   // remove this entity
   doc.entities = doc.entities.filter(x => x.id !== id)
   // drop constraints that reference the removed entity
   doc.constraints = doc.constraints.filter(c => !c.refs.includes(id))
+  if (e.kind === 'path') {
+    // drop this path's auto equalDist rules (their refs don't include the path's own id)
+    doc.constraints = doc.constraints.filter(c => !(c.kind === 'equalDist' && arcEqualDistRefs.some(refs => refsEqual(refs, c.refs))))
+    // orphan-clean: points this path exclusively owned, now unreferenced and not fixed
+    for (const pid of memberPoints) {
+      const p = getPoint(doc, pid)
+      if (!p || p.fixed) continue
+      if (!isPointReferenced(doc, pid)) deleteEntity(doc, pid)
+    }
+  }
   // recurse into dependents
   for (const depId of dependents) deleteEntity(doc, depId)
 }
@@ -66,8 +125,8 @@ export function addPath(doc: SketchDoc, anchors: EntityId[], segments: SegmentSp
   return id
 }
 
-// all point ids referenced by an entity (itself if a point)
-function pointClosure(doc: SketchDoc, ids: EntityId[]): EntityId[] {
+// point ids referenced by an entity (itself if a point), with no existence filtering
+function rawPointRefs(doc: SketchDoc, ids: EntityId[]): EntityId[] {
   const out = new Set<EntityId>()
   for (const id of ids) {
     const e = getEntity(doc, id)
@@ -84,6 +143,11 @@ function pointClosure(doc: SketchDoc, ids: EntityId[]): EntityId[] {
     }
   }
   return [...out]
+}
+
+// all point ids referenced by an entity closure (itself if a point); skips ids that don't resolve to a point
+export function pointClosure(doc: SketchDoc, ids: EntityId[]): EntityId[] {
+  return rawPointRefs(doc, ids).filter(pid => !!getPoint(doc, pid))
 }
 
 // copy the selected non-point entities with point ids remapped; returns created ids
@@ -120,9 +184,13 @@ function copyClosureConstraints(doc: SketchDoc, map: Map<EntityId, EntityId>): v
 }
 
 export function repeatEntities(doc: SketchDoc, ids: EntityId[], center: EntityId, count: number): EntityId[][] {
+  count = Math.round(count)
+  if (count < 2 || count > 64) return []
   const ce = getPoint(doc, center)
-  if (!ce || count < 2) return []
-  const pts = pointClosure(doc, ids)
+  if (!ce) return []
+  // check the full closure resolves before creating anything
+  const pts = rawPointRefs(doc, ids)
+  if (!pts.every(pid => !!getPoint(doc, pid))) return []
   const all: EntityId[][] = []
   for (let k = 1; k < count; k++) {
     const angle = k * (360 / count)
@@ -131,6 +199,8 @@ export function repeatEntities(doc: SketchDoc, ids: EntityId[], center: EntityId
     const map = new Map<EntityId, EntityId>()
     const created: EntityId[] = []
     for (const pid of pts) {
+      // the rotation center, if itself part of the closure, is shared across copies
+      if (pid === center) { map.set(pid, pid); continue }
       const p = getPoint(doc, pid)!
       const dx = p.x - ce.x, dy = p.y - ce.y
       const nid = addPoint(doc, ce.x + co * dx - si * dy, ce.y + si * dx + co * dy)
@@ -154,7 +224,9 @@ export function mirrorEntities(doc: SketchDoc, ids: EntityId[], axisLine: Entity
   const L = Math.hypot(dirx, diry)
   if (L < 1e-12) return []
   const nx = -diry / L, ny = dirx / L
-  const pts = pointClosure(doc, ids)
+  // check the full closure resolves before creating anything
+  const pts = rawPointRefs(doc, ids)
+  if (!pts.every(pid => !!getPoint(doc, pid))) return []
   const map = new Map<EntityId, EntityId>()
   const created: EntityId[] = []
   for (const pid of pts) {

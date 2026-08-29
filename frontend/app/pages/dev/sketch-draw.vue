@@ -4,7 +4,7 @@
 definePageMeta({ layout: false })
 import { ref, computed, onMounted } from 'vue'
 import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
-import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities } from '~/lib/sketch/edit'
+import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
@@ -223,10 +223,12 @@ function doMirror() {
   clearSel(); runSolve()
 }
 function flip(axis: 'h' | 'v') {
-  const pts = selection.value.map(id => doc.value.entities.find(e => e.id === id)).filter((e: any) => e?.kind === 'point') as any[]
+  const ptIds = pointClosure(doc.value, selection.value)
+  const pts = ptIds.map(id => doc.value.entities.find(e => e.id === id)).filter((e: any) => e?.kind === 'point') as any[]
   if (!pts.length) return
-  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
-  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+  const minX = Math.min(...pts.map(p => p.x)), maxX = Math.max(...pts.map(p => p.x))
+  const minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y))
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
   for (const p of pts) { if (axis === 'h') p.x = 2 * cx - p.x; else p.y = 2 * cy - p.y }
   runSolve()
 }
@@ -239,7 +241,7 @@ function makeConstruction() {
 }
 function copySvg(): string {
   const d = sketchPathData(doc.value)
-  try { navigator.clipboard?.writeText(d) } catch {}
+  try { navigator.clipboard?.writeText(d)?.catch?.(() => {}) } catch {}
   return d
 }
 

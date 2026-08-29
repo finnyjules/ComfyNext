@@ -34,7 +34,7 @@ export function constraintMarks(doc: SketchDoc): ConstraintMark[] {
     if (!c.refs.every(r => getEntity(doc, r))) continue
     const at = anchor(doc, c)
     if (!at) continue
-    out.push({ id: c.id, kind: c.kind, glyph: GLYPH[c.kind], x: at.x, y: at.y, ...(c.value != null ? { text: String(c.value) } : {}) })
+    out.push({ id: c.id, kind: c.kind, glyph: GLYPH[c.kind], x: at.x, y: at.y, ...(c.value != null ? { text: String(Math.round(c.value * 100) / 100) } : {}) })
   }
   return out
 }
