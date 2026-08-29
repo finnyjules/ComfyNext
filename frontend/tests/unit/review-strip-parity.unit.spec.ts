@@ -23,11 +23,11 @@ describe('review-strip parity — one tile chrome, no drift', () => {
   it('a selected tile carries the identical action-blue ring in both', () => {
     const take = mount(TakeStrip, { props: { takes: TAKES, thumbs, selected: TAKES[1] } })
     const sketch = mount(SketchReviewStrip, { props: { images: IMGS, selected: 1 } })
-    const ring = (w: any, testidIndex: number) => {
+    const ring = (w: any) => {
       const t = w.findAll('[data-testid$="-tile"]').filter((e: any) => e.attributes('data-selected') === 'true')[0]
       return t.classes().filter((c: string) => c.includes('ring') || c.includes('border-action')).sort().join(' ')
     }
-    expect(ring(take, 1)).toContain('ring-action')
-    expect(ring(sketch, 1)).toBe(ring(take, 1))
+    expect(ring(take)).toContain('ring-action')
+    expect(ring(sketch)).toBe(ring(take))
   })
 })

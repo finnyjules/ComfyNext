@@ -64,7 +64,11 @@ function onTileClick(i: number) {
 </script>
 
 <template>
-  <div data-testid="sketch-strip" :class="TRAY_FLOATING">
+  <!-- Fixed tray width so the flex-1 ReviewTiles distribute into even ~92px
+       tiles: the take strip gets its width from the studio column, but this
+       tray is teleported into a shrink-to-fit `fixed` wrapper, so without a
+       width the tiles would size to the sketches' intrinsic dimensions. -->
+  <div data-testid="sketch-strip" :class="[TRAY_FLOATING, 'w-[400px]']">
     <div :class="TILES_ROW">
       <ReviewTile v-for="(src, i) in images" :key="i"
                   tile-testid="sketch-tile" :selected="selected === i" draggable
