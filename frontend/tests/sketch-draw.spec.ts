@@ -46,3 +46,36 @@ test('draw a line and a tangent circle via the API, then drag keeps it solved', 
   const after = await perp()
   expect(after.perp).toBeCloseTo(after.r, 1)
 })
+
+test('select two circles and apply concentric via the API', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('circle'); D.place(3, 5); D.place(3, 7)   // circle A, center (3,5)
+    D.setTool('circle'); D.place(9, 5); D.place(9, 6)   // circle B, center (9,5) elsewhere
+  })
+
+  // select both circles, assert 'concentric' is an available verb, apply it
+  const verbs = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    const circles = D.doc.entities.filter((e: any) => e.kind === 'circle')
+    D.clearSel(); D.pick(circles[0].id); D.pick(circles[1].id)
+    return D.availableConstraints().map((v: any) => v.kind)
+  })
+  expect(verbs).toContain('concentric')
+
+  await page.evaluate(() => (window as any).__sketchDraw.apply('concentric'))
+
+  const centers = await page.evaluate(() => {
+    const d = (window as any).__sketchDraw.doc
+    const cs = d.entities.filter((e: any) => e.kind === 'circle')
+    const C = (id: string) => d.entities.find((e: any) => e.id === id)
+    return cs.map((c: any) => C(c.center))
+  })
+  // concentric ⇒ the two centers coincide
+  expect(Math.hypot(centers[0].x - centers[1].x, centers[0].y - centers[1].y)).toBeLessThan(0.01)
+})

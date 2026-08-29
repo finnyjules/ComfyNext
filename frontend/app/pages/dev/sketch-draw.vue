@@ -3,11 +3,11 @@
 // Dev harness — not linked in the app. Interactive constraint drawing surface.
 definePageMeta({ layout: false })
 import { ref, computed, onMounted } from 'vue'
-import type { SketchDoc, EntityId } from '~/lib/sketch/model'
-import { addPoint, addLine, addCircle, addConstraint } from '~/lib/sketch/edit'
+import type { SketchDoc, EntityId, ConstraintKind } from '~/lib/sketch/model'
+import { addPoint, addLine, addCircle, addConstraint, deleteEntity } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
-import { sketchPathData } from '~/lib/sketch/sketchPath'
+import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist } from '~/lib/sketch/geom'
 
 type Tool = 'select' | 'point' | 'line' | 'circle'
@@ -30,6 +30,73 @@ type Pending =
   | { kind: 'circle'; center: EntityId; cx: number; cy: number }
   | null
 const pending = ref<Pending>(null)
+
+const selection = ref<EntityId[]>([])
+function pick(id: EntityId) {
+  const i = selection.value.indexOf(id)
+  if (i >= 0) selection.value.splice(i, 1)
+  else selection.value.push(id)
+}
+function clearSel() { selection.value = [] }
+
+function selKinds(): string[] {
+  return selection.value.map(id => doc.value.entities.find(e => e.id === id)?.kind ?? '?')
+}
+
+// which verbs apply to the current selection (order = display order)
+function availableConstraints(): { kind: ConstraintKind; label: string; value?: boolean }[] {
+  const ids = selection.value
+  const kinds = selKinds()
+  const out: { kind: ConstraintKind; label: string; value?: boolean }[] = []
+  const count = (k: string) => kinds.filter(x => x === k).length
+  if (ids.length === 2 && count('point') === 2) {
+    out.push({ kind: 'coincident', label: 'Coincident' }, { kind: 'distance', label: 'Distance…', value: true })
+  }
+  if (ids.length === 2 && count('circle') === 2) {
+    out.push({ kind: 'concentric', label: 'Concentric' }, { kind: 'tangentCircleCircle', label: 'Tangent' })
+  }
+  if (ids.length === 2 && count('line') === 1 && count('circle') === 1) {
+    out.push({ kind: 'tangentLineCircle', label: 'Tangent' })
+  }
+  if (ids.length === 2 && count('point') === 1 && count('line') === 1) {
+    out.push({ kind: 'pointOnLine', label: 'Point on line' })
+  }
+  if (ids.length === 2 && count('point') === 1 && count('circle') === 1) {
+    out.push({ kind: 'pointOnCircle', label: 'Point on circle' })
+  }
+  if (ids.length === 1 && count('line') === 1) {
+    out.push({ kind: 'horizontal', label: 'Horizontal' }, { kind: 'vertical', label: 'Vertical' })
+  }
+  if (ids.length === 1 && count('circle') === 1) {
+    out.push({ kind: 'radius', label: 'Radius…', value: true })
+  }
+  return out
+}
+
+// refs order per kind (matches residuals.ts contract)
+function orderRefs(kind: ConstraintKind, ids: EntityId[]): EntityId[] {
+  const ent = (id: EntityId) => doc.value.entities.find(e => e.id === id)!
+  if (kind === 'tangentLineCircle' || kind === 'pointOnLine') {
+    // [line|point-then-line]: for tangentLineCircle → [line, circle]; for pointOnLine → [point, line]
+    if (kind === 'tangentLineCircle') return ids.slice().sort(a => (ent(a).kind === 'line' ? -1 : 1))
+    return ids.slice().sort(a => (ent(a).kind === 'point' ? -1 : 1))
+  }
+  if (kind === 'pointOnCircle') return ids.slice().sort(a => (ent(a).kind === 'point' ? -1 : 1))
+  return ids.slice()
+}
+
+function apply(kind: ConstraintKind, value?: number) {
+  const refs = orderRefs(kind, selection.value)
+  addConstraint(doc.value, kind, refs, value)
+  clearSel()
+  runSolve()
+}
+
+function del() {
+  for (const id of [...selection.value]) deleteEntity(doc.value, id)
+  clearSel()
+  runSolve()
+}
 
 function runSolve(drag?: DragTarget) {
   const res = solve(doc.value, { maxIter: 120, drag })
@@ -104,6 +171,18 @@ function svgXY(ev: PointerEvent) {
 function onPointerDownPoint(id: EntityId, ev: PointerEvent) {
   if (tool.value === 'select') { dragId = id; ev.stopPropagation() }
 }
+function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
+  // a click without a drag toggles selection
+  if (tool.value === 'select' && dragId === id) { pick(id); ev.stopPropagation() }
+}
+function entityPathScreen(id: EntityId): string {
+  const d = doc.value
+  const shadow: SketchDoc = {
+    entities: d.entities.map(e => e.kind === 'point' ? { ...e, x: sx(e.x), y: sy(e.y) } : e.kind === 'circle' ? { ...e, r: e.r * S } : { ...e }),
+    constraints: [],
+  }
+  return entityPath(shadow, id)
+}
 function onPointerDownSvg(ev: PointerEvent) {
   if (tool.value === 'select') return
   const { x, y } = svgXY(ev)
@@ -122,7 +201,7 @@ onMounted(() => {
   ;(window as any).__sketchDraw = {
     get doc() { return doc.value },
     get tool() { return tool.value },
-    get selection() { return [] as string[] },
+    get selection() { return selection.value.slice() },
     status: () => status.value,
     pathData: () => sketchPathData(doc.value),
     entityCount: () => doc.value.entities.length,
@@ -131,6 +210,11 @@ onMounted(() => {
     reset,
     place: (x: number, y: number) => place(x, y),
     drag: (id: EntityId, x: number, y: number) => runSolve({ point: id, x, y }),
+    pick: (id: EntityId) => pick(id),
+    clearSel: () => clearSel(),
+    apply: (kind: ConstraintKind, value?: number) => apply(kind, value),
+    del: () => del(),
+    availableConstraints: () => availableConstraints(),
   }
   ready.value = true
 })
@@ -147,13 +231,28 @@ onMounted(() => {
       <button data-act="reset" @click="reset" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer">reset</button>
       <span data-status style="margin-left: 8px; font-size: 12px; color: #9ca3af">{{ status }}</span>
     </div>
+    <div style="display: flex; gap: 6px; margin: 8px 0; min-height: 28px; align-items: center">
+      <span style="font-size: 12px; color: #9ca3af">sel: {{ selection.length }}</span>
+      <button v-for="v in availableConstraints()" :key="v.kind" :data-verb="v.kind"
+              @click="() => v.value ? apply(v.kind, Number(prompt(v.label + ' value?', '3')) || undefined) : apply(v.kind)"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">{{ v.label }}</button>
+      <button v-if="selection.length" data-verb="fix" @click="() => { for (const id of selection) { const e = doc.entities.find(x => x.id === id); if (e && e.kind === 'point') (e as any).fixed = true } clearSel(); runSolve() }"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Fix</button>
+      <button v-if="selection.length" data-act="delete" @click="del"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #7f1d1d; background: #1a1a1a; color: #fca5a5; cursor: pointer; font-size: 12px">Delete</button>
+    </div>
     <svg width="680" height="460" style="background: #fafafa; border-radius: 8px; touch-action: none; cursor: crosshair"
          @pointerdown="onPointerDownSvg" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointerleave="onPointerUp">
       <path :d="pathScreen" fill="none" stroke="#3730a3" stroke-width="1.5" />
+      <template v-for="e in doc.entities" :key="'hit-' + e.id">
+        <path v-if="e.kind !== 'point'" :d="entityPathScreen(e.id)" fill="none" stroke="transparent" stroke-width="12"
+              :style="{ cursor: 'pointer' }" @pointerdown="(ev) => { if (tool==='select') { pick(e.id); ev.stopPropagation() } }" :data-ent="e.id" />
+        <path v-if="e.kind !== 'point' && selection.includes(e.id)" :d="entityPathScreen(e.id)" fill="none" stroke="#f59e0b" stroke-width="2.5" pointer-events="none" />
+      </template>
       <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" :r="6"
-              :fill="p.fixed ? '#9ca3af' : '#2563eb'"
+              :fill="selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb')"
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
-              @pointerdown="(e) => onPointerDownPoint(p.id, e)" :data-point="p.id" />
+              @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)" :data-point="p.id" />
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">
       Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Select drags points; the drawing re-solves.
