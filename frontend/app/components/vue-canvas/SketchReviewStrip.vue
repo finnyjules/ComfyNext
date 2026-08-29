@@ -4,7 +4,7 @@
  * bar, reviewed before any land. A twin of the studio take strip: same tray,
  * same 96px ReviewTile chrome, same per-card Keep on hover, same Cancel/Re-roll
  * bar below. PRESENTATION + gesture only — reports what the user did
- * (hover/select/keep/cancel/reroll/dropAt); the canvas host turns a commit into
+ * (select/keep/cancel/reroll/dropAt); the canvas host turns a commit into
  * one image node and tears down the transient sketch-pad state.
  */
 import { ref } from 'vue'
