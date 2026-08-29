@@ -320,14 +320,11 @@ function toShadowEntities(d: SketchDoc) {
     : e.kind === 'path' ? { ...e, segments: e.segments.map(s => s.kind === 'arc' ? { ...s, sweep: (1 - s.sweep) as 0 | 1 } : s) }
     : { ...e })
 }
-const pathScreen = computed(() => {
-  const d = doc.value
-  const shadow: SketchDoc = { entities: toShadowEntities(d), constraints: [] }
-  return sketchPathData(shadow)
-})
+const shadowDoc = computed<SketchDoc>(() => ({ entities: toShadowEntities(doc.value), constraints: [] }))
+const pathScreen = computed(() => sketchPathData(shadowDoc.value))
 const constructionScreen = computed(() => {
   const d = doc.value
-  const shadow: SketchDoc = { entities: toShadowEntities(d), constraints: [] }
+  const shadow = shadowDoc.value
   const parts: string[] = []
   for (const e of d.entities) {
     if (e.kind === 'point' || !e.construction) continue
@@ -384,9 +381,7 @@ function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
   dragId = null
 }
 function entityPathScreen(id: EntityId): string {
-  const d = doc.value
-  const shadow: SketchDoc = { entities: toShadowEntities(d), constraints: [] }
-  return entityPath(shadow, id)
+  return entityPath(shadowDoc.value, id)
 }
 function onPointerDownSvg(ev: PointerEvent) {
   if (tool.value === 'select') return

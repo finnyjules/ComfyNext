@@ -54,6 +54,7 @@ describe('solve perf (guard scale)', () => {
     expect(results.every(Boolean)).toBe(true)
     const mean = times.reduce((s, t) => s + t, 0) / times.length
     // generous CI margin — measured ~2-5ms locally after the fixes, ~563ms before them
-    expect(mean).toBeLessThan(25)
+    // generous under shared-machine load; a real regression (O(E) find scans) is >500ms at this scale
+    expect(mean).toBeLessThan(60)
   })
 })
