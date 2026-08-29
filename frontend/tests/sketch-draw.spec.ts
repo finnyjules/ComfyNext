@@ -126,6 +126,34 @@ test('knot: unit path repeated 6x stays symmetric and welded under drag', async 
   expect(result.svg).toBeGreaterThan(50)               // real SVG came out
 })
 
+test('path: click-and-drag bows a segment into a circular arc', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const result = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    D.pathDown(2, 2); D.pathUp(2, 2)          // first anchor, plain click
+    D.pathDown(8, 2)                          // second anchor — appends a line segment
+    D.pathMove(5, 4.5)                        // drag past the threshold → bows live
+    D.pathUp(5, 4.5)                          // release → commits the arc
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const arcSeg = path.segments.find((s: any) => s.kind === 'arc')
+    const center = arcSeg ? P(arcSeg.center) : null
+    const p0 = P(path.anchors[0]), p1 = P(path.anchors[1])
+    const dCenter = center ? Math.abs(Math.hypot(center.x - p0.x, center.y - p0.y) - Math.hypot(center.x - p1.x, center.y - p1.y)) : Infinity
+    return { hasArc: !!arcSeg, dCenter, pathData: D.pathData() }
+  })
+
+  expect(result.hasArc).toBe(true)
+  expect(result.dCenter).toBeLessThan(1e-6)
+  expect(result.pathData).toContain(' A ')
+})
+
 test('pen: smooth blob stays smooth under handle and anchor drags', async ({ page }) => {
   await page.goto('/dev/sketch-draw')
   await page.waitForSelector('[data-ready]')

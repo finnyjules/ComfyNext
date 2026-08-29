@@ -8,7 +8,7 @@ import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, rep
 import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
-import { dist } from '~/lib/sketch/geom'
+import { dist, sub, cross, type Vec2 } from '~/lib/sketch/geom'
 import { constraintMarks } from '~/lib/sketch/annotate'
 
 type Tool = 'select' | 'point' | 'line' | 'circle' | 'path' | 'pen'
@@ -188,6 +188,8 @@ function place(x: number, y: number) {
 // --- path tool: multi-click anchor chain, line or arc segments ---
 type PendingPath = { anchors: EntityId[]; segments: SegmentSpec[] } | null
 const pendingPath = ref<PendingPath>(null)
+// retained for API/E2E compat (setNextSegment / pathClick below) — the UI
+// toggle is gone; the real gesture is now click-and-drag-to-bow (pathDown/Move/Up)
 const nextSegment = ref<'line' | 'arc'>('line')
 
 function pathClick(x: number, y: number) {
@@ -208,6 +210,87 @@ function pathClick(x: number, y: number) {
     pp.segments.push({ kind: 'line' })
   }
   pp.anchors.push(id)
+}
+
+// Circumcenter of (P0, P1, Q) in world (doc) coordinates. sweep/large follow
+// the doc-coords SVG convention (matches pathD in sketchPath.ts): sweep=1
+// means the arc travels ccw from P0 through Q to reach P1. Returns null when
+// the three points are (near-)collinear or the circle would be enormous —
+// callers fall back to a straight line in that case.
+function arcThrough(p0: Vec2, p1: Vec2, q: Vec2): { center: Vec2; r: number; sweep: 0 | 1; large: 0 | 1; mid: Vec2 } | null {
+  const v1 = sub(p1, p0), v2 = sub(q, p0)
+  if (Math.abs(cross(v1, v2)) < 1e-6) return null
+  const ax = p0.x, ay = p0.y, bx = p1.x, by = p1.y, cx = q.x, cy = q.y
+  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+  if (Math.abs(d) < 1e-9) return null
+  const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d
+  const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d
+  const center = { x: ux, y: uy }
+  const r = dist(center, p0)
+  if (r > 1e4) return null
+  const TAU = Math.PI * 2
+  const a0 = Math.atan2(p0.y - center.y, p0.x - center.x)
+  const a1 = Math.atan2(p1.y - center.y, p1.x - center.x)
+  const aq = Math.atan2(q.y - center.y, q.x - center.x)
+  const ccw = ((a1 - a0) % TAU + TAU) % TAU
+  const qccw = ((aq - a0) % TAU + TAU) % TAU
+  const sweep: 0 | 1 = qccw <= ccw ? 1 : 0
+  const span = sweep === 1 ? ccw : TAU - ccw
+  const large: 0 | 1 = span > Math.PI ? 1 : 0
+  const am = sweep === 1 ? a0 + span / 2 : a0 - span / 2
+  const mid = { x: center.x + r * Math.cos(am), y: center.y + r * Math.sin(am) }
+  return { center, r, sweep, large, mid }
+}
+
+// --- path tool: the real gesture — pointerdown places an anchor (+ a line
+// segment from the previous one, as today); if the pointer moves past the
+// threshold before pointerup, that segment bows into a circular arc through
+// the live pointer (see arcThrough). Mirrors the pen tool's down/move/up shape.
+type PathDrag = { anchor: EntityId; prevAnchor: EntityId; startX: number; startY: number; bowed: boolean } | null
+let pathDrag: PathDrag = null
+
+function pathDown(x: number, y: number) {
+  const id = placePoint(x, y)
+  if (!pendingPath.value) {
+    pendingPath.value = { anchors: [id], segments: [] }
+    pathDrag = null
+    return
+  }
+  const pp = pendingPath.value
+  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); pathDrag = null; return }  // clicked first anchor → close
+  if (id === pp.anchors[pp.anchors.length - 1]) { pathDrag = null; return }                            // ignore double-click same point
+  const prevAnchor = pp.anchors[pp.anchors.length - 1]!
+  pp.segments.push({ kind: 'line' })
+  pp.anchors.push(id)
+  pathDrag = { anchor: id, prevAnchor, startX: x, startY: y, bowed: false }
+}
+
+function pathMove(x: number, y: number) {
+  // reactive — drives previewD/pathBowChip live, whether this came from a
+  // real pointermove or a direct __sketchDraw.pathMove() call (tests)
+  cursor.value = { x, y }
+  if (!pathDrag) return
+  if (dist({ x, y }, { x: pathDrag.startX, y: pathDrag.startY }) > 0.15) pathDrag.bowed = true
+}
+
+function pathUp(x: number, y: number) {
+  if (!pathDrag) return
+  const { anchor, prevAnchor, bowed } = pathDrag
+  pathDrag = null
+  const pp = pendingPath.value
+  if (bowed && pp) {
+    const seg = pp.segments[pp.segments.length - 1]
+    const p0 = doc.value.entities.find(e => e.id === prevAnchor) as any
+    const p1 = doc.value.entities.find(e => e.id === anchor) as any
+    if (seg && seg.kind === 'line' && p0 && p1) {
+      const arc = arcThrough({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, { x, y })
+      if (arc) {
+        const c = addPoint(doc.value, arc.center.x, arc.center.y)
+        pp.segments[pp.segments.length - 1] = { kind: 'arc', center: c, sweep: arc.sweep }
+      }
+    }
+  }
+  runSolve()
 }
 
 // closing segment between last and first anchors; pen paths always close with a cubic.
@@ -427,13 +510,27 @@ const previewD = computed(() => {
   const segCount = pp.segments.length
   const lastAnchorId = pp.anchors[pp.anchors.length - 1]!
   const dragging = tool.value === 'pen' && !!penDrag && penDrag.anchor === lastAnchorId
+  const bowing = tool.value === 'path' && !!pathDrag && pathDrag.bowed && pathDrag.anchor === lastAnchorId && !!cursor.value
   for (let i = 0; i < segCount; i++) {
     const seg = pp.segments[i]!
     const fromId = pp.anchors[i]!
     const toId = pp.anchors[i + 1]!
     const to = screenPt(toId)
     if (!to) break
-    if (seg.kind === 'arc') {
+    if (bowing && i === segCount - 1) {
+      // just-placed segment bowing live under the pointer — arcThrough works in
+      // world (doc) coords, then flip sweep for the screen's y-flip (see toShadowEntities)
+      const p0 = doc.value.entities.find(e => e.id === fromId) as any
+      const p1 = doc.value.entities.find(e => e.id === toId) as any
+      const arc = (p0 && p1 && cursor.value) ? arcThrough({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value) : null
+      if (arc) {
+        const rScreen = arc.r * S
+        const sweepScreen = (1 - arc.sweep) as 0 | 1
+        d += ` A ${rScreen} ${rScreen} 0 ${arc.large} ${sweepScreen} ${to.x} ${to.y}`
+      } else {
+        d += ` L ${to.x} ${to.y}`
+      }
+    } else if (seg.kind === 'arc') {
       const from = screenPt(fromId)
       const c = screenPt(seg.center)
       if (from && c) {
@@ -467,7 +564,7 @@ const previewD = computed(() => {
       d += ` L ${to.x} ${to.y}`
     }
   }
-  if (!dragging && cursor.value) {
+  if (!dragging && !bowing && cursor.value) {
     const last = screenPt(lastAnchorId)
     if (last) {
       const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
@@ -492,6 +589,18 @@ const previewDragHandles = computed(() => {
   const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
   const mirror = { x: 2 * anchor.x - ptr.x, y: 2 * anchor.y - ptr.y }
   return { anchor, ptr, mirror }
+})
+
+// live radius chip shown near the bowed arc's midpoint while the path tool
+// drags a segment into a curve — same "R n.n" badge style as constraint marks
+const pathBowChip = computed(() => {
+  if (tool.value !== 'path' || !pathDrag || !pathDrag.bowed || !cursor.value) return null
+  const p0 = doc.value.entities.find(e => e.id === pathDrag!.prevAnchor) as any
+  const p1 = doc.value.entities.find(e => e.id === pathDrag!.anchor) as any
+  if (!p0 || !p1) return null
+  const arc = arcThrough({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value)
+  if (!arc) return null
+  return { x: sx(arc.mid.x), y: sy(arc.mid.y), text: `R ${arc.r.toFixed(1)}` }
 })
 
 // pointer handling
@@ -546,6 +655,7 @@ function onPointerDownSvg(ev: PointerEvent) {
   if (tool.value === 'select') return
   const { x, y } = svgXY(ev)
   if (tool.value === 'pen') { penDown(x, y); return }
+  if (tool.value === 'path') { pathDown(x, y); return }
   place(x, y)
 }
 function onPointerMove(ev: PointerEvent) {
@@ -556,7 +666,13 @@ function onPointerMove(ev: PointerEvent) {
     penMove(x, y)
     return
   }
-  if (tool.value === 'path') { cursor.value = svgXY(ev); return }
+  if (tool.value === 'path') {
+    // always track too — drives the rubber-band hover preview even when not
+    // mid-drag, and the live bow while pathDrag is active
+    const { x, y } = svgXY(ev)
+    pathMove(x, y)
+    return
+  }
   if (!dragId || ev.buttons === 0) return
   const { x, y } = svgXY(ev)
   moved = true
@@ -574,6 +690,11 @@ function onPointerUp(ev: PointerEvent) {
   if (tool.value === 'pen' && penDrag) {
     const { x, y } = svgXY(ev)
     penUp(x, y)
+    return
+  }
+  if (tool.value === 'path' && pathDrag) {
+    const { x, y } = svgXY(ev)
+    pathUp(x, y)
     return
   }
   dragId = null; dragHandleIds = []; dragLast = null
@@ -611,6 +732,7 @@ function selectTool(t: Tool) {
   pending.value = null
   pendingPath.value = null
   penDrag = null
+  pathDrag = null
   lastHOut = null
   firstHIn = null
   cursor.value = null
@@ -622,6 +744,7 @@ function reset() {
   pending.value = null
   pendingPath.value = null
   penDrag = null
+  pathDrag = null
   lastHOut = null
   firstHIn = null
   cursor.value = null
@@ -643,6 +766,9 @@ onMounted(() => {
     penDown: (x: number, y: number) => penDown(x, y),
     penMove: (x: number, y: number) => penMove(x, y),
     penUp: (x: number, y: number) => penUp(x, y),
+    pathDown: (x: number, y: number) => pathDown(x, y),
+    pathMove: (x: number, y: number) => pathMove(x, y),
+    pathUp: (x: number, y: number) => pathUp(x, y),
     drag: (id: EntityId, x: number, y: number) => runSolve({ point: id, x, y }),
     pick: (id: EntityId) => pick(id),
     clearSel: () => clearSel(),
@@ -674,13 +800,7 @@ onMounted(() => {
       <span data-status style="margin-left: 8px; font-size: 12px; color: #9ca3af">{{ status }}</span>
     </div>
     <div v-if="tool === 'path'" style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
-      <span style="font-size: 12px; color: #9ca3af">next segment:</span>
-      <button data-seg="line" @click="nextSegment = 'line'"
-              :style="{ padding: '3px 9px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer', fontSize: '12px',
-                        background: nextSegment === 'line' ? '#2563eb' : '#1a1a1a', color: '#fff' }">line</button>
-      <button data-seg="arc" @click="nextSegment = 'arc'"
-              :style="{ padding: '3px 9px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer', fontSize: '12px',
-                        background: nextSegment === 'arc' ? '#2563eb' : '#1a1a1a', color: '#fff' }">arc</button>
+      <span style="font-size: 12px; color: #9ca3af">click to place a point — drag before releasing to curve the segment into an arc; click the first point to close</span>
       <button data-act="close" @click="finishPath(true)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">close</button>
       <button data-act="finish" @click="finishPath(false)"
@@ -745,6 +865,10 @@ onMounted(() => {
       <g v-for="m in marks" :key="m.id" pointer-events="none">
         <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" :width="m.text ? 30 : 16" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.glyph }}{{ m.text ? ' ' + m.text : '' }}</text>
+      </g>
+      <g v-if="pathBowChip" pointer-events="none">
+        <rect :x="pathBowChip.x - 18" :y="pathBowChip.y - 20" width="40" height="14" rx="3" fill="#111827" opacity="0.85" />
+        <text :x="pathBowChip.x - 15" :y="pathBowChip.y - 9" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ pathBowChip.text }}</text>
       </g>
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">
