@@ -967,8 +967,10 @@ function saveConfig() {
 // serializes onto the node. gradientStops/post are reactive objects — spreading
 // them into the signature (rather than passing the live refs) makes the watched
 // getter a plain JSON string, so `deep: true` inside the composable is inert but
-// harmless. Closing the studio still calls saveConfig() directly (closeEditor /
-// onBeforeUnmount below) so the FINAL edit is never left stranded in the debounce.
+// harmless. Closing the studio still calls saveConfig() (via saveConfigOnClose(), in
+// closeEditor / onBeforeUnmount below) so the FINAL edit is never left stranded in the
+// debounce — except in clip mode with no edit since hydration, where it's skipped
+// entirely to avoid detaching the clip on a no-op open/close (see saveConfigOnClose()).
 function autosaveSignature() {
   return JSON.stringify({
     effectId: effectId.value,
@@ -997,6 +999,11 @@ const undoStack: string[] = []
 const redoStack: string[] = []
 let lastSnapshot = ''
 let restoringHistory = false
+// Clip mode only: the autosaveSignature() captured once onMounted's hydration has fully
+// settled (same moment resetHistory() seeds lastSnapshot below) — the "nothing edited yet"
+// reference for saveConfigOnClose(). null means either not in clip mode, or the baseline
+// hasn't been captured yet (still mid-mount).
+let clipCloseBaseline: string | null = null
 let histTimer: ReturnType<typeof setTimeout> | null = null
 function commitHistory() {
   histTimer = null
@@ -1123,7 +1130,19 @@ function refreshExportAlpha() {
   if (!exportAlphaAvailable.value) exportAlpha.value = false
 }
 
-function closeEditor() { saveConfig(); emit('close') }
+// Close-path write. In clip mode, saveConfig() writes through the clip state source,
+// which drops clip.origin (detaches the "Sync from node" affordance) — see
+// lib/spacetype/stateSource.ts. The contract is that the FIRST in-place EDIT should
+// detach a clip, not merely opening-then-closing the studio with no change. Skip the
+// write when the signature hasn't moved from the post-hydration baseline. Node mode's
+// saveConfig() is an idempotent {...prev,...next} merge with no detach risk, so it
+// stays unconditional (clipCloseBaseline is only ever set in clip mode).
+function saveConfigOnClose() {
+  if (clipMode.value && clipCloseBaseline !== null && autosaveSignature() === clipCloseBaseline) return
+  saveConfig()
+}
+
+function closeEditor() { saveConfigOnClose(); emit('close') }
 
 onMounted(async () => {
   if (!canvas.value) return
@@ -1153,6 +1172,11 @@ onMounted(async () => {
   // seeded to the just-hydrated state so the first edit is the first undo step.
   window.addEventListener('keydown', onStudioKey, true)
   resetHistory()
+  // Baseline for saveConfigOnClose(): captured at the same "hydration has fully settled"
+  // moment resetHistory() uses for lastSnapshot (loadConfig + any default-scene overlay +
+  // engine build are all done by here), so an unedited open-then-close compares equal and
+  // skips the clip-detaching write.
+  if (clipMode.value) clipCloseBaseline = lastSnapshot
   if (!clipMode.value && props.nodeId) registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
   // NOTE: the live frame source for this node is registered by SpaceTypeNode.vue
   // (the always-mounted node), NOT here. The node stays mounted while this modal
@@ -1169,7 +1193,7 @@ onBeforeUnmount(() => {
   spineEditActive.value = false
   window.removeEventListener('keydown', onStudioKey, true)
   if (histTimer) clearTimeout(histTimer)
-  saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
+  saveConfigOnClose(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
   if (!clipMode.value && props.nodeId) unregisterStudioParamBaker(props.nodeId)
 })
 
