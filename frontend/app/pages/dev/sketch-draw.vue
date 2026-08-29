@@ -32,6 +32,10 @@ type Pending =
   | null
 const pending = ref<Pending>(null)
 
+// live pen/path pointer position, world coords — drives the in-progress
+// draw preview (previewD below); null when not hovering with pen/path tool
+const cursor = ref<{ x: number; y: number } | null>(null)
+
 const selection = ref<EntityId[]>([])
 function pick(id: EntityId) {
   const i = selection.value.indexOf(id)
@@ -256,6 +260,9 @@ function penDown(x: number, y: number) {
 }
 
 function penMove(x: number, y: number) {
+  // reactive — drives previewD/previewDragHandles live, whether this came from
+  // a real pointermove or a direct __sketchDraw.penMove() call (tests)
+  cursor.value = { x, y }
   if (!penDrag) return
   if (dist({ x, y }, { x: penDrag.startX, y: penDrag.startY }) > 0.15) penDrag.smooth = true
 }
@@ -397,20 +404,140 @@ const handleArms = computed(() => {
   return out
 })
 
+// screen coords of a live (already-in-doc) point entity — used by the preview,
+// which never goes through the shadow-doc clone
+function screenPt(id: EntityId): { x: number; y: number } | null {
+  const p = doc.value.entities.find(e => e.id === id) as any
+  if (!p || p.kind !== 'point') return null
+  return { x: sx(p.x), y: sy(p.y) }
+}
+
+// live pen/path draw preview: the already-placed pending segments, plus
+// either a rubber band out to the cursor (hovering) or — mid pen-drag past
+// the smooth threshold — the segment into the anchor being placed bending
+// live under the pointer. Pure read of doc + cursor + penDrag; never solves,
+// never mutates the doc.
+const previewD = computed(() => {
+  if (tool.value !== 'pen' && tool.value !== 'path') return ''
+  const pp = pendingPath.value
+  if (!pp || pp.anchors.length === 0) return ''
+  const first = screenPt(pp.anchors[0]!)
+  if (!first) return ''
+  let d = `M ${first.x} ${first.y}`
+  const segCount = pp.segments.length
+  const lastAnchorId = pp.anchors[pp.anchors.length - 1]!
+  const dragging = tool.value === 'pen' && !!penDrag && penDrag.anchor === lastAnchorId
+  for (let i = 0; i < segCount; i++) {
+    const seg = pp.segments[i]!
+    const fromId = pp.anchors[i]!
+    const toId = pp.anchors[i + 1]!
+    const to = screenPt(toId)
+    if (!to) break
+    if (seg.kind === 'arc') {
+      const from = screenPt(fromId)
+      const c = screenPt(seg.center)
+      if (from && c) {
+        const r = Math.hypot(from.x - c.x, from.y - c.y)
+        const a0 = Math.atan2(from.y - c.y, from.x - c.x)
+        const a1 = Math.atan2(to.y - c.y, to.x - c.x)
+        const TAU = Math.PI * 2
+        const ccw = ((a1 - a0) % TAU + TAU) % TAU
+        const sweep = (1 - seg.sweep) as 0 | 1   // screen space is y-flipped (see toShadowEntities)
+        const span = sweep === 1 ? ccw : TAU - ccw
+        const large = span > Math.PI ? 1 : 0
+        d += ` A ${r} ${r} 0 ${large} ${sweep} ${to.x} ${to.y}`
+      } else d += ` L ${to.x} ${to.y}`
+    } else if (seg.kind === 'cubic') {
+      if (dragging && i === segCount - 1 && penDrag!.smooth && cursor.value) {
+        // bending live: c1 is the fixed incoming tangent, c2 is the pointer
+        // mirrored through the anchor being placed (matches addSmoothHandles)
+        const anchor = screenPt(lastAnchorId)
+        if (anchor) {
+          const c1 = (seg.h1 && screenPt(seg.h1)) || screenPt(fromId)!
+          const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
+          const mirror = { x: 2 * anchor.x - ptr.x, y: 2 * anchor.y - ptr.y }
+          d += ` C ${c1.x} ${c1.y} ${mirror.x} ${mirror.y} ${anchor.x} ${anchor.y}`
+        } else d += ` L ${to.x} ${to.y}`
+      } else {
+        const c1 = (seg.h1 && screenPt(seg.h1)) || screenPt(fromId)!
+        const c2 = (seg.h2 && screenPt(seg.h2)) || to
+        d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${to.x} ${to.y}`
+      }
+    } else {
+      d += ` L ${to.x} ${to.y}`
+    }
+  }
+  if (!dragging && cursor.value) {
+    const last = screenPt(lastAnchorId)
+    if (last) {
+      const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
+      if (lastHOut) {
+        const h = screenPt(lastHOut)
+        d += h ? ` M ${last.x} ${last.y} C ${h.x} ${h.y} ${ptr.x} ${ptr.y} ${ptr.x} ${ptr.y}`
+                : ` M ${last.x} ${last.y} L ${ptr.x} ${ptr.y}`
+      } else {
+        d += ` M ${last.x} ${last.y} L ${ptr.x} ${ptr.y}`
+      }
+    }
+  }
+  return d
+})
+
+// handle arms shown while a pen drag is bending a curve — anchor→pointer and
+// anchor→mirror, same read-only contract as previewD
+const previewDragHandles = computed(() => {
+  if (tool.value !== 'pen' || !penDrag || !penDrag.smooth || !cursor.value) return null
+  const anchor = screenPt(penDrag.anchor)
+  if (!anchor) return null
+  const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
+  const mirror = { x: 2 * anchor.x - ptr.x, y: 2 * anchor.y - ptr.y }
+  return { anchor, ptr, mirror }
+})
+
 // pointer handling
 let dragId: EntityId | null = null
 let moved = false
+// handle points riding the dragged anchor (Fix 3): translated by the same
+// delta as the anchor each move, so their arms keep shape and the solver's
+// collinear constraint has something consistent to hold onto
+let dragHandleIds: EntityId[] = []
+let dragLast: { x: number; y: number } | null = null
+
+// handle ids attached to a given anchor: h1 of the segment leaving it, h2 of
+// the segment arriving at it (same adjacency handleArms walks)
+function handleIdsForAnchor(id: EntityId): EntityId[] {
+  const out: EntityId[] = []
+  for (const e of doc.value.entities) {
+    if (e.kind !== 'path') continue
+    const n = e.anchors.length
+    for (let i = 0; i < e.segments.length; i++) {
+      const seg = e.segments[i]!
+      if (seg.kind !== 'cubic') continue
+      const fromId = e.anchors[i]!
+      const toId = e.anchors[(i + 1) % n]!
+      if (fromId === id && seg.h1) out.push(seg.h1)
+      if (toId === id && seg.h2) out.push(seg.h2)
+    }
+  }
+  return out
+}
+
 function svgXY(ev: PointerEvent) {
   const r = (ev.currentTarget as SVGSVGElement).getBoundingClientRect()
   return { x: wx(ev.clientX - r.left), y: wy(ev.clientY - r.top) }
 }
 function onPointerDownPoint(id: EntityId, ev: PointerEvent) {
-  if (tool.value === 'select') { dragId = id; moved = false; ev.stopPropagation() }
+  if (tool.value !== 'select') return
+  dragId = id; moved = false
+  const p = doc.value.entities.find(e => e.id === id) as any
+  dragHandleIds = p?.kind === 'point' ? handleIdsForAnchor(id) : []
+  dragLast = p?.kind === 'point' ? { x: p.x, y: p.y } : null
+  ev.stopPropagation()
 }
 function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
   // a click without a drag toggles selection
   if (tool.value === 'select' && dragId === id && !moved) { pick(id); ev.stopPropagation() }
-  dragId = null
+  dragId = null; dragHandleIds = []; dragLast = null
 }
 function entityPathScreen(id: EntityId): string {
   return entityPath(shadowDoc.value, id)
@@ -423,14 +550,24 @@ function onPointerDownSvg(ev: PointerEvent) {
 }
 function onPointerMove(ev: PointerEvent) {
   if (tool.value === 'pen') {
-    if (!penDrag || ev.buttons === 0) return
+    // always track — drives the live preview even when just hovering, not
+    // only while penDrag is active (that's the "draws blind" fix)
     const { x, y } = svgXY(ev)
     penMove(x, y)
     return
   }
+  if (tool.value === 'path') { cursor.value = svgXY(ev); return }
   if (!dragId || ev.buttons === 0) return
   const { x, y } = svgXY(ev)
   moved = true
+  if (dragHandleIds.length && dragLast) {
+    const dx = x - dragLast.x, dy = y - dragLast.y
+    for (const hid of dragHandleIds) {
+      const h = doc.value.entities.find(e => e.id === hid) as any
+      if (h && h.kind === 'point') { h.x += dx; h.y += dy }
+    }
+    dragLast = { x, y }
+  }
   runSolve({ point: dragId, x, y })
 }
 function onPointerUp(ev: PointerEvent) {
@@ -439,7 +576,11 @@ function onPointerUp(ev: PointerEvent) {
     penUp(x, y)
     return
   }
-  dragId = null
+  dragId = null; dragHandleIds = []; dragLast = null
+}
+function onPointerLeaveSvg(ev: PointerEvent) {
+  onPointerUp(ev)
+  cursor.value = null
 }
 
 // an abandoned path/pen draw (tool switched away, or reset, before it was
@@ -472,6 +613,7 @@ function selectTool(t: Tool) {
   penDrag = null
   lastHOut = null
   firstHIn = null
+  cursor.value = null
 }
 
 function reset() {
@@ -482,6 +624,7 @@ function reset() {
   penDrag = null
   lastHOut = null
   firstHIn = null
+  cursor.value = null
   status.value = 'ready'
 }
 
@@ -573,7 +716,7 @@ onMounted(() => {
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #7f1d1d; background: #1a1a1a; color: #fca5a5; cursor: pointer; font-size: 12px">Delete</button>
     </div>
     <svg width="680" height="460" style="background: #fafafa; border-radius: 8px; touch-action: none; cursor: crosshair"
-         @pointerdown="onPointerDownSvg" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointerleave="onPointerUp">
+         @pointerdown="onPointerDownSvg" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointerleave="onPointerLeaveSvg">
       <path :d="pathScreen" fill="none" stroke="#3730a3" stroke-width="1.5" />
       <path :d="constructionScreen" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4 3" />
       <template v-for="e in doc.entities" :key="'hit-' + e.id">
@@ -583,6 +726,16 @@ onMounted(() => {
       </template>
       <line v-for="(a, i) in handleArms" :key="'arm-' + i" :x1="a.x1" :y1="a.y1" :x2="a.x2" :y2="a.y2"
             stroke="#7c3aed" stroke-width="1" pointer-events="none" />
+      <path v-if="previewD" :d="previewD" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="5 3"
+            pointer-events="none" data-pen-preview />
+      <template v-if="previewDragHandles">
+        <line :x1="previewDragHandles.anchor.x" :y1="previewDragHandles.anchor.y" :x2="previewDragHandles.ptr.x" :y2="previewDragHandles.ptr.y"
+              stroke="#7c3aed" stroke-width="1" pointer-events="none" />
+        <line :x1="previewDragHandles.anchor.x" :y1="previewDragHandles.anchor.y" :x2="previewDragHandles.mirror.x" :y2="previewDragHandles.mirror.y"
+              stroke="#7c3aed" stroke-width="1" pointer-events="none" />
+        <circle :cx="previewDragHandles.ptr.x" :cy="previewDragHandles.ptr.y" r="3" fill="#7c3aed" pointer-events="none" />
+        <circle :cx="previewDragHandles.mirror.x" :cy="previewDragHandles.mirror.y" r="3" fill="#7c3aed" pointer-events="none" />
+      </template>
       <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" :r="p.construction ? 4 : 6"
               :fill="p.construction ? 'none' : (selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb'))"
               :stroke="p.construction ? (selection.includes(p.id) ? '#f59e0b' : '#7c3aed') : 'none'"
