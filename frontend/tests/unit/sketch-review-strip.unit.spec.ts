@@ -105,4 +105,15 @@ describe('SketchReviewStrip — drag to place', () => {
     expect(w.emitted('select')![0]).toEqual([3])
     w.unmount()
   })
+  it('the OS stealing the gesture (pointercancel) mid-drag clears the ghost and emits no dropAt', async () => {
+    const w = mount(SketchReviewStrip, { props: base(), attachTo: document.body })
+    const tile = tiles(w)[2]!
+    await tile.trigger('pointerdown', { clientX: 100, clientY: 100, pointerId: 1 })
+    await tile.trigger('pointermove', { clientX: 140, clientY: 180, pointerId: 1 })
+    expect(w.find('[data-testid="sketch-ghost"]').exists()).toBe(true)
+    await tile.trigger('pointercancel', { pointerId: 1 })
+    expect(w.emitted('dropAt')).toBeUndefined()
+    expect(w.find('[data-testid="sketch-ghost"]').exists()).toBe(false)
+    w.unmount()
+  })
 })

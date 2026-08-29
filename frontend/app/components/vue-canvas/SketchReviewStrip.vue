@@ -64,6 +64,16 @@ function onPointerUp(e: PointerEvent) {
   if (el?.releasePointerCapture) { try { el.releasePointerCapture(e.pointerId) } catch { /* no-op in test env */ } }
   if (d?.started) emit('dropAt', { index: d.index, clientX: e.clientX, clientY: e.clientY })
 }
+// The OS can steal a gesture mid-drag (e.g. a system swipe) — without this,
+// drag.value never clears and the ghost sticks around until the next
+// pointerdown. Mirrors onPointerUp's cleanup but never emits dropAt.
+function onPointerCancel(e: PointerEvent) {
+  const d = drag.value
+  drag.value = null
+  draggedThisPress.value = !!d?.started
+  const el = e.currentTarget as Element
+  if (el?.releasePointerCapture) { try { el.releasePointerCapture(e.pointerId) } catch { /* no-op in test env */ } }
+}
 function onTileClick(i: number) {
   if (draggedThisPress.value) return
   emit('select', i)
@@ -74,19 +84,30 @@ function onTileClick(i: number) {
   <div data-testid="sketch-strip"
        class="flex items-center gap-1.5 rounded-[9px] border border-white/10 bg-[#0b0d11]/95 p-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.5)] backdrop-blur">
     <div class="flex items-center gap-1.5">
-      <button v-for="(src, i) in images" :key="i" data-testid="sketch-tile" type="button"
-              :data-index="i" :aria-pressed="selected === i ? 'true' : 'false'"
-              :class="[TILE, selected === i ? 'border-action ring-1 ring-action' : '']"
-              @mouseenter="onHover(i)" @mouseleave="onHover(null)" @focus="onHover(i)" @blur="onHover(null)"
-              @pointerdown="onPointerDown(i, $event)" @pointermove="onPointerMove" @pointerup="onPointerUp"
-              @click="onTileClick(i)">
-        <img :src="src" alt="" class="h-full w-full object-cover">
-        <!-- hover preview: a larger look, floated above this tile -->
+      <div v-for="(src, i) in images" :key="i" class="relative shrink-0">
+        <button data-testid="sketch-tile" type="button"
+                :data-index="i" :aria-pressed="selected === i ? 'true' : 'false'"
+                :class="[TILE, selected === i ? 'border-action ring-1 ring-action' : '']"
+                @mouseenter="onHover(i)" @mouseleave="onHover(null)" @focus="onHover(i)" @blur="onHover(null)"
+                @pointerdown="onPointerDown(i, $event)" @pointermove="onPointerMove" @pointerup="onPointerUp"
+                @pointercancel="onPointerCancel" @click="onTileClick(i)">
+          <!-- draggable="false": an <img> is natively draggable by default —
+               without this, a real press-move past a few px starts the
+               browser's OWN native image drag, which fires a spontaneous
+               pointercancel and kills our custom drag-to-place before the
+               ghost ever appears. Only visible live; jsdom/happy-dom never
+               trigger native drag-start, so the unit suite can't catch it. -->
+          <img :src="src" alt="" draggable="false" class="h-full w-full object-cover">
+        </button>
+        <!-- hover preview: a larger look, floated above this tile. Sibling of
+             the tile button, not a child of it — the tile clips to its
+             rounded corners via overflow-hidden, which would otherwise clip
+             this away entirely since it sits outside the tile's own box. -->
         <div v-if="hovered === i" data-testid="sketch-tip"
              class="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-10 h-[128px] w-[128px] -translate-x-1/2 overflow-hidden rounded-[8px] border border-white/15 shadow-[0_10px_30px_rgba(0,0,0,0.55)]">
           <img :src="src" alt="" class="h-full w-full object-cover">
         </div>
-      </button>
+      </div>
     </div>
 
     <div data-testid="sketch-actions" class="ml-1 flex items-center gap-2 border-l border-white/10 pl-2">

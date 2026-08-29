@@ -4509,6 +4509,7 @@ function dismissRunResult() {
              child re-enables its own events (the prompt bar does so internally). -->
         <div
           v-if="activeTab.type === 'project'"
+          data-testid="canvas-bottom-bar-stack"
           class="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-3"
         >
           <AgentCanvasPromptBar v-if="vueNodesEnabled" :vue-canvas="vueCanvasRef" class="w-0 min-w-full" />

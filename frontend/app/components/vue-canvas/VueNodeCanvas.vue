@@ -1050,6 +1050,49 @@ const sketchReview = reactive<{ open: boolean, images: string[], selected: numbe
 // of the shape Task 4's live pass verifies.
 const sketchReviewBusy = ref(false)
 
+// Dock the review strip directly above the REAL bottom-centre bar stack
+// (prompt bar + floating toolbar, layouts/default.vue) instead of a static
+// `bottom-*` guess — that stack's height is dynamic (the agent prompt bar
+// grows upward when it has a result panel open), so a fixed offset drifts
+// out of alignment or overlaps it. Measured live via the stack's testid and
+// re-measured on resize/content-growth while the strip is open.
+const SKETCH_STRIP_GAP = 12
+const SKETCH_STRIP_FALLBACK_BOTTOM = 112 // pre-measurement / no-match fallback (old bottom-28 estimate)
+const sketchStripDockStyle = ref<{ bottom: string, left: string, transform: string }>({
+  bottom: `${SKETCH_STRIP_FALLBACK_BOTTOM}px`, left: '50%', transform: 'translateX(-50%)',
+})
+function updateSketchStripDock(): void {
+  const bar = document.querySelector('[data-testid="canvas-bottom-bar-stack"]') as HTMLElement | null
+  const rect = bar?.getBoundingClientRect()
+  if (!rect || !rect.width) return // no match yet — keep last-known/fallback position
+  sketchStripDockStyle.value = {
+    bottom: `${Math.max(0, window.innerHeight - rect.top + SKETCH_STRIP_GAP)}px`,
+    left: `${rect.left + rect.width / 2}px`,
+    transform: 'translateX(-50%)',
+  }
+}
+let sketchStripDockObserver: ResizeObserver | null = null
+watch(() => sketchReview.open, (open) => {
+  if (open) {
+    updateSketchStripDock()
+    nextTick(updateSketchStripDock) // layout may not have settled on the opening frame
+    window.addEventListener('resize', updateSketchStripDock)
+    const bar = document.querySelector('[data-testid="canvas-bottom-bar-stack"]')
+    if (bar && typeof ResizeObserver !== 'undefined') {
+      sketchStripDockObserver = new ResizeObserver(updateSketchStripDock)
+      sketchStripDockObserver.observe(bar)
+    }
+  } else {
+    window.removeEventListener('resize', updateSketchStripDock)
+    sketchStripDockObserver?.disconnect()
+    sketchStripDockObserver = null
+  }
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', updateSketchStripDock)
+  sketchStripDockObserver?.disconnect()
+})
+
 /** Viewport center in graph coords, nudged to the nearest clear spot so the pad
  *  never covers existing cards. Reuses the AABB-nudge from the agent apply path. */
 function sketchPadAnchor(): { x: number, y: number } {
@@ -8194,12 +8237,15 @@ defineExpose({
     <!-- Prompt-bar sketch review strip: four fresh sketches, reviewed before
          any land on the canvas. Teleported like the sketch-stack overlay
          above so the prompt bar / toolbar can't paint over it; docked
-         directly above them, matching their bottom-center anchor
-         (layouts/default.vue's `bottom-3 left-1/2 -translate-x-1/2` stack). -->
+         directly above the REAL bottom-center bar stack
+         (layouts/default.vue's `[data-testid="canvas-bottom-bar-stack"]`),
+         measured live via sketchStripDockStyle since that stack's height is
+         dynamic (the agent prompt bar grows upward with a result panel). -->
     <Teleport to="body">
       <div
         v-if="sketchReview.open"
-        class="pointer-events-auto fixed bottom-28 left-1/2 z-40 -translate-x-1/2"
+        class="pointer-events-auto fixed z-40"
+        :style="sketchStripDockStyle"
       >
         <VueCanvasSketchReviewStrip
           :images="sketchReview.images"
