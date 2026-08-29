@@ -8,7 +8,7 @@ export interface SolveResult { converged: boolean; iterations: number; residualN
 
 type Slot = { kind: 'px' | 'py'; id: EntityId } | { kind: 'r'; id: EntityId }
 
-const W_REG = 0.01
+const W_REG = 1e-4
 
 // Which scalars are free to move. Fixed points and the dragged point are held.
 function buildSlots(doc: SketchDoc, held: Set<EntityId>): Slot[] {
