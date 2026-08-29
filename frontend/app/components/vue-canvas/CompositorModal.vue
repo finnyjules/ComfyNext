@@ -2388,8 +2388,13 @@ function scheduleThumbTick(fn: () => void): () => void {
 // frame keeps a STABLE id here, so its thumb updates on wiring/size only, never
 // per frame (the whole point — no per-frame thumbnail work).
 function thumbSig(layer: any): string {
-  const { x, y, rotation, ...rest } = layer
-  void x; void y; void rotation
+  // skewX/skewY/cornerPin are applied as OUTER canvas transforms in paintLayer,
+  // wrapped AROUND drawLayerContent (see applyXform + the corner-pin quad warp) —
+  // drawLayerContent itself never reads them. This thumb calls drawLayerContent
+  // directly, so a slant/corner-pin drag can never change its pixels; strip them
+  // alongside x/y/rotation so that gesture doesn't churn a byte-identical thumb.
+  const { x, y, rotation, skewX, skewY, cornerPin, ...rest } = layer
+  void x; void y; void rotation; void skewX; void skewY; void cornerPin
   let sig = JSON.stringify(rest)
   if (layer.kind === 'wired') {
     sig += '|w:' + JSON.stringify(wiredContentInfo0(layer.slot)) + (wiredImageEls.value[layer.slot + 1] ? ':1' : ':0')
@@ -2426,8 +2431,10 @@ async function runThumbPass() {
   thumbTimer = null
   if (typeof window === 'undefined') return
   // The thumbs' fonts/images must be resolved or a text/image thumb draws blank —
-  // idempotent + cached (the main render watcher ensures the same set), and this
-  // pass re-runs when they resolve because the content sig is unchanged until then.
+  // idempotent + cached (the main render watcher ensures the same set). This does
+  // NOT re-run when a font/image resolves later (no fonts.ready hook here) — it
+  // mirrors the main-canvas render watcher and inherits the same font-race
+  // behavior: whatever asset state is available at THIS pass is what gets baked in.
   await ensureLayerFonts(localLayers.value, canvasDisplay.w)
   await ensureLayerImages(localLayers.value)
   // Which layers need a thumb right now: every text/shape/line/brush/path row that
@@ -2483,12 +2490,14 @@ function drainThumbQueue(queue: { layer: any; sig: string }[]) {
   }
   thumbCancel = scheduleThumbTick(step)
 }
-// Re-thumb on content changes only: layer content (placement stripped so a drag
-// doesn't churn), group membership, wired slot content, decoded wired bitmaps, and
-// a late-registering live studio. NOT on the playhead / wall clock.
+// Re-thumb on content changes only: layer content (placement + outer-transform
+// fields — x/y/rotation/skewX/skewY/cornerPin — stripped so a drag doesn't churn;
+// see thumbSig above for why those specific fields are outer transforms), group
+// membership, wired slot content, decoded wired bitmaps, and a late-registering
+// live studio. NOT on the playhead / wall clock.
 watch(
   () => [
-    JSON.stringify(localLayers.value.map((l: any) => { const { x, y, rotation, ...r } = l; void x; void y; void rotation; return r })),
+    JSON.stringify(localLayers.value.map((l: any) => { const { x, y, rotation, skewX, skewY, cornerPin, ...r } = l; void x; void y; void rotation; void skewX; void skewY; void cornerPin; return r })),
     JSON.stringify(localGroups.value),
     JSON.stringify(layers.value),
     Object.keys(wiredImageEls.value).length,
