@@ -2982,6 +2982,14 @@ function handleBridgeMessage(event: MessageEvent) {
           errorMessage: event.data.exception_message || null,
           runningSince: null,
         }
+        // A failed Re-roll never reaches the success branch above, so
+        // sketchReviewBusy would otherwise stay stuck true — the hidden pad
+        // has no visible error ring, so that reads as the strip hanging
+        // forever. Clear it so Keep/Re-roll re-enable; the prior four takes
+        // stay in sketchReview.images so the strip remains usable.
+        if (target?.data?.properties?.sketchPad === true) {
+          sketchReviewBusy.value = false
+        }
       }
     }
     // Release this run's glow bookkeeping (mirrors execution_complete) so a
@@ -3928,6 +3936,9 @@ function onSketchKeep(): void {
   }
   teardownSketchReview()
   sketchReview.open = false
+  // Don't let the committed batch linger in memory until the next prompt.
+  sketchReview.images = []
+  sketchReview.selected = null
 }
 
 /** Drag-to-place: commit `sketchReview.images[index]` under the drop point.
@@ -3948,12 +3959,18 @@ function onSketchDropAt(payload: { index: number, clientX: number, clientY: numb
   }
   teardownSketchReview()
   sketchReview.open = false
+  // Don't let the committed batch linger in memory until the next prompt.
+  sketchReview.images = []
+  sketchReview.selected = null
 }
 
 /** Cancel: discard all four, tear down the pad, close the strip. No node. */
 function onSketchCancel(): void {
   teardownSketchReview()
   sketchReview.open = false
+  // Don't let the discarded batch linger in memory until the next prompt.
+  sketchReview.images = []
+  sketchReview.selected = null
 }
 
 /** Re-roll: fresh seed onto the SAME pad node + the same scoped run the
