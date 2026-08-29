@@ -9,6 +9,7 @@ import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist } from '~/lib/sketch/geom'
+import { constraintMarks } from '~/lib/sketch/annotate'
 
 type Tool = 'select' | 'point' | 'line' | 'circle'
 
@@ -161,6 +162,7 @@ const pathScreen = computed(() => {
   return sketchPathData(shadow)
 })
 const pts = computed(() => doc.value.entities.filter(e => e.kind === 'point') as any[])
+const marks = computed(() => constraintMarks(doc.value))
 
 // pointer handling
 let dragId: EntityId | null = null
@@ -254,6 +256,10 @@ onMounted(() => {
               :fill="selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb')"
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
               @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)" :data-point="p.id" />
+      <g v-for="m in marks" :key="m.id" pointer-events="none">
+        <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" :width="m.text ? 30 : 16" height="14" rx="3" fill="#111827" opacity="0.85" />
+        <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.glyph }}{{ m.text ? ' ' + m.text : '' }}</text>
+      </g>
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">
       Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Select drags points; the drawing re-solves.
