@@ -96,6 +96,27 @@ Phase 2 must also fix the solver's dead in-loop early-break (burns full maxIter 
 per-pointer-move). Phases 3–4: draw-time inference chips + persistent constraint badges + selection
 verbs; agent verbs + curvature-comb overlay.
 
+### Sketch construction paths + Repeat/Mirror — M1 LANDED (dev-only) 2026-08-29 (`46816a00b`..`65f30e688`)
+
+The logo workflow from Opacity's demos, working in Sailor: **paths** (chains of anchors with
+line + arc segments — anchors and arc centers are just solver points; arcs keep integrity via an
+auto `equalDist` rule) and **Repeat…/Mirror as live-copy rules** (`rotatedFrom`/`mirroredFrom`
+residuals — copies are real geometry the solver holds in formation, so dragging ANY copy re-solves
+the whole figure, and copies weld to each other with Coincident). Path tool on `/dev/sketch-draw`:
+click anchors, line|arc next-segment toggle, click-first-anchor to close; verbs bar gains Repeat…
+(1 selected point = center + count), Mirror (1 selected line = axis), Make construction (dashed,
+excluded from export), Flip H/V, Copy as SVG; badges render the new rules (`E`, `↻ 60`…). M0 solver
+cleanups first: **early-break on the hard residual (4 iterations instead of 60)** + `n===0` revert.
+**EXIT TEST PASSED LIVE**: knot built (unit line+arc path → Repeat×6 → weld) = 31 entities/27
+constraints; dragging the arc endpoint kept 6-fold symmetry at error 0.00000; weld gap 0 before and
+after drag; SVG exports real `L`/`A` data. Gotchas: SVG arc sweep flips under the page's y-flip
+(shadow-doc maps `sweep → 1−sweep`); mirrored copies flip sweep too. 23 new unit tests (121/121
+sketch suite) + knot E2E (3/3). Spec: `superpowers/specs/2026-08-29-sketch-path-pen-design.md`
+(deviation noted: deleting an original DETACHES copies rather than cascading). Plan:
+`superpowers/plans/2026-08-29-sketch-path-repeat-m1.md`. **Next: M2 freeform bezier pen**
+(cubic segments + handle points + `collinear` smooth rule — model already reserves them), then
+curvature comb, then the Shape Studio mount decision.
+
 ### Sketch drawing surface — Phase 2 (standalone) LANDED (dev-only) 2026-08-29 (`cc194e3a6`..`294672b0b`)
 
 The solver became a **drawing tool** — you place geometry and the relationships you draw with are

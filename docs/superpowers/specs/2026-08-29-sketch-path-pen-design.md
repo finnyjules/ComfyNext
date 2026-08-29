@@ -51,7 +51,7 @@ SegmentSpec =
 
 - **Repeat…**: select entities → pick a center point (click on canvas or an existing point) and a count. For each source point, N−1 real copy points are created, each with a `rotatedFrom` rule at k·(360/N)°. Copy paths/lines/circles are created referencing the copy points. Copies render, select, weld, and drag like anything else; dragging a copy re-solves the original through the rules (bidirectional — the video behavior).
 - **Mirror…**: same shape, with an axis line (construction or real) instead of center+count.
-- Deleting an original cascades to copies (existing cascade logic — copies' rules reference the original's points). Deleting a copy removes just that copy + its rules.
+- Deleting a copy removes just that copy + its rules. **As built (M1):** deleting an original DETACHES its copies (their rotatedFrom/mirroredFrom rules drop as dangling; the copies stay as free geometry) rather than cascading — revisit if detached copies prove confusing.
 - No live "count" editing in v1 (re-run Repeat after deleting copies); recorded as future work.
 
 ### Interaction
