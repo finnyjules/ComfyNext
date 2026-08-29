@@ -4,14 +4,14 @@
 definePageMeta({ layout: false })
 import { ref, computed, onMounted } from 'vue'
 import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
-import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure } from '~/lib/sketch/edit'
+import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, addSmoothHandles } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist } from '~/lib/sketch/geom'
 import { constraintMarks } from '~/lib/sketch/annotate'
 
-type Tool = 'select' | 'point' | 'line' | 'circle' | 'path'
+type Tool = 'select' | 'point' | 'line' | 'circle' | 'path' | 'pen'
 
 const doc = ref<SketchDoc>({ entities: [], constraints: [] })
 const tool = ref<Tool>('select')
@@ -186,20 +186,67 @@ function pathClick(x: number, y: number) {
   pp.anchors.push(id)
 }
 
+// closing segment between last and first anchors; pen paths always close with a cubic
+function closingSegment(): SegmentSpec {
+  return tool.value === 'pen' ? { kind: 'cubic', h1: lastHOut, h2: null } : { kind: 'line' }
+}
+
 function finishPath(close = false) {
   const pp = pendingPath.value
   pendingPath.value = null
   if (!pp || pp.anchors.length < 2) return
   if (close) {
     // closing segment of the current kind between last and first anchors
-    if (nextSegment.value === 'arc') {
+    if (tool.value !== 'pen' && nextSegment.value === 'arc') {
       const a = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
       const b = doc.value.entities.find(e => e.id === pp.anchors[0]) as any
       const c = addPoint(doc.value, (a.x + b.x) / 2 - (b.y - a.y) / 2, (a.y + b.y) / 2 + (b.x - a.x) / 2)
       pp.segments.push({ kind: 'arc', center: c, sweep: 1 })
-    } else pp.segments.push({ kind: 'line' })
+    } else pp.segments.push(closingSegment())
   }
   addPath(doc.value, pp.anchors, pp.segments, close)
+  runSolve()
+}
+
+// --- pen tool: click-drag anchor chain; drag beyond 0.15 world units → smooth anchor ---
+type PenDrag = { anchor: EntityId; startX: number; startY: number; smooth: boolean } | null
+let penDrag: PenDrag = null
+let lastHOut: EntityId | null = null
+
+function penDown(x: number, y: number) {
+  const id = placePoint(x, y)
+  if (!pendingPath.value) {
+    pendingPath.value = { anchors: [id], segments: [] }
+    lastHOut = null
+    penDrag = { anchor: id, startX: x, startY: y, smooth: false }
+    return
+  }
+  const pp = pendingPath.value
+  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); penDrag = null; return }  // clicked first anchor → close
+  if (id === pp.anchors[pp.anchors.length - 1]) { penDrag = null; return }                            // ignore double-click same point
+  pp.segments.push({ kind: 'cubic', h1: lastHOut, h2: null })
+  pp.anchors.push(id)
+  penDrag = { anchor: id, startX: x, startY: y, smooth: false }
+}
+
+function penMove(x: number, y: number) {
+  if (!penDrag) return
+  if (dist({ x, y }, { x: penDrag.startX, y: penDrag.startY }) > 0.15) penDrag.smooth = true
+}
+
+function penUp(x: number, y: number) {
+  if (!penDrag) return
+  const { anchor, smooth } = penDrag
+  penDrag = null
+  if (smooth) {
+    const { hOut, hIn } = addSmoothHandles(doc.value, anchor, x, y)
+    const pp = pendingPath.value
+    if (pp && pp.segments.length > 0) {
+      const segIn = pp.segments[pp.segments.length - 1]
+      if (segIn && segIn.kind === 'cubic') segIn.h2 = hIn
+    }
+    lastHOut = hOut
+  }
   runSolve()
 }
 
@@ -274,6 +321,35 @@ const constructionScreen = computed(() => {
 const pts = computed(() => doc.value.entities.filter(e => e.kind === 'point') as any[])
 const marks = computed(() => constraintMarks(doc.value))
 
+// screen-space arm lines (anchor→handle) for cubic segments of selected or pending paths
+const handleArms = computed(() => {
+  const d = doc.value
+  const out: { x1: number; y1: number; x2: number; y2: number }[] = []
+  const addArms = (anchors: EntityId[], segments: SegmentSpec[]) => {
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]!
+      if (seg.kind !== 'cubic') continue
+      const fromId = anchors[i]!
+      const toId = anchors[(i + 1) % anchors.length]!
+      if (seg.h1) {
+        const from = d.entities.find(e => e.id === fromId) as any
+        const h1 = d.entities.find(e => e.id === seg.h1) as any
+        if (from && h1) out.push({ x1: sx(from.x), y1: sy(from.y), x2: sx(h1.x), y2: sy(h1.y) })
+      }
+      if (seg.h2) {
+        const to = d.entities.find(e => e.id === toId) as any
+        const h2 = d.entities.find(e => e.id === seg.h2) as any
+        if (to && h2) out.push({ x1: sx(to.x), y1: sy(to.y), x2: sx(h2.x), y2: sy(h2.y) })
+      }
+    }
+  }
+  for (const e of d.entities) {
+    if (e.kind === 'path' && selection.value.includes(e.id)) addArms(e.anchors, e.segments)
+  }
+  if (pendingPath.value) addArms(pendingPath.value.anchors, pendingPath.value.segments)
+  return out
+})
+
 // pointer handling
 let dragId: EntityId | null = null
 let moved = false
@@ -297,17 +373,46 @@ function entityPathScreen(id: EntityId): string {
 function onPointerDownSvg(ev: PointerEvent) {
   if (tool.value === 'select') return
   const { x, y } = svgXY(ev)
+  if (tool.value === 'pen') { penDown(x, y); return }
   place(x, y)
 }
 function onPointerMove(ev: PointerEvent) {
+  if (tool.value === 'pen') {
+    if (!penDrag || ev.buttons === 0) return
+    const { x, y } = svgXY(ev)
+    penMove(x, y)
+    return
+  }
   if (!dragId || ev.buttons === 0) return
   const { x, y } = svgXY(ev)
   moved = true
   runSolve({ point: dragId, x, y })
 }
-function onPointerUp() { dragId = null }
+function onPointerUp(ev: PointerEvent) {
+  if (tool.value === 'pen' && penDrag) {
+    const { x, y } = svgXY(ev)
+    penUp(x, y)
+    return
+  }
+  dragId = null
+}
 
-function reset() { doc.value = { entities: [], constraints: [] }; pending.value = null; pendingPath.value = null; status.value = 'ready' }
+function selectTool(t: Tool) {
+  tool.value = t
+  pending.value = null
+  pendingPath.value = null
+  penDrag = null
+  lastHOut = null
+}
+
+function reset() {
+  doc.value = { entities: [], constraints: [] }
+  pending.value = null
+  pendingPath.value = null
+  penDrag = null
+  lastHOut = null
+  status.value = 'ready'
+}
 
 onMounted(() => {
   ;(window as any).__sketchDraw = {
@@ -318,9 +423,12 @@ onMounted(() => {
     pathData: () => sketchPathData(doc.value),
     entityCount: () => doc.value.entities.length,
     constraintCount: () => doc.value.constraints.length,
-    setTool: (t: Tool) => { tool.value = t; pending.value = null; pendingPath.value = null },
+    setTool: (t: Tool) => selectTool(t),
     reset,
     place: (x: number, y: number) => place(x, y),
+    penDown: (x: number, y: number) => penDown(x, y),
+    penMove: (x: number, y: number) => penMove(x, y),
+    penUp: (x: number, y: number) => penUp(x, y),
     drag: (id: EntityId, x: number, y: number) => runSolve({ point: id, x, y }),
     pick: (id: EntityId) => pick(id),
     clearSel: () => clearSel(),
@@ -344,8 +452,8 @@ onMounted(() => {
   <div :data-ready="ready ? '' : undefined" style="font-family: ui-sans-serif, system-ui; padding: 12px; color: #e5e5e5; background: #0b0b0b; min-height: 100vh">
     <h1 style="font-size: 14px; margin: 0 0 8px">Sketch Draw</h1>
     <div style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
-      <button v-for="t in (['select','point','line','circle','path'] as Tool[])" :key="t"
-              :data-tool="t" @click="() => { tool = t; pending = null; pendingPath = null }"
+      <button v-for="t in (['select','point','line','circle','path','pen'] as Tool[])" :key="t"
+              :data-tool="t" @click="() => selectTool(t)"
               :style="{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer',
                         background: tool === t ? '#2563eb' : '#1a1a1a', color: '#fff' }">{{ t }}</button>
       <button data-act="reset" @click="reset" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer">reset</button>
@@ -359,6 +467,13 @@ onMounted(() => {
       <button data-seg="arc" @click="nextSegment = 'arc'"
               :style="{ padding: '3px 9px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer', fontSize: '12px',
                         background: nextSegment === 'arc' ? '#2563eb' : '#1a1a1a', color: '#fff' }">arc</button>
+      <button data-act="close" @click="finishPath(true)"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">close</button>
+      <button data-act="finish" @click="finishPath(false)"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">finish</button>
+    </div>
+    <div v-else-if="tool === 'pen'" style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
+      <span style="font-size: 12px; color: #9ca3af">click for a corner anchor, click-drag for a smooth anchor; click the first anchor to close</span>
       <button data-act="close" @click="finishPath(true)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">close</button>
       <button data-act="finish" @click="finishPath(false)"
@@ -395,8 +510,12 @@ onMounted(() => {
               :style="{ cursor: 'pointer' }" @pointerdown="(ev) => { if (tool==='select') { pick(e.id); ev.stopPropagation() } }" :data-ent="e.id" />
         <path v-if="e.kind !== 'point' && selection.includes(e.id)" :d="entityPathScreen(e.id)" fill="none" stroke="#f59e0b" stroke-width="2.5" pointer-events="none" />
       </template>
-      <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" :r="6"
-              :fill="selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb')"
+      <line v-for="(a, i) in handleArms" :key="'arm-' + i" :x1="a.x1" :y1="a.y1" :x2="a.x2" :y2="a.y2"
+            stroke="#7c3aed" stroke-width="1" pointer-events="none" />
+      <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" :r="p.construction ? 4 : 6"
+              :fill="p.construction ? 'none' : (selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb'))"
+              :stroke="p.construction ? (selection.includes(p.id) ? '#f59e0b' : '#7c3aed') : 'none'"
+              :stroke-width="p.construction ? 1.5 : 0"
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
               @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)" :data-point="p.id" />
       <g v-for="m in marks" :key="m.id" pointer-events="none">
@@ -405,7 +524,7 @@ onMounted(() => {
       </g>
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">
-      Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Select drags points; the drawing re-solves.
+      Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Path/Pen click to chain anchors, click the first anchor to close. Pen: click-drag for a smooth anchor. Select drags points; the drawing re-solves.
     </p>
   </div>
 </template>
