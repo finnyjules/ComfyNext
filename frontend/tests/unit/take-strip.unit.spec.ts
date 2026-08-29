@@ -349,7 +349,13 @@ describe('TakeStrip — presentation only', () => {
     const src = fs.readFileSync(`${process.cwd()}/app/components/vue-canvas/studio/TakeStrip.vue`, 'utf8')
     const imports = Array.from(src.matchAll(/from '([^']+)'/g)).map(m => m[1]!)
     for (const i of imports) {
-      expect(i === 'vue' || i.endsWith('StudioButton.vue') || i === '~/lib/vibePrompt').toBe(true)
+      expect(
+        i === 'vue'
+        || i.endsWith('StudioButton.vue')
+        || i.endsWith('ReviewTile.vue')
+        || i.endsWith('reviewStripStyles')
+        || i === '~/lib/vibePrompt',
+      ).toBe(true)
     }
     expect(src).not.toMatch(/\$fetch|useFetch|localStorage|spreadAroundTake/)
   })

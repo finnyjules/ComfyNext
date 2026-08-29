@@ -24,7 +24,9 @@
  *     it cannot be mouse-only.
  */
 import { computed, onBeforeUnmount, onMounted } from 'vue'
+import ReviewTile from '~/components/vue-canvas/studio/ReviewTile.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import { ACTIONS_BAR, TILES_ROW, TRAY_PANEL } from '~/components/vue-canvas/studio/reviewStripStyles'
 import type { VibeTake } from '~/lib/vibePrompt'
 
 /** What a thumbnail may be: a data URL, a canvas the studio already drew, or
@@ -95,9 +97,8 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
 </script>
 
 <template>
-  <div data-testid="take-strip" :aria-busy="busy ? 'true' : 'false'"
-       class="flex flex-col gap-2 rounded-[8px] border border-white/10 bg-white/[0.03] p-2">
-    <div data-testid="take-row" class="flex items-stretch gap-[5px]" @mouseleave="onHover(null)">
+  <div data-testid="take-strip" :aria-busy="busy ? 'true' : 'false'" :class="TRAY_PANEL">
+    <div data-testid="take-row" :class="TILES_ROW" @mouseleave="onHover(null)">
       <!-- ① current — the anchor, and the undo -->
       <div class="flex w-[76px] shrink-0 flex-col gap-1.5">
         <button data-testid="take-current" type="button" aria-label="current"
@@ -122,37 +123,24 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
            that wrapper so it still escapes upward, unclipped. -->
       <div v-for="(t, i) in takes" :key="i" data-testid="take-cell" class="group relative min-w-0 flex-1"
            @mouseenter="onHover(t)" @mouseleave="onHover(null)">
-        <div class="relative h-[96px] w-full overflow-hidden rounded-[5px]">
-          <button data-testid="take-tile" type="button"
-                  :data-label="t.label" :data-selected="selected === t ? 'true' : 'false'"
-                  :aria-label="t.label" :aria-pressed="selected === t ? 'true' : 'false'"
-                  :class="['relative h-full w-full border transition enabled:cursor-pointer',
-                           selected === t ? 'border-action ring-1 ring-action' : 'border-white/12 hover:border-white/30']"
-                  @focus="onHover(t)" @blur="onHover(null)" @click="emit('select', t)">
-            <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
-            <!-- ③ still drawing — NOT a failure. -->
-            <span v-else-if="pending.has(t)" data-testid="take-pending"
-                  class="block h-full w-full animate-pulse bg-white/[0.07]" />
-            <!-- ④ error tile: the render threw. Never a blank strip. -->
-            <span v-else data-testid="take-error"
-                  class="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
-              couldn’t draw
-            </span>
-          </button>
-          <!-- per-card actions: always in the DOM (tests need them addressable),
-               revealed on hover / focus-within / when this take is selected.
-               Inside the clipped wrapper, with an inset from its padding, so
-               Keep never overhangs the card's rounded corner. -->
-          <div :class="['pointer-events-none absolute inset-x-0 bottom-0 flex justify-end gap-1.5 p-1.5 opacity-0 transition',
-                        'bg-gradient-to-t from-black/85 to-transparent',
-                        'group-hover:opacity-100 group-focus-within:opacity-100',
-                        selected === t ? '!opacity-100' : '']">
+        <ReviewTile tile-testid="take-tile" :selected="selected === t" :label="t.label"
+                    @click="emit('select', t)" @tilefocus="onHover(t)" @tileblur="onHover(null)">
+          <img v-if="sources.get(t)" :src="sources.get(t)!" alt="" class="h-full w-full object-cover">
+          <!-- ③ still drawing — NOT a failure. -->
+          <span v-else-if="pending.has(t)" data-testid="take-pending"
+                class="block h-full w-full animate-pulse bg-white/[0.07]" />
+          <!-- ④ error tile: the render threw. Never a blank strip. -->
+          <span v-else data-testid="take-error"
+                class="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
+            couldn’t draw
+          </span>
+          <template #actions>
             <StudioButton data-testid="take-keep" variant="primary" class="pointer-events-auto"
                           :disabled="busy" @click.stop="emit('select', t); emit('keep')">
               Keep
             </StudioButton>
-          </div>
-        </div>
+          </template>
+        </ReviewTile>
         <!-- styled description tooltip: supplementary weight, above its own card;
              replaces the native title (the unstyled OS box) with something on-brand
              that appears immediately on hover, unclipped, since the rounded card
@@ -172,7 +160,7 @@ const TILE = 'group relative overflow-hidden rounded-[5px] border transition ena
     </div>
 
     <!-- ⑤ actions: two whole-strip controls. Keep lives per-card, above. -->
-    <div data-testid="take-actions" class="flex items-center gap-2">
+    <div data-testid="take-actions" :class="ACTIONS_BAR">
       <StudioButton data-testid="take-dismiss" variant="subtle" :disabled="busy" @click="emit('dismiss')">
         Cancel
       </StudioButton>
