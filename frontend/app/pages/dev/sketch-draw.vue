@@ -174,6 +174,7 @@ function onPointerDownPoint(id: EntityId, ev: PointerEvent) {
 function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
   // a click without a drag toggles selection
   if (tool.value === 'select' && dragId === id) { pick(id); ev.stopPropagation() }
+  dragId = null
 }
 function entityPathScreen(id: EntityId): string {
   const d = doc.value
@@ -189,7 +190,7 @@ function onPointerDownSvg(ev: PointerEvent) {
   place(x, y)
 }
 function onPointerMove(ev: PointerEvent) {
-  if (!dragId) return
+  if (!dragId || ev.buttons === 0) return
   const { x, y } = svgXY(ev)
   runSolve({ point: dragId, x, y })
 }
@@ -234,7 +235,7 @@ onMounted(() => {
     <div style="display: flex; gap: 6px; margin: 8px 0; min-height: 28px; align-items: center">
       <span style="font-size: 12px; color: #9ca3af">sel: {{ selection.length }}</span>
       <button v-for="v in availableConstraints()" :key="v.kind" :data-verb="v.kind"
-              @click="() => v.value ? apply(v.kind, Number(prompt(v.label + ' value?', '3')) || undefined) : apply(v.kind)"
+              @click="() => v.value ? apply(v.kind, Number(window.prompt(v.label + ' value?', '3')) || undefined) : apply(v.kind)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">{{ v.label }}</button>
       <button v-if="selection.length" data-verb="fix" @click="() => { for (const id of selection) { const e = doc.entities.find(x => x.id === id); if (e && e.kind === 'point') (e as any).fixed = true } clearSel(); runSolve() }"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Fix</button>
