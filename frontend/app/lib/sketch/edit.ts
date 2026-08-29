@@ -215,6 +215,52 @@ export function repeatEntities(doc: SketchDoc, ids: EntityId[], center: EntityId
   return all
 }
 
+export function addSmoothHandles(doc: SketchDoc, anchor: EntityId, hx: number, hy: number): { hOut: EntityId; hIn: EntityId } {
+  const a = getPoint(doc, anchor)!
+  const hOut = addPoint(doc, hx, hy, { construction: true })
+  const hIn = addPoint(doc, 2 * a.x - hx, 2 * a.y - hy, { construction: true })
+  addConstraint(doc, 'collinear', [hIn, anchor, hOut])
+  return { hOut, hIn }
+}
+
+export function setAnchorSmooth(doc: SketchDoc, pathId: EntityId, anchorIndex: number): boolean {
+  const p = getEntity(doc, pathId)
+  if (!p || p.kind !== 'path') return false
+  const n = p.anchors.length
+  const segCount = p.closed ? n : n - 1
+  const inSeg = p.closed ? (anchorIndex - 1 + segCount) % segCount : anchorIndex - 1
+  const outSeg = anchorIndex
+  if (inSeg < 0 || inSeg >= segCount || outSeg >= segCount) return false  // endpoint of an open path
+  const anchor = getPoint(doc, p.anchors[anchorIndex]!)
+  if (!anchor) return false
+
+  const third = (fromId: EntityId, toId: EntityId) => {
+    const f = getPoint(doc, fromId)!, t = getPoint(doc, toId)!
+    return { x: f.x + (t.x - f.x) / 3, y: f.y + (t.y - f.y) / 3 }
+  }
+  const upgrade = (si: number): void => {
+    const s = p.segments[si]!
+    if (s.kind !== 'cubic') p.segments[si] = { kind: 'cubic', h1: null, h2: null }
+  }
+  upgrade(inSeg); upgrade(outSeg)
+  const sIn = p.segments[inSeg]! as { kind: 'cubic'; h1: EntityId | null; h2: EntityId | null }
+  const sOut = p.segments[outSeg]! as { kind: 'cubic'; h1: EntityId | null; h2: EntityId | null }
+
+  if (!sIn.h2) {
+    const prev = p.anchors[inSeg]!  // start anchor of the incoming segment
+    const pos = third(p.anchors[anchorIndex]!, prev)
+    sIn.h2 = addPoint(doc, pos.x, pos.y, { construction: true })
+  }
+  if (!sOut.h1) {
+    const next = p.anchors[(anchorIndex + 1) % n]!
+    const pos = third(p.anchors[anchorIndex]!, next)
+    sOut.h1 = addPoint(doc, pos.x, pos.y, { construction: true })
+  }
+  const already = doc.constraints.some(c => c.kind === 'collinear' && c.refs[1] === p.anchors[anchorIndex])
+  if (!already) addConstraint(doc, 'collinear', [sIn.h2, p.anchors[anchorIndex]!, sOut.h1])
+  return true
+}
+
 export function mirrorEntities(doc: SketchDoc, ids: EntityId[], axisLine: EntityId): EntityId[] {
   const ax = getEntity(doc, axisLine)
   if (!ax || ax.kind !== 'line') return []
