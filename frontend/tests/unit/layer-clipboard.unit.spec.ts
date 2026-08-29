@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { _resetClipboard, extractForCopy, getClipboard, hasClipboard, materializePaste, setClipboard } from '../../app/lib/compositor/layerClipboard'
+import { _resetClipboard, extractForCopy, getClipboard, hasClipboard, materializePaste, parseLayersFromOS, serializeLayersForOS, setClipboard } from '../../app/lib/compositor/layerClipboard'
 
 const L = (id: string, x: number, y: number, groupId?: string): any => ({ id, kind: 'rect', x, y, rotation: 0, opacity: 1, w: 0.1, h: 0.1, ...(groupId ? { groupId } : {}) })
 const ids = () => { let n = 0; return () => `p${++n}` }
@@ -77,5 +77,49 @@ describe('clipboard refuses wired layers', () => {
     expect(r.layers).toHaveLength(1)
     expect(r.layers[0]!.kind).toBe('rect')
     expect(r.newIds).toHaveLength(1)
+  })
+})
+
+// ── OS clipboard serialize / parse (cross-frame / project / session) ─────────
+describe('serializeLayersForOS / parseLayersFromOS', () => {
+  it('round-trips layers + groups; materialize re-mints ids', () => {
+    const src = [L('a', 0.2, 0.2, 'g1'), L('b', 0.3, 0.3, 'g1')]
+    const groups = [{ id: 'g1', name: 'Row' }]
+    const text = serializeLayersForOS(src, groups)
+    const parsed = parseLayersFromOS(text)!
+    expect(parsed.layers).toHaveLength(2)
+    expect(parsed.groups).toEqual([{ id: 'g1', name: 'Row' }])
+    // ids survive parse unchanged — the re-mint boundary is materializePaste
+    expect(parsed.layers.map(l => l.id)).toEqual(['a', 'b'])
+    const r = materializePaste(parsed, [], [], 0.02, ids(), gids())
+    expect(r.newIds).toEqual(['p1', 'p2'])              // re-minted, not 'a'/'b'
+    expect(r.layers.map(l => l.id)).not.toContain('a')  // no source id leaks through
+    expect(r.layers[0]!.groupId).toBe('pg1')            // group re-minted too
+  })
+  it('a foreign text paste parses to null', () => {
+    expect(parseLayersFromOS('just some copied prose')).toBeNull()
+    expect(parseLayersFromOS('https://example.com/x')).toBeNull()
+    expect(parseLayersFromOS('{"foo":1}')).toBeNull()          // valid JSON, wrong shape
+    expect(parseLayersFromOS('')).toBeNull()
+    expect(parseLayersFromOS(null)).toBeNull()
+  })
+  it('a payload from a newer/older version is refused', () => {
+    const good = JSON.parse(serializeLayersForOS([L('a', 0.2, 0.2)]))
+    const bumped = JSON.stringify({ ...good, version: good.version + 1 })
+    expect(parseLayersFromOS(bumped)).toBeNull()
+  })
+  it('wired layers never enter the serialized payload', () => {
+    const text = serializeLayersForOS([WD('w1', 0), L('a', 0.2, 0.2)], [])
+    const env = JSON.parse(text)
+    expect(env.payload.layers).toHaveLength(1)
+    expect(env.payload.layers[0].kind).toBe('rect')
+    // and a hand-forged blob carrying a wired kind still yields no wired on parse
+    const forged = JSON.stringify({ ...env, payload: { layers: [WD('w2', 1), L('c', 0.4, 0.4)], groups: [] } })
+    const parsed = parseLayersFromOS(forged)!
+    expect(parsed.layers.every(l => l.kind !== 'wired')).toBe(true)
+  })
+  it('a wired-only selection serializes to a payload with no layers → parse null', () => {
+    const text = serializeLayersForOS([WD('w1', 0)], [])
+    expect(parseLayersFromOS(text)).toBeNull()
   })
 })

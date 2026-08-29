@@ -779,10 +779,10 @@ describe('wired layer verb parity (mixed selection)', () => {
     expect(seen).toEqual([0, 1])   // both called, in selection order
   })
 
-  it('copy keeps wired out of the clipboard, so paste can never re-create the slot', () => {
+  it('copy keeps wired out of the clipboard, so paste can never re-create the slot', async () => {
     _resetClipboard()
     const { ed } = mixedEditor()
-    ed.copySelection()
+    await ed.copySelection()   // async now: bakes wired members before serializing
     const p = getClipboard()!
     expect(p.layers).toHaveLength(1)
     expect(p.layers[0]!.kind).toBe('rect')

@@ -17,6 +17,7 @@ import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWi
 import { createWiredMaskCache } from '~/lib/compositor/wiredMaskCache'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind, cornerResizableKind } from '~/composables/useLocalLayerEditor'
+import { serializeLayersForOS, parseLayersFromOS, setClipboard, type ClipboardPayload } from '~/lib/compositor/layerClipboard'
 import {
   allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
   reparentGroup as reparentGroupOp, directLayerIds, upsertGroup,
@@ -521,6 +522,9 @@ const editor = useLocalLayerEditor({
   // into a normal image layer (the existing "Copy into frame" path), which is the
   // only copy that can stand on its own.
   materializeWired: (w) => copyWiredIntoFrame(w.slot + 1),
+  // Push the same ⌘C payload to the OS clipboard (Sailor layer JSON + a
+  // composited PNG) so copy/paste reaches across frames, projects and sessions.
+  onOSCopy: (payload) => { void writeLayersToOSClipboard(payload) },
 })
 const layerEdit = useLayerImageEdit()
 const {
@@ -535,7 +539,7 @@ const {
   background, setBackground,
   postEffects, setPostEffects,
   undo, redo, canUndo, canRedo,
-  selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit, handleEditorKey,
+  selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit, handleEditorKey, pasteClipboard,
   selectionBox, selectionHandles, startGroupResize,
   groupSelected, ungroupSelected, ungroupGroup, renameGroup, canGroup, canUngroup,
   localGroups, selectGroupById, writeGroups,
@@ -4130,6 +4134,76 @@ function handleKeydown(e: KeyboardEvent) {
 // VueNodeCanvas listens for 'paste' on window in the bubble phase and would
 // otherwise turn the image into a standalone Image node on the graph. Capture
 // runs first, and stopImmediatePropagation keeps that handler from firing.
+// ── OS clipboard: copy/paste layers across frames, projects and sessions ─────
+// ⌘C fills the in-session clipboard (module singleton) AND — via the editor's
+// onOSCopy hook — pushes the SAME selection to the real OS clipboard: our layer
+// JSON on text/plain (the load-bearing half, read back on ⌘V), plus a composited
+// PNG on image/png for pasting into external apps. ⌘V prefers our JSON found on
+// the paste event's clipboardData (no permission prompt, unlike navigator
+// .clipboard.read()), else falls back to the existing image paste.
+
+// Composite just the copied selection to a transparent PNG at bake resolution.
+// Best-effort: the JSON is what a Sailor paste consumes; this PNG only matters
+// for pasting into another app, so any failure resolves to null and is dropped.
+async function compositeSelectionBlob(payload: ClipboardPayload): Promise<Blob | null> {
+  try {
+    const { W, H } = bakeSize()
+    const off = document.createElement('canvas')
+    off.width = Math.max(1, Math.round(W)); off.height = Math.max(1, Math.round(H))
+    const ctx = off.getContext('2d'); if (!ctx) return null
+    const sel = payload.layers as LocalLayer[]
+    if (!sel.length) return null
+    await ensureLayerImages(sel)
+    await ensureLayerFonts(sel, W)
+    // Paint bottom-up over a transparent ground. Wired kinds never reach the
+    // payload, so no wired content provider is needed.
+    withWiredContent(wiredContentForSlot, () => {
+      for (const l of sel) drawLocalLayer(ctx, l, W, H)
+    })
+    return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
+  } catch (err) {
+    console.debug('[Compositor] selection PNG composite skipped', err)
+    return null
+  }
+}
+
+async function writeLayersToOSClipboard(payload: ClipboardPayload): Promise<void> {
+  const nav = typeof navigator !== 'undefined' ? navigator : null
+  if (!nav?.clipboard) return
+  const json = serializeLayersForOS(payload.layers, payload.groups)
+  // Preferred: one ClipboardItem carrying our JSON + a composited PNG.
+  try {
+    if (typeof ClipboardItem !== 'undefined' && nav.clipboard.write) {
+      const items: Record<string, Blob> = { 'text/plain': new Blob([json], { type: 'text/plain' }) }
+      const png = await compositeSelectionBlob(payload)
+      if (png) items['image/png'] = png
+      await nav.clipboard.write([new ClipboardItem(items)])
+      return
+    }
+  } catch (err) {
+    // Permission denied, no gesture, or write() unsupported — in-session
+    // clipboard already holds the payload, so same-session paste is unaffected.
+    console.debug('[Compositor] OS clipboard write() failed; trying writeText', err)
+  }
+  // Fallback: JSON only (the load-bearing half).
+  try { await nav.clipboard.writeText?.(json) }
+  catch (err) { console.debug('[Compositor] OS clipboard writeText failed', err) }
+}
+
+// Paste a Sailor layer payload lifted from the OS clipboard into THIS frame.
+// Routes through the existing in-session paste path (setClipboard + the editor's
+// pasteClipboard), so ids are re-minted, placement is offset, history records,
+// and the copies become the selection — identical to an in-session ⌘V.
+async function pasteOSLayers(payload: ClipboardPayload): Promise<void> {
+  setClipboard(payload)
+  pasteClipboard(false)
+  // Cross-frame/project image layers reference a filename in ComfyUI's input
+  // dir; resolve their bitmaps now so they paint. Cross-SESSION/server the
+  // filename may 404 (v1 limitation — no re-upload-from-PNG yet).
+  try { await ensureLayerImages(localLayers.value as LocalLayer[]) } catch { /* best-effort */ }
+  renderStack()
+}
+
 function isEditablePasteTarget(n: EventTarget | null): boolean {
   const el = n instanceof Element ? n : null
   if (!el) return false
@@ -4173,6 +4247,25 @@ async function pastedNodeImageFile(): Promise<File | null> {
 async function onModalPaste(e: ClipboardEvent) {
   // Never hijack a real text paste (agent prompt bar, layer rename, text edit).
   if (isEditablePasteTarget(e.target) || isEditablePasteTarget(document.activeElement)) return
+
+  // Sailor layer JSON on the OS clipboard wins over everything: it is how copy
+  // reaches across frames, projects and sessions. Read it straight off the paste
+  // event's clipboardData (synchronous, no permission prompt) rather than the
+  // async navigator.clipboard.read() API. A foreign text paste parses to null and
+  // falls through to the image path below. (Same-session ⌘V never reaches here —
+  // the in-session clipboard consumes the keydown and suppresses the paste event.)
+  const osLayers = parseLayersFromOS(e.clipboardData?.getData('text/plain') ?? null)
+  if (osLayers) {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    try {
+      await pasteOSLayers(osLayers)
+    } catch (err) {
+      console.error('[Compositor] paste layers failed:', err)
+      toast('Could not paste those layers')
+    }
+    return
+  }
 
   const file = clipboardImageFile(e)
   if (file) {

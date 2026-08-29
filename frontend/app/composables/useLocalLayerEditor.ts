@@ -23,7 +23,7 @@ import {
   reparentGroup as reparentGroupOp, pruneEmptyGroups, resolveGroupCascade, upsertGroup,
 } from '~/lib/compositor/layerGroups'
 import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdit, dragHud } from '~/lib/compositor/layerEdits'
-import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
+import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard, type ClipboardPayload } from '~/lib/compositor/layerClipboard'
 import { resizeBox, type Handle, type Box } from '~/lib/compositor/resizeBox'
 import { unionBox, cornerOf, anchorOf, groupScaleFactor, scaleLayerAbout, type Handle as GHandle, type Box as GBox } from '~/lib/compositor/groupResize'
 import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
@@ -71,6 +71,15 @@ interface EditorOpts {
    * (which used to make every wired member but the first vanish silently).
    */
   materializeWired?: (layer: WiredLayer) => void | Promise<void>
+  /**
+   * Called after a ⌘C fills the in-session clipboard, with the same payload, so
+   * the host can ALSO push it to the OS clipboard (Sailor layer JSON + a
+   * composited PNG) — the half that survives across projects and sessions. The
+   * in-session clipboard is already set by the time this runs, so a host that
+   * omits it (or whose OS write is denied) loses nothing but the cross-session
+   * reach. Best-effort: never throw here, the copy is already "done".
+   */
+  onOSCopy?: (payload: ClipboardPayload) => void
 }
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -507,14 +516,29 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectedId.value = r.newIds[r.newIds.length - 1] ?? null
   }
 
-  /** Copy the current multi-selection to the shared in-app clipboard. */
-  function copySelection() {
-    // Wired layers never enter the clipboard: pasting one — here or into another
-    // frame — would produce a layer pointing at a slot that means something else.
-    const { ids } = clonableSelection()
-    if (!ids.size) return
-    const p = extractForCopy(localLayers.value, localGroups.value, ids)
-    if (p) setClipboard(p)
+  /** Copy the current multi-selection to the shared in-app clipboard AND (via
+   *  `onOSCopy`) the OS clipboard. Wired members are materialized to a baked
+   *  snapshot FIRST — the same path ⌘D uses — so a slot never rides the
+   *  clipboard live (it would point at a different input in another frame); the
+   *  fresh baked layers are what gets copied in its place. When the selection has
+   *  no wired member this runs fully synchronously, keeping the OS-clipboard
+   *  write inside the ⌘C user gesture. */
+  async function copySelection() {
+    const { ids, wired } = clonableSelection()
+    // Bake wired members into the frame (snapshot rule), then copy the resulting
+    // real layers instead of the live wired ones.
+    let copyIds = ids
+    if (wired.length) {
+      const before = new Set(localLayers.value.map(l => l.id))
+      for (const w of wired) await opts.materializeWired?.(w)
+      const baked = localLayers.value.filter(l => !before.has(l.id)).map(l => l.id)
+      copyIds = new Set([...ids, ...baked])
+    }
+    if (!copyIds.size) return
+    const p = extractForCopy(localLayers.value, localGroups.value, copyIds)
+    if (!p) return
+    setClipboard(p)
+    try { opts.onOSCopy?.(p) } catch { /* OS write is best-effort; in-session clipboard already set */ }
   }
   /** Paste the clipboard into THIS frame; offset unless inPlace. Copies become the selection. */
   function pasteClipboard(inPlace: boolean) {
@@ -546,7 +570,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     e.preventDefault()
     if (a.type === 'nudge') nudgeSelection(a.dxPx / dims().w, a.dyPx / dims().h)
     else if (a.type === 'duplicate') void duplicateSelection()
-    else if (a.type === 'copy') copySelection()
+    else if (a.type === 'copy') void copySelection()
     return true
   }
 

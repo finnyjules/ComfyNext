@@ -69,6 +69,59 @@ export function materializePaste(
   return { layers: [...layers, ...clones], groups: newGroups, newIds }
 }
 
+// ── OS clipboard payload (cross-frame / cross-project / cross-session) ───────
+// The in-session clipboard above is a module singleton, gone the moment the tab
+// reloads. To copy layers between projects or sessions the payload has to ride
+// the real OS clipboard as text. We tag it with a magic + version so a foreign
+// text paste (a URL, some prose, another app's JSON) is cleanly ignored, and so
+// a future format change can refuse an old blob instead of mis-parsing it.
+const OS_MAGIC = 'sailor.compositor.layers'
+const OS_VERSION = 1
+
+interface OSEnvelope { __sailor: string; version: number; payload: ClipboardPayload }
+
+/**
+ * Serialize a selection to the string that goes on the OS clipboard's
+ * `text/plain`. PURE — no DOM, no clipboard access. `wired` layers are filtered
+ * here too (belt-and-braces with `extractForCopy`): a slot number is meaningless
+ * outside its own frame's graph, so a wired kind must never leave in the payload.
+ * Ids are NOT re-minted here — they are re-minted on the way IN, at
+ * `materializePaste` (the same point the in-session path re-mints), so parse +
+ * materialize is the one true id-remint boundary.
+ */
+export function serializeLayersForOS(layers: LocalLayer[], groups: LayerGroup[] = []): string {
+  const env: OSEnvelope = {
+    __sailor: OS_MAGIC,
+    version: OS_VERSION,
+    payload: {
+      layers: JSON.parse(JSON.stringify(layers.filter(isClonableLayer))) as LocalLayer[],
+      groups: JSON.parse(JSON.stringify(groups)) as LayerGroup[],
+    },
+  }
+  return JSON.stringify(env)
+}
+
+/**
+ * Parse an OS-clipboard string back into a payload, or `null` if it is not ours
+ * (not JSON, missing/utf-wrong magic, unknown version, or no clonable layers
+ * survive). Callers hand the result to `materializePaste`, which re-mints ids +
+ * offsets + drops any smuggled wired layer — so this stays a pure recogniser.
+ */
+export function parseLayersFromOS(text: string | null | undefined): ClipboardPayload | null {
+  if (!text || typeof text !== 'string') return null
+  let obj: any
+  try { obj = JSON.parse(text) } catch { return null }
+  if (!obj || typeof obj !== 'object') return null
+  if (obj.__sailor !== OS_MAGIC) return null
+  if (obj.version !== OS_VERSION) return null
+  const p = obj.payload
+  if (!p || !Array.isArray(p.layers)) return null
+  const layers = (p.layers as any[]).filter(isClonableLayer) as LocalLayer[]
+  if (!layers.length) return null
+  const groups = Array.isArray(p.groups) ? (p.groups as LayerGroup[]) : []
+  return { layers, groups }
+}
+
 // Shared in-app clipboard (module singleton → cross-frame within a session).
 let _clip: ClipboardPayload | null = null
 export function setClipboard(p: ClipboardPayload | null): void { _clip = p }
