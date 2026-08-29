@@ -57,13 +57,13 @@ const total = computed(() => {
         <div class="grid grid-cols-2 gap-3 mb-3">
           <label class="block">
             <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 block mb-1">Count X</span>
-            <input type="number" min="1" max="64" step="1" :value="c.countX"
+            <input v-scrubnum type="number" min="1" max="64" step="1" :value="c.countX"
               class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
               @input="up({ countX: Math.max(1, Math.round(num($event))) })" />
           </label>
           <label class="block">
             <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 block mb-1">Count Y</span>
-            <input type="number" min="1" max="64" step="1" :value="c.countY"
+            <input v-scrubnum type="number" min="1" max="64" step="1" :value="c.countY"
               class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
               @input="up({ countY: Math.max(1, Math.round(num($event))) })" />
           </label>
@@ -125,13 +125,13 @@ const total = computed(() => {
         <div class="grid grid-cols-2 gap-3 mb-3">
           <label class="block">
             <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 block mb-1">Count</span>
-            <input type="number" min="1" max="128" step="1" :value="c.count"
+            <input v-scrubnum type="number" min="1" max="128" step="1" :value="c.count"
               class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
               @input="up({ count: Math.max(1, Math.round(num($event))) })" />
           </label>
           <label class="block">
             <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 block mb-1">Radius</span>
-            <input type="number" min="0" max="2" step="0.01" :value="c.radius"
+            <input v-scrubnum type="number" min="0" max="2" step="0.01" :value="c.radius"
               class="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
               @input="up({ radius: Math.max(0, num($event)) })" />
           </label>

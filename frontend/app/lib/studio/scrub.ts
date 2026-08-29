@@ -72,3 +72,62 @@ export function scrubValue(a: ScrubArgs): number {
   const bounded = a.entry === 'unclamped' ? snapped : Math.min(a.max, Math.max(a.min, snapped))
   return Number(bounded.toFixed(6))
 }
+
+/**
+ * How far a pointer must travel on a plain `<input type="number">` before the gesture
+ * counts as a scrub rather than a click. Below this the press stays a click, so
+ * click-to-place-caret-and-type is untouched. Matches StudioRow's own 2px dead zone in
+ * spirit, a touch larger because these fields have no separate readout to click.
+ */
+export const SCRUB_THRESHOLD_PX = 3
+
+export interface ScrubInputArgs {
+  startValue: number
+  deltaPx: number
+  step: number
+  /** Absent / non-finite = unbounded on that side (rotation, W, H, fontSize all lack a max). */
+  min?: number
+  max?: number
+  /** Shift held — widen the grid to `coarseMultiplier` steps, same travel rate. */
+  coarse?: boolean
+  /** Pixels of horizontal travel per one step. 1 = Figma's 1:1 feel (the default). */
+  pxPerStep?: number
+  /** Grid width Shift snaps to, in steps. Fixed default 10 — see note below. */
+  coarseMultiplier?: number
+}
+
+/**
+ * Drag-to-scrub for the Compositor modal's plain number inputs. A SEPARATE model from
+ * `scrubValue` on purpose: that one maps a control's whole declared range onto ~260px,
+ * which needs a finite `max`. These fields (X/Y/W/H, rotation, size, spacing…) mostly
+ * declare none, so there is no range to map — this counts steps per pixel instead, the
+ * way Figma/Blender/Photoshop scrubby number fields do.
+ *
+ * It still reuses `scrubValue`'s two hard-won conventions verbatim: Shift COARSENS the
+ * grid at the same travel rate (rounding the travel to a `step × mult` grid, measured
+ * from the start value so an off-grid start survives) rather than speeding the drag, and
+ * every result is stripped of IEEE-754 dust with `toFixed(6)`.
+ *
+ * Shift uses a FIXED ×10, not `coarseStepMultiplier`: that helper shrinks the jump on
+ * short ranges and returns 1 on an INFINITE span — which is exactly the unbounded field
+ * (rotation, W, H) where a working Shift matters most. A flat ×10 is what the brief calls
+ * for and is the only multiplier that survives a missing `max`.
+ */
+export function scrubInputValue(a: ScrubInputArgs): number {
+  const step = Number.isFinite(a.step) && a.step > 0 ? a.step : 1
+  const pxPerStep = a.pxPerStep && a.pxPerStep > 0 ? a.pxPerStep : 1
+  const raw = a.startValue + (a.deltaPx / pxPerStep) * step
+  let snapped: number
+  if (a.coarse) {
+    const mult = a.coarseMultiplier && a.coarseMultiplier > 0 ? a.coarseMultiplier : 10
+    const grid = step * mult
+    const candidate = a.startValue + Math.round((raw - a.startValue) / grid) * grid
+    snapped = Math.round(candidate / step) * step
+  } else {
+    snapped = Math.round(raw / step) * step
+  }
+  const lo = Number.isFinite(a.min as number) ? (a.min as number) : -Infinity
+  const hi = Number.isFinite(a.max as number) ? (a.max as number) : Infinity
+  const bounded = Math.min(hi, Math.max(lo, snapped))
+  return Number(bounded.toFixed(6))
+}

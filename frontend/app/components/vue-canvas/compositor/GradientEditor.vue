@@ -104,7 +104,7 @@ function onHandleDown(i: number, e: PointerEvent) {
     <div class="space-y-1.5">
       <div v-for="(s, i) in stops" :key="'r' + i" class="flex items-center gap-1.5">
         <StudioColor :model-value="s.color" @update:model-value="(v: string) => setStopColor(i, v)" />
-        <input type="number" min="0" max="100" step="1" :value="Math.round(s.offset * 100)"
+        <input v-scrubnum type="number" min="0" max="100" step="1" :value="Math.round(s.offset * 100)"
           class="w-12 bg-white/10 rounded px-1.5 py-1 text-[11px] text-white/85 tabular-nums outline-none"
           @input="setStopOffset(i, Number(($event.target as HTMLInputElement).value) / 100)" />
         <span class="text-[9px] text-white/30">%</span>

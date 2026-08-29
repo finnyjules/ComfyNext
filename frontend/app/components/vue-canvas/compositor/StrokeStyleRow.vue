@@ -79,12 +79,12 @@ const selClass = numClass + ' cursor-pointer'
       <div v-if="dashed" class="grid grid-cols-2 gap-1.5 mt-1.5">
         <div>
           <div class="panel-label mb-1">Dash</div>
-          <input type="number" min="0" step="1" :value="px(props.dash!.dash)" :class="numClass" data-stroke-dash
+          <input v-scrubnum type="number" min="0" step="1" :value="px(props.dash!.dash)" :class="numClass" data-stroke-dash
             @input="setPart('dash', parseFloat(($event.target as HTMLInputElement).value) || 0)">
         </div>
         <div>
           <div class="panel-label mb-1">Gap</div>
-          <input type="number" min="0" step="1" :value="px(props.dash!.gap)" :class="numClass" data-stroke-gap
+          <input v-scrubnum type="number" min="0" step="1" :value="px(props.dash!.gap)" :class="numClass" data-stroke-gap
             @input="setPart('gap', parseFloat(($event.target as HTMLInputElement).value) || 0)">
         </div>
       </div>

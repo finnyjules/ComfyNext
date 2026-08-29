@@ -120,12 +120,12 @@ function resetWindowEnd(l: LocalLayer) {
       <span class="tabular-nums text-white/60">{{ (t ?? 0).toFixed(2) }} / {{ motion.duration.toFixed(1) }}s</span>
       <div class="flex-1" />
       <label class="flex items-center gap-1">dur
-        <input type="number" min="0.5" max="60" step="0.5" :value="motion.duration"
+        <input v-scrubnum type="number" min="0.5" max="60" step="0.5" :value="motion.duration"
           class="w-14 bg-[#111] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
           @change="emit('update:motion', { duration: Math.max(0.5, Number(($event.target as HTMLInputElement).value) || 4) })">
       </label>
       <label class="flex items-center gap-1">fps
-        <input type="number" min="1" max="60" step="1" :value="motion.fps"
+        <input v-scrubnum type="number" min="1" max="60" step="1" :value="motion.fps"
           class="w-12 bg-[#111] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
           @change="emit('update:motion', { fps: Math.max(1, Math.min(60, Number(($event.target as HTMLInputElement).value) || 30)) })">
       </label>

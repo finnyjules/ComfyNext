@@ -71,12 +71,12 @@ const paramValue = (spec: LayerAnimSpec, key: string) => spec.params?.[key] ?? p
     <!-- Window timing (mirrors the band) -->
     <div class="grid grid-cols-2 gap-2">
       <label class="flex flex-col gap-1 text-white/55">Start (s)
-        <input type="number" min="0" step="0.1" :value="animation?.offset ?? 0"
+        <input v-scrubnum type="number" min="0" step="0.1" :value="animation?.offset ?? 0"
           class="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1 text-white/90 outline-none"
           @change="patch({ offset: Math.max(0, Number(($event.target as HTMLInputElement).value) || 0) })">
       </label>
       <label class="flex flex-col gap-1 text-white/55">Duration (s)
-        <input type="number" min="0.1" step="0.1" :value="animation?.duration ?? ''" placeholder="to end"
+        <input v-scrubnum type="number" min="0.1" step="0.1" :value="animation?.duration ?? ''" placeholder="to end"
           class="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1.5 py-1 text-white/90 outline-none"
           @change="(e: Event) => { const v = (e.target as HTMLInputElement).value; patch({ duration: v === '' ? undefined : Math.max(0.1, Number(v) || 0.1) }) }">
       </label>
@@ -100,12 +100,12 @@ const paramValue = (spec: LayerAnimSpec, key: string) => spec.params?.[key] ?? p
       <div v-if="animation?.[slot]" class="flex flex-col gap-1.5 pl-1">
         <div class="flex gap-2 text-white/55">
           <label class="flex items-center gap-1">dur
-            <input type="number" min="0.1" step="0.1" :value="animation[slot]!.duration"
+            <input v-scrubnum type="number" min="0.1" step="0.1" :value="animation[slot]!.duration"
               class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
               @change="patchSpecNum(slot, 'duration', Math.max(0.1, Number(($event.target as HTMLInputElement).value) || 0.8))">
           </label>
           <label v-if="layerKind === 'text'" class="flex items-center gap-1">stagger
-            <input type="number" min="0" step="0.01" :value="animation[slot]!.stagger ?? 0.04"
+            <input v-scrubnum type="number" min="0" step="0.01" :value="animation[slot]!.stagger ?? 0.04"
               class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
               @change="patchSpecNum(slot, 'stagger', Math.max(0, Number(($event.target as HTMLInputElement).value) || 0))">
           </label>

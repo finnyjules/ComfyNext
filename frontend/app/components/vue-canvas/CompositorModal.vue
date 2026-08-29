@@ -5169,12 +5169,12 @@ onUnmounted(() => {
           <div v-else class="flex flex-col gap-3 text-xs text-white/55">
             <p class="text-white/40 italic">Select a layer to animate it, or set the frame's timing below.</p>
             <label class="flex items-center justify-between gap-2">Duration (s)
-              <input type="number" min="0.5" max="60" step="0.5" :value="effectiveMotion.duration"
+              <input v-scrubnum type="number" min="0.5" max="60" step="0.5" :value="effectiveMotion.duration"
                 class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
                 @change="setMotion({ duration: Math.max(0.5, Number(($event.target as HTMLInputElement).value) || 4) })">
             </label>
             <label class="flex items-center justify-between gap-2">FPS
-              <input type="number" min="1" max="60" step="1" :value="effectiveMotion.fps"
+              <input v-scrubnum type="number" min="1" max="60" step="1" :value="effectiveMotion.fps"
                 class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
                 @change="setMotion({ fps: Math.max(1, Math.min(60, Number(($event.target as HTMLInputElement).value) || 30)) })">
             </label>
@@ -5303,7 +5303,7 @@ onUnmounted(() => {
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <div class="panel-label mb-1.5">Size</div>
-                <input type="number" min="1" :value="pxW((selectedLocal as any).fontSize)"
+                <input v-scrubnum type="number" min="1" :value="pxW((selectedLocal as any).fontSize)"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setSizePx(selectedLocal!.id, 'fontSize', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
               </div>
@@ -5341,14 +5341,14 @@ onUnmounted(() => {
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <div class="panel-label mb-1.5" title="Set a width to auto-wrap words; clear for free-flowing text">Text box W</div>
-                <input type="number" min="0" placeholder="auto"
+                <input v-scrubnum type="number" min="0" placeholder="auto"
                   :value="(selectedLocal as any).boxW ? pxW((selectedLocal as any).boxW) : ''"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
                   @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxW: v > 0 ? v / outWidth : undefined } as any) }" />
               </div>
               <div>
                 <div class="panel-label mb-1.5" title="Set a height to enable vertical align / justify">Text box H</div>
-                <input type="number" min="0" placeholder="auto"
+                <input v-scrubnum type="number" min="0" placeholder="auto"
                   :value="(selectedLocal as any).boxH ? pxW((selectedLocal as any).boxH) : ''"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none placeholder-white/25"
                   @input="(e: Event) => { const v = parseFloat((e.target as HTMLInputElement).value); setLocal(selectedLocal!.id, { boxH: v > 0 ? v / outWidth : undefined } as any) }" />
@@ -5357,13 +5357,13 @@ onUnmounted(() => {
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <div class="panel-label mb-1.5" title="Line height as a multiple of the font size">Line height</div>
-                <input type="number" min="0.5" max="4" step="0.05" :value="(selectedLocal as any).lineHeight ?? 1.2"
+                <input v-scrubnum type="number" min="0.5" max="4" step="0.05" :value="(selectedLocal as any).lineHeight ?? 1.2"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setLocal(selectedLocal!.id, { lineHeight: parseFloat(($event.target as HTMLInputElement).value) || 1.2 })" />
               </div>
               <div>
                 <div class="panel-label mb-1.5" title="Tracking, in em (fraction of the font size)">Letter spacing</div>
-                <input type="number" step="0.01" :value="(selectedLocal as any).letterSpacing ?? 0"
+                <input v-scrubnum type="number" step="0.01" :value="(selectedLocal as any).letterSpacing ?? 0"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setLocal(selectedLocal!.id, { letterSpacing: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
               </div>
@@ -5406,7 +5406,7 @@ onUnmounted(() => {
                 <div class="grid grid-cols-2 gap-3">
                   <div>
                     <div class="panel-label mb-1">Words / line</div>
-                    <input type="number" min="1" max="12" :value="(selectedLocal as any).expressive.wordsPerLine"
+                    <input v-scrubnum type="number" min="1" max="12" :value="(selectedLocal as any).expressive.wordsPerLine"
                       class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                       @input="setExpressive(selectedLocal, { wordsPerLine: Math.max(1, parseInt(($event.target as HTMLInputElement).value) || 1) })" />
                   </div>
@@ -5451,7 +5451,7 @@ onUnmounted(() => {
                 <div class="panel-label mb-1.5">Outline</div>
                 <FillControl allow-none :model-value="(selectedLocal as any).strokeColor"
                   @update:model-value="(v: any) => setLocal(selectedLocal!.id, { strokeColor: v })" />
-                <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Outline width"
+                <input v-scrubnum type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Outline width"
                   class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
                 <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
@@ -5473,7 +5473,7 @@ onUnmounted(() => {
               <div class="panel-label mb-1.5">Stroke</div>
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
-              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
+              <input v-scrubnum type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
                 class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
@@ -5484,7 +5484,7 @@ onUnmounted(() => {
             <div v-if="selectedLocal.kind === 'rect'">
               <div class="panel-label mb-1.5">Corner radius</div>
               <div class="flex items-center gap-1.5">
-                <input type="number" min="0" step="1" :value="radiusLinkedPx(selectedLocal)" data-radius-linked
+                <input v-scrubnum type="number" min="0" step="1" :value="radiusLinkedPx(selectedLocal)" data-radius-linked
                   class="flex-1 min-w-0 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setRadiusLinkedPx(selectedLocal, parseFloat(($event.target as HTMLInputElement).value) || 0)" />
                 <button
@@ -5499,7 +5499,7 @@ onUnmounted(() => {
               <div v-if="radiusRowExpanded" class="grid grid-cols-2 gap-1.5 mt-1.5">
                 <div v-for="(label, i) in CORNER_LABELS" :key="label">
                   <div class="panel-label mb-1">{{ label }}</div>
-                  <input type="number" min="0" step="1" :value="pxW(radiusCorners(selectedLocal)[i]!)"
+                  <input v-scrubnum type="number" min="0" step="1" :value="pxW(radiusCorners(selectedLocal)[i]!)"
                     :data-radius-corner="i"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setRadiusCornerPx(selectedLocal, i, parseFloat(($event.target as HTMLInputElement).value) || 0)" />
@@ -5519,7 +5519,7 @@ onUnmounted(() => {
               <div class="panel-label mb-1.5">Stroke</div>
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
-              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
+              <input v-scrubnum type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
                 class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
@@ -5529,7 +5529,7 @@ onUnmounted(() => {
             </div>
             <div>
               <div class="panel-label mb-1.5">Sides</div>
-              <input type="number" min="3" step="1" :value="(selectedLocal as any).sides"
+              <input v-scrubnum type="number" min="3" step="1" :value="(selectedLocal as any).sides"
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { sides: Math.max(3, Math.round(parseFloat(($event.target as HTMLInputElement).value) || 3)) })" />
             </div>
@@ -5552,7 +5552,7 @@ onUnmounted(() => {
               <div class="panel-label mb-1.5">Stroke</div>
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
-              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
+              <input v-scrubnum type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
                 class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
@@ -5562,7 +5562,7 @@ onUnmounted(() => {
             </div>
             <div>
               <div class="panel-label mb-1.5">Points</div>
-              <input type="number" min="3" step="1" :value="(selectedLocal as any).points"
+              <input v-scrubnum type="number" min="3" step="1" :value="(selectedLocal as any).points"
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { points: Math.max(3, Math.round(parseFloat(($event.target as HTMLInputElement).value) || 3)) })" />
             </div>
@@ -5589,7 +5589,7 @@ onUnmounted(() => {
             </div>
             <div>
               <div class="panel-label mb-1.5">Thickness</div>
-              <input type="number" min="1" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
+              <input v-scrubnum type="number" min="1" step="1" :value="pxW((selectedLocal as any).strokeWidth)"
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
             </div>
@@ -5661,7 +5661,7 @@ onUnmounted(() => {
             <div class="flex items-center gap-2">
               <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
                 <span class="text-xs text-white/40">W</span>
-                <input type="number" min="1" :value="pxW((selectedLocal as any).w)"
+                <input v-scrubnum type="number" min="1" :value="pxW((selectedLocal as any).w)"
                   class="w-full bg-transparent text-xs text-white/90 outline-none"
                   @input="setDimPx(selectedLocal!, 'w', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               </label>
@@ -5676,7 +5676,7 @@ onUnmounted(() => {
               </button>
               <label class="flex-1 flex items-center gap-2 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5">
                 <span class="text-xs text-white/40">H</span>
-                <input type="number" min="1" :value="pxW((selectedLocal as any).h)"
+                <input v-scrubnum type="number" min="1" :value="pxW((selectedLocal as any).h)"
                   class="w-full bg-transparent text-xs text-white/90 outline-none"
                   @input="setDimPx(selectedLocal!, 'h', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
               </label>
@@ -5685,7 +5685,7 @@ onUnmounted(() => {
           <!-- Line: single length value -->
           <div v-else-if="selectedLocal.kind === 'line'">
             <div class="panel-label mb-1.5">Length</div>
-            <input type="number" min="1" :value="pxW((selectedLocal as any).w)"
+            <input v-scrubnum type="number" min="1" :value="pxW((selectedLocal as any).w)"
               class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
               @input="setSizePx(selectedLocal!.id, 'w', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
           </div>
@@ -5694,13 +5694,13 @@ onUnmounted(() => {
           <div class="grid grid-cols-2 gap-3">
             <div>
               <div class="panel-label mb-1.5">Rotation</div>
-              <input type="number" step="1" :value="Math.round(selectedLocal.rotation)"
+              <input v-scrubnum type="number" step="1" :value="Math.round(selectedLocal.rotation)"
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { rotation: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
             </div>
             <div v-if="!localDisplace(selectedLocal)">
               <div class="panel-label mb-1.5">Opacity</div>
-              <input type="number" min="0" max="100" step="1" :value="Math.round(selectedLocal.opacity * 100)"
+              <input v-scrubnum type="number" min="0" max="100" step="1" :value="Math.round(selectedLocal.opacity * 100)"
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { opacity: Math.max(0, Math.min(1, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100)) })" />
             </div>
@@ -5758,7 +5758,7 @@ onUnmounted(() => {
                   class="flex-1 min-w-0 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs font-mono uppercase text-white/90 outline-none"
                   @change="setShadowHex(selectedLocal!, ($event.target as HTMLInputElement).value)" />
                 <div class="flex items-center gap-0.5 shrink-0 bg-white/[0.04] border border-white/[0.06] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
-                  <input type="number" min="0" max="100" step="1" :value="Math.round(shadowAlpha(selectedLocal) * 100)"
+                  <input v-scrubnum type="number" min="0" max="100" step="1" :value="Math.round(shadowAlpha(selectedLocal) * 100)"
                     class="w-7 bg-transparent text-xs text-white/90 outline-none text-right"
                     @input="setLocalShadow(selectedLocal!, { color: composeRgba(shadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                   <span class="text-[10px] text-white/35 select-none">%</span>
@@ -5767,19 +5767,19 @@ onUnmounted(() => {
               <div class="grid grid-cols-3 gap-1.5">
                 <div>
                   <div class="panel-sublabel mb-1">X</div>
-                  <input type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.x || 0) * 1000) / 10"
+                  <input v-scrubnum type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.x || 0) * 1000) / 10"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLocalShadow(selectedLocal!, { x: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
                   <div class="panel-sublabel mb-1">Y</div>
-                  <input type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.y || 0) * 1000) / 10"
+                  <input v-scrubnum type="number" step="0.5" :value="Math.round((localShadow(selectedLocal)?.y || 0) * 1000) / 10"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLocalShadow(selectedLocal!, { y: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
                   <div class="panel-sublabel mb-1">Blur</div>
-                  <input type="number" min="0" step="0.5" :value="Math.round((localShadow(selectedLocal)?.blur || 0) * 1000) / 10"
+                  <input v-scrubnum type="number" min="0" step="0.5" :value="Math.round((localShadow(selectedLocal)?.blur || 0) * 1000) / 10"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLocalShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
@@ -5800,7 +5800,7 @@ onUnmounted(() => {
                   class="w-8 h-8 rounded bg-transparent border border-[#2a2a2a] cursor-pointer shrink-0"
                   @input="setInnerShadow(selectedLocal!, { color: composeRgba(($event.target as HTMLInputElement).value, innerShadowAlpha(selectedLocal)) })" />
                 <div class="flex items-center gap-0.5 shrink-0 bg-white/[0.04] border border-white/[0.06] rounded px-1.5 py-1.5" title="Shadow opacity (alpha)">
-                  <input type="number" min="0" max="100" step="1" :value="Math.round(innerShadowAlpha(selectedLocal) * 100)"
+                  <input v-scrubnum type="number" min="0" max="100" step="1" :value="Math.round(innerShadowAlpha(selectedLocal) * 100)"
                     class="w-7 bg-transparent text-xs text-white/90 outline-none text-right"
                     @input="setInnerShadow(selectedLocal!, { color: composeRgba(innerShadowHex(selectedLocal), (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                   <span class="text-[10px] text-white/35 select-none">%</span>
@@ -5809,19 +5809,19 @@ onUnmounted(() => {
               <div class="grid grid-cols-3 gap-1.5">
                 <div>
                   <div class="panel-sublabel mb-1">X</div>
-                  <input type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.x || 0) * 1000) / 10"
+                  <input v-scrubnum type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.x || 0) * 1000) / 10"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setInnerShadow(selectedLocal!, { x: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
                   <div class="panel-sublabel mb-1">Y</div>
-                  <input type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.y || 0) * 1000) / 10"
+                  <input v-scrubnum type="number" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.y || 0) * 1000) / 10"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setInnerShadow(selectedLocal!, { y: (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100 })" />
                 </div>
                 <div>
                   <div class="panel-sublabel mb-1">Blur</div>
-                  <input type="number" min="0" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.blur || 0) * 1000) / 10"
+                  <input v-scrubnum type="number" min="0" step="0.5" :value="Math.round((innerShadow(selectedLocal)?.blur || 0) * 1000) / 10"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setInnerShadow(selectedLocal!, { blur: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
@@ -5838,7 +5838,7 @@ onUnmounted(() => {
             </div>
             <div v-if="layerBlur(selectedLocal)" class="flex items-center gap-2">
               <div class="panel-sublabel shrink-0">Radius</div>
-              <input type="number" min="0" step="0.5" :value="Math.round((layerBlur(selectedLocal)?.radius || 0) * 1000) / 10"
+              <input v-scrubnum type="number" min="0" step="0.5" :value="Math.round((layerBlur(selectedLocal)?.radius || 0) * 1000) / 10"
                 class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLayerBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
             </div>
@@ -5853,7 +5853,7 @@ onUnmounted(() => {
             </div>
             <div v-if="bgBlur(selectedLocal)" class="flex items-center gap-2">
               <div class="panel-sublabel shrink-0">Radius</div>
-              <input type="number" min="0" step="0.5" :value="Math.round((bgBlur(selectedLocal)?.radius || 0) * 1000) / 10"
+              <input v-scrubnum type="number" min="0" step="0.5" :value="Math.round((bgBlur(selectedLocal)?.radius || 0) * 1000) / 10"
                 class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setBgBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
             </div>
@@ -5883,13 +5883,13 @@ onUnmounted(() => {
               </div>
               <div>
                 <div class="panel-label mb-1.5">Amount</div>
-                <input type="number" min="0" max="200" step="1" :value="localDisplace(selectedLocal).amount"
+                <input v-scrubnum type="number" min="0" max="200" step="1" :value="localDisplace(selectedLocal).amount"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setLocalDisplace(selectedLocal, { amount: Math.max(0, Math.min(200, parseFloat(($event.target as HTMLInputElement).value) || 0)) })" />
               </div>
               <div>
                 <div class="panel-label mb-1.5">Softness</div>
-                <input type="number" min="0" max="20" step="1" :value="localDisplace(selectedLocal).softness ?? 0"
+                <input v-scrubnum type="number" min="0" max="20" step="1" :value="localDisplace(selectedLocal).softness ?? 0"
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setLocalDisplace(selectedLocal, { softness: Math.max(0, Math.min(20, parseFloat(($event.target as HTMLInputElement).value) || 0)) })" />
               </div>
@@ -5944,7 +5944,7 @@ onUnmounted(() => {
               <div class="grid grid-cols-4 gap-1.5">
                 <div v-for="k in (['x','y','w','h'] as const)" :key="k">
                   <div class="panel-sublabel mb-1">{{ k }}</div>
-                  <input type="number" step="0.5" :value="Math.round((layerMask(selectedLocal)?.[k] || 0) * 1000) / 10"
+                  <input v-scrubnum type="number" step="0.5" :value="Math.round((layerMask(selectedLocal)?.[k] || 0) * 1000) / 10"
                     class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                     @input="setLayerMask(selectedLocal!, { [k]: Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100) })" />
                 </div>
