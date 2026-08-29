@@ -22,11 +22,14 @@ import { PNG } from 'pngjs'
 // frame — calibrated ~0.35 mean, two orders of magnitude over the floor), plus a text
 // change, so "the edit reached the render" is unambiguous. The no-edit control test
 // pins the noise floor, proving the main test's diff is the edit and not GL nondeterminism.
-const PCT_THRESHOLD = 8 / 255
-// Two fresh-context renders of the SAME state must stay under this (noise floor ~0.002).
+// Two renders of the SAME state must stay under this (noise floor ~0.003).
 const NOISE_CEIL = 0.01
-// A bgColor flip must clear this by a wide margin (measured ~0.35).
+// A bgColor flip must clear this by a wide margin (measured ~0.90).
 const SIGNAL_FLOOR = 0.05
+// A text-only edit on the frame-filling `field` effect (bgColor held constant)
+// changes glyph pixels only — a smaller but unambiguous signal (measured well
+// above the noise floor). This gates the text path independently of bgColor.
+const TEXT_SIGNAL_FLOOR = 0.02
 
 function pngOf(dataUrl: string): PNG {
   return PNG.sync.read(Buffer.from(dataUrl.split(',')[1]!, 'base64'))
@@ -117,5 +120,25 @@ test.describe('Timeline — editing a Space Type clip in place', () => {
     const noise = meanDiff(a, b)
     console.log(`[clip-edit] no-edit mean diff = ${noise.toFixed(4)} (ceil ${NOISE_CEIL})`)
     expect(noise, 'two renders of the same state must sit at the noise floor').toBeLessThan(NOISE_CEIL)
+  })
+
+  test('a text-only edit changes the render (proves the glyph path, not just the background)', async ({ page }) => {
+    // Seed the frame-filling `field` effect and hold bgColor constant, so the ONLY
+    // thing the edit changes is the text — isolating the glyph/atlas path that the
+    // bgColor-dominated test above cannot independently prove.
+    const clipId = await page.evaluate(
+      () => (window as any).__clipHarness.seed({ text: 'HELLO', state: { effectId: 'field' } }).clipId,
+    )
+    const before = await page.evaluate(() => (window as any).__clipHarness.render(0))
+
+    await page.evaluate(
+      (id) => (window as any).__clipHarness.edit(id, { params: { text: 'GOODBYE WORLD' } }),
+      clipId,
+    )
+    const after = await page.evaluate(() => (window as any).__clipHarness.render(0))
+
+    const textDiff = meanDiff(before, after)
+    console.log(`[clip-edit] text-only mean diff = ${textDiff.toFixed(4)} (floor ${TEXT_SIGNAL_FLOOR})`)
+    expect(textDiff, 'a text-only edit must change the glyph pixels').toBeGreaterThan(TEXT_SIGNAL_FLOOR)
   })
 })

@@ -26,6 +26,8 @@ import type { SpaceTypeState } from '~~/shared/spacetype/state'
 import { useTimelineStore } from '~/composables/useTimelineStore'
 import { createSpaceTypeClip } from '~/composables/timelineSpaceTypeClip'
 import { defaultSpaceTypeState } from '~/lib/spacetype/state'
+import { getEffect } from '~/lib/spacetype/effects'
+import { defaultsFromControls } from '~/lib/spacetype/effect'
 import { WebGLPreviewRenderer } from '~/lib/engine/webglPreviewRenderer'
 
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -48,13 +50,23 @@ onMounted(() => {
      *  the clip id. `text`/`state` overrides let a test seed a known starting
      *  point. */
     seed(overrides?: { text?: string; state?: Partial<SpaceTypeState> }): { clipId: string } {
+      const base = defaultSpaceTypeState()
+      const effectId = overrides?.state?.effectId ?? base.effectId
       const seedState: SpaceTypeState = {
-        ...defaultSpaceTypeState(),
+        ...base,
         transparent: false,
         bgColor: '#0e0e10',
         ...(overrides?.state ?? {}),
+        effectId,
       }
-      seedState.params = { ...seedState.params, text: overrides?.text ?? 'HELLO' }
+      // Derive params from the SEEDED effect's own controls (not the default
+      // effect's), so seeding a different effect renders correctly, then apply
+      // any param overrides and the text.
+      seedState.params = {
+        ...defaultsFromControls(getEffect(effectId).controls),
+        ...(overrides?.state?.params ?? {}),
+        text: overrides?.text ?? 'HELLO',
+      }
 
       const edit: EditState = createDefaultEditState()
       const track = edit.tracks.find((t) => t.kind === 'video')
@@ -71,10 +83,11 @@ onMounted(() => {
     /** Render the store's CURRENT state at `frame`. One persistent renderer is
      *  reused across calls: load() disposes its sources but keeps the GL context
      *  alive (see WebGLPreviewRenderer.load), so re-rendering is cheap and a
-     *  re-render of the SAME state is byte-stable. load() (not setState) is
-     *  called every time because an in-place edit produces a NEW clip object —
-     *  the old SpaceTypeSource captured the pre-edit clip and must be rebuilt to
-     *  see the new state. Returns a PNG data URL. */
+     *  re-render of the SAME state is byte-stable. Each call passes a FRESH JSON
+     *  snapshot of the store; load() (not setState) is used so the SpaceTypeSource
+     *  is rebuilt from that snapshot — setState() only re-points composition and
+     *  would leave the source bound to the previous snapshot's clip. Returns a
+     *  PNG data URL. */
     async render(frame: number): Promise<string> {
       if (!canvas.value) throw new Error('canvas not mounted')
       renderer ??= new WebGLPreviewRenderer()
