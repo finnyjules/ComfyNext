@@ -59,6 +59,7 @@ import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData 
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 import { showIfVisible } from '~/lib/studio/sections'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
+import { nodeSpaceTypeStateSource, type SpaceTypeStateSource } from '~/lib/spacetype/stateSource'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { SpaceTypeEmbedConfig } from '~/lib/embed/surfaces/spacetype'
@@ -88,6 +89,11 @@ const { activeTab } = useTabs()
 // node.data.properties.sailor_spaceType so it survives serialization
 // (convertToLiteGraph stashes `properties`), letting the editor be reopened.
 function currentNode() { return props.nodes.find((n: any) => n.id === props.nodeId) }
+
+// The studio reads/writes its state through this adapter instead of hard-coding
+// the node path. Task 4 makes it clip-aware; here it is always the node source,
+// so behaviour is identical to before.
+const stateSource = computed<SpaceTypeStateSource>(() => nodeSpaceTypeStateSource(currentNode))
 
 const fps = ref(30)
 const FPS_OPTIONS = ['24', '30', '60']
@@ -903,9 +909,8 @@ let hydrating = false
 // Hydrate local editor state from a previously-saved config blob, so reopening
 // the editor on an existing node restores exactly what the user last authored.
 function loadConfig() {
-  const n = currentNode()
-  const c = n?.data?.properties?.sailor_spaceType
-  if (!c) return // first edit of a fresh node — keep the defaults.
+  const c = stateSource.value.read()
+  if (!c) return // nothing saved yet — keep the defaults.
   hydrating = true
   // Restore effectId BEFORE params so the engine builds with the right effect
   // and the control panel (sections) reflects the saved effect's controls.
@@ -940,12 +945,7 @@ function loadConfig() {
 // Persist the full current editor state back onto the node's properties so the
 // config survives tab switches / reloads and the editor can be reopened to edit.
 function saveConfig() {
-  const n = currentNode(); if (!n) return
-  if (!n.data) n.data = {}
-  if (!n.data.properties) n.data.properties = {}
-  const prev = n.data.properties.sailor_spaceType || {}
-  n.data.properties.sailor_spaceType = {
-    ...prev,
+  stateSource.value.write({
     effectId: effectId.value,
     params: { ...params },
     gradientStops: gradientStops.map(s => ({ ...s })),
@@ -954,7 +954,7 @@ function saveConfig() {
     dimsKey: dimsKey.value, W: W.value, H: H.value, transparent: transparent.value, bgColor: bgColor.value,
     projection: projection.value,
     panX: panX.value, panY: panY.value,
-  }
+  })
 }
 
 // Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
