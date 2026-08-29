@@ -10,7 +10,7 @@ import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
   type WiredLayer,
   cornerRadii, drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
-  hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
+  hasAnimatedShaderFill, withWiredContent, _registerWiredContent, renderLayerThumbnail,
 } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
 import { framePresentKeys, finalizeWiredSentinels, reconcileWiredContent, syncWiredLayerLinks, wiredReconcileKey, legacyWiredFlagsActive, isWiredSentinel } from '~/lib/compositor/frameStack'
@@ -1205,6 +1205,9 @@ function rowThumbUrl(row: any): string | null {
   }
   return null
 }
+// Layer-row thumbnails: see the `renderLayerThumbnail` scheduler further down
+// (defined after `wiredImageEls` / `wiredContentInfo0`, which its content
+// signature reads). `rowThumb(row)` there feeds the template.
 
 // ── Drag-and-drop reorder (unified z-order + group membership / nesting) ──────
 function setStackOrder(topFirstKeys: StackKey[]) {
@@ -2344,6 +2347,160 @@ watch(
   },
   { immediate: true },
 )
+
+// ── Layer-row thumbnails (Task 5) ────────────────────────────────────────────
+// Every text/shape/line/brush/path row (and a group's first child) shows a small
+// live thumbnail rendered from the SAME per-layer draw the stack uses. This is
+// deliberately OFF any per-frame path: a thumb re-renders only after its layer's
+// serialized content (or its wired slot's content) changes — debounced, then
+// drained a few per animation frame so a long list can't stall. The rAF only runs
+// while a queue is non-empty; it is not a standing loop. Image/wired-image rows
+// keep their cheaper direct <img> (`rowThumbUrl`); a group's first child renders
+// through here even when the group is collapsed. Placed after `wiredImageEls` /
+// `wiredContentInfo0` — its content signature reads them, and this immediate watch
+// runs during setup.
+const THUMB_SIZE = 24
+const layerThumbs = ref<Record<string, string>>({})   // layerId → dataURL
+const thumbSigs = new Map<string, string>()           // layerId → last-rendered signature
+let thumbTimer: ReturnType<typeof setTimeout> | null = null
+let thumbCancel: (() => void) | null = null           // cancels the in-flight drain tick
+
+function thumbDpr(): number {
+  return Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1)
+}
+// Prefer rAF so the drain caps work to one batch per PAINTED frame; fall back to a
+// short timer when the tab is hidden (rAF is paused there) so an off-screen edit —
+// e.g. the agent mutating layers while the user looks elsewhere — still refreshes
+// on its own instead of freezing until refocus. Either way the tick is one-shot
+// (re-armed only while the queue is non-empty), never a standing loop.
+function scheduleThumbTick(fn: () => void): () => void {
+  if (typeof document !== 'undefined' && !document.hidden && typeof requestAnimationFrame !== 'undefined') {
+    const id = requestAnimationFrame(fn)
+    return () => cancelAnimationFrame(id)
+  }
+  const id = setTimeout(fn, 32)
+  return () => clearTimeout(id)
+}
+// Content signature: everything that changes a layer's PIXELS, minus its frame
+// placement (x/y/rotation) — a move or spin leaves the thumb identical, so those
+// don't trigger a re-render during a drag. A wired layer folds in its slot's
+// content id so a still-image swap refreshes it; a live studio animating every
+// frame keeps a STABLE id here, so its thumb updates on wiring/size only, never
+// per frame (the whole point — no per-frame thumbnail work).
+function thumbSig(layer: any): string {
+  const { x, y, rotation, ...rest } = layer
+  void x; void y; void rotation
+  let sig = JSON.stringify(rest)
+  if (layer.kind === 'wired') {
+    sig += '|w:' + JSON.stringify(wiredContentInfo0(layer.slot)) + (wiredImageEls.value[layer.slot + 1] ? ':1' : ':0')
+  }
+  return sig
+}
+/** The top-most descendant layer of a group, whatever the expand state — the
+ *  cheap honest group thumb (first child, per spec). */
+function groupFirstLayerId(gid: string): string | null {
+  const ids = layersInGroup(gid, localLayers.value, localGroups.value)
+  if (!ids.length) return null
+  const si = stackIndexByKey.value
+  let best: string | null = null, bestIdx = Infinity
+  for (const id of ids) {
+    const idx = si.get('l:' + id) ?? Infinity
+    if (idx < bestIdx) { bestIdx = idx; best = id }
+  }
+  return best ?? ids[0] ?? null
+}
+/** The rendered thumbnail data URL for a row, or null (row falls back to swatch/
+ *  icon). Group rows show their first child's thumb. */
+function rowThumb(row: any): string | null {
+  if (row.kind === 'group') {
+    const id = groupFirstLayerId(row.groupId)
+    return id ? (layerThumbs.value[id] || null) : null
+  }
+  return row.layer ? (layerThumbs.value[row.layer.id] || null) : null
+}
+function scheduleThumbs() {
+  if (thumbTimer) clearTimeout(thumbTimer)
+  thumbTimer = setTimeout(runThumbPass, 200)
+}
+async function runThumbPass() {
+  thumbTimer = null
+  if (typeof window === 'undefined') return
+  // The thumbs' fonts/images must be resolved or a text/image thumb draws blank —
+  // idempotent + cached (the main render watcher ensures the same set), and this
+  // pass re-runs when they resolve because the content sig is unchanged until then.
+  await ensureLayerFonts(localLayers.value, canvasDisplay.w)
+  await ensureLayerImages(localLayers.value)
+  // Which layers need a thumb right now: every text/shape/line/brush/path row that
+  // is listed, plus each group's first child (any kind, incl. collapsed groups).
+  // Image / wired-image direct rows are skipped — they render via `rowThumbUrl`.
+  const wanted = new Map<string, any>()
+  const rows = flatRows.value
+  for (const r of rows as any[]) {
+    if (r.kind === 'group') {
+      const id = groupFirstLayerId(r.groupId)
+      const lyr = id ? localLayers.value.find(l => l.id === id) : null
+      if (lyr) wanted.set(lyr.id, lyr)
+    } else if ((r.kind === 'local' || r.kind === 'child') && r.layer) {
+      const l = r.layer
+      if (l.kind === 'image' || l.kind === 'wired') continue
+      wanted.set(l.id, l)
+    }
+  }
+  // Evict cache entries for layers no longer shown.
+  let evicted = false
+  const next: Record<string, string> = {}
+  for (const [id, url] of Object.entries(layerThumbs.value)) {
+    if (wanted.has(id)) next[id] = url
+    else { evicted = true; thumbSigs.delete(id) }
+  }
+  if (evicted) layerThumbs.value = next
+  // Queue only the layers whose signature changed since their last render.
+  const queue: { layer: any; sig: string }[] = []
+  for (const layer of wanted.values()) {
+    const sig = thumbSig(layer)
+    if (thumbSigs.get(layer.id) !== sig) queue.push({ layer, sig })
+  }
+  drainThumbQueue(queue)
+}
+function drainThumbQueue(queue: { layer: any; sig: string }[]) {
+  if (thumbCancel) { thumbCancel(); thumbCancel = null }
+  if (!queue.length) return
+  const CAP = 6   // thumbs per tick — caps work on a long list
+  const step = () => {
+    thumbCancel = null
+    const batch = queue.splice(0, CAP)
+    let patch: Record<string, string> | null = null
+    for (const { layer, sig } of batch) {
+      const url = withWiredContent(wiredContentForSlot, () => {
+        const c = renderLayerThumbnail(layer, THUMB_SIZE, thumbDpr())
+        return c ? c.toDataURL() : null
+      })
+      thumbSigs.set(layer.id, sig)   // mark done even on null so we don't re-attempt every pass
+      if (url) (patch ||= {})[layer.id] = url
+    }
+    if (patch) layerThumbs.value = { ...layerThumbs.value, ...patch }
+    if (queue.length) thumbCancel = scheduleThumbTick(step)
+  }
+  thumbCancel = scheduleThumbTick(step)
+}
+// Re-thumb on content changes only: layer content (placement stripped so a drag
+// doesn't churn), group membership, wired slot content, decoded wired bitmaps, and
+// a late-registering live studio. NOT on the playhead / wall clock.
+watch(
+  () => [
+    JSON.stringify(localLayers.value.map((l: any) => { const { x, y, rotation, ...r } = l; void x; void y; void rotation; return r })),
+    JSON.stringify(localGroups.value),
+    JSON.stringify(layers.value),
+    Object.keys(wiredImageEls.value).length,
+    frameSourceEpoch.value,
+  ] as const,
+  scheduleThumbs,
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  if (thumbTimer) { clearTimeout(thumbTimer); thumbTimer = null }
+  if (thumbCancel) { thumbCancel(); thumbCancel = null }
+})
 
 // ── Property-panel helpers ───────────────────────────────────────────────────
 // Sizes read in true output px when the artboard has an explicit resolution
@@ -4104,13 +4261,25 @@ onUnmounted(() => {
                 <component :is="expandedGroups.has(row.groupId) ? ChevronDown : ChevronRight" class="size-3.5" />
               </button>
               <!-- Icon / thumbnail -->
-              <Group v-if="row.kind === 'group'" class="size-3.5 text-white/60 shrink-0" />
+              <!-- Group: its first child's live thumb, else the group icon. -->
+              <template v-if="row.kind === 'group'">
+                <img v-if="rowThumb(row)" :src="rowThumb(row)!"
+                  class="rounded object-contain shrink-0 ring-1 ring-white/10 bg-white/[0.03] size-4"
+                  alt="" draggable="false" title="Group" data-testid="layer-thumb" />
+                <Group v-else class="size-3.5 text-white/60 shrink-0" />
+              </template>
               <!-- Live image preview for image layers (local + wired), so the row reads at a glance -->
               <img v-else-if="rowThumbUrl(row)" :src="rowThumbUrl(row)!"
                 class="rounded object-cover shrink-0 ring-1 ring-white/10 bg-white/[0.03]"
                 :class="row.kind === 'child' ? 'size-3.5' : 'size-4'"
-                alt="" draggable="false" />
+                alt="" draggable="false" data-testid="layer-thumb" />
               <ImageIcon v-else-if="row.kind === 'wired'" class="size-3.5 text-white/60 shrink-0" />
+              <!-- Live rendered thumbnail (text / shape / line / brush / path), from the
+                   same per-layer draw the stack uses. -->
+              <img v-else-if="rowThumb(row)" :src="rowThumb(row)!"
+                class="rounded object-contain shrink-0 ring-1 ring-white/10 bg-white/[0.03]"
+                :class="row.kind === 'child' ? 'size-3.5' : 'size-4'"
+                alt="" draggable="false" data-testid="layer-thumb" />
               <!-- Fill swatch (so a layer's colour/gradient/pattern is identifiable at a glance), else the kind icon -->
               <FillSwatch v-else-if="rowFill(row.layer)" :paint="rowFill(row.layer)!" :size="row.kind === 'child' ? 12 : 14" />
               <component v-else :is="kindIcon(row.layer.kind)"

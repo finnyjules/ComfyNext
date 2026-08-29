@@ -1067,6 +1067,54 @@ export function outsideStrokePadPx(layer: LocalLayer, W: number): number {
   return l.strokeWidth * scale * W
 }
 
+/**
+ * Fit a layer box (px, `boxW`×`boxH`) into a `size`×`size` square, preserving
+ * aspect and never upscaling past `size`. Returns integer canvas dims ≥ 1 so the
+ * result is always a valid <canvas> size. Pure — the testable seam of the layer
+ * thumbnail (see `renderLayerThumbnail`).
+ */
+export function thumbBox(boxW: number, boxH: number, size: number): { w: number; h: number } {
+  const bw = Math.max(1e-6, boxW), bh = Math.max(1e-6, boxH)
+  const s = Math.min(size / bw, size / bh)
+  return { w: Math.max(1, Math.round(bw * s)), h: Math.max(1, Math.round(bh * s)) }
+}
+
+/**
+ * Render ONE layer's content into a small offscreen canvas fitted to `size` px,
+ * transparent background, unrotated and stripped of its frame position — a
+ * layer-list thumbnail. Reuses the SAME per-layer content draw the stack uses
+ * (`drawLayerContent`), so the thumb agrees with the real render by construction;
+ * the corner-pin path builds its offscreen the identical way (translate to the
+ * box centre, then draw the origin-centred content).
+ *
+ * Wired layers draw their live slot pixels via the ambient `withWiredContent`
+ * provider — the caller MUST install it (both the box measure and the draw resolve
+ * through it). A layer with no drawable box (an unresolved/empty wired slot) yields
+ * null so the row falls back to its kind icon. Text fonts / image bitmaps must be
+ * loaded first (`ensureLayerFonts` / `ensureLayerImages`) or the content draws its
+ * own faint placeholder — the caller re-renders once they resolve.
+ */
+export function renderLayerThumbnail(layer: LocalLayer, size: number, dpr = 1): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null
+  // A square reference frame: every kind normalizes its box to the WIDTH (text
+  // height included, via lineH = fontSize·W·lineHeight), so the box aspect is
+  // independent of the real frame's aspect — a square ref keeps the math simple.
+  const REF = 512
+  const box = localLayerBox(measureCtx(), layer, REF, REF)
+  if (!(box.w > 0) || !(box.h > 0)) return null
+  const fit = thumbBox(box.w, box.h, size)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(fit.w * dpr))
+  canvas.height = Math.max(1, Math.round(fit.h * dpr))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  const scale = (canvas.width / box.w) // maps the box's px extent onto the (dpr-scaled) canvas
+  ctx.translate(canvas.width / 2, canvas.height / 2)
+  ctx.scale(scale, scale)
+  try { drawLayerContent(ctx, layer, REF) } catch { return null }
+  return canvas
+}
+
 /** Draw a single local layer onto a 2D context sized W×H. */
 // Clip the context to a layer's mask region (canvas space). Caller wraps this in
 // save()/restore(). No-op shape support beyond rect/ellipse for now.
