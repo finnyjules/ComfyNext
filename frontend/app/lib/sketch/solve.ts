@@ -91,14 +91,20 @@ export function solve(doc: SketchDoc, opts: SolveOptions = {}): SolveResult {
   let rNorm = norm(residualAt(q))
 
   if (n === 0) {
-    return { converged: rNorm < tol, iterations: 0, residualNorm: rNorm }
+    const hn = norm(constraintResiduals(doc))
+    const converged = hn < 1e-3
+    if (!converged) restore(doc, snap)
+    return { converged, iterations: 0, residualNorm: hn }
   }
 
   for (let iter = 0; iter < maxIter; iter++) {
     iterations = iter + 1
     const r = residualAt(q)
     rNorm = norm(r)
-    if (rNorm < tol) break
+    // break on the HARD residual only — the regularization term keeps the
+    // combined norm above tol forever once points have moved from q0.
+    const hardNorm = norm(constraintResiduals(doc))
+    if (hardNorm < tol) break
 
     // numerical Jacobian J (m x n) via forward differences
     const m = r.length

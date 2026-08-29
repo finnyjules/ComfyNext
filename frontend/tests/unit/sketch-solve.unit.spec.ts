@@ -61,4 +61,34 @@ describe('solve', () => {
     // positions restored to the pre-call state
     expect(getPoint(d, 'b')).toMatchObject({ x: 10, y: 0 })
   })
+
+  it('stops iterating once the hard residual is converged (no maxIter burn)', () => {
+    const d = tangentSetup()
+    const res = solve(d, { maxIter: 60 })
+    expect(res.converged).toBe(true)
+    // empirically converges in ~10 iterations; the old dead break burned all 60
+    expect(res.iterations).toBeLessThan(30)
+    // precision must NOT degrade: tangency still holds to 4 decimals
+    const cen = getPoint(d, 'cc')!
+    expect(Math.abs(distPointToLine({ x: cen.x, y: cen.y }, { x: 0, y: 0 }, { x: 10, y: 0 }))).toBeCloseTo(3, 4)
+  })
+
+  it('n===0 path honors the revert contract and the shared threshold', () => {
+    // two points, one fixed; drag the other; a contradictory distance pair
+    const d: SketchDoc = {
+      entities: [
+        { id: 'a', kind: 'point', x: 0, y: 0, fixed: true },
+        { id: 'b', kind: 'point', x: 10, y: 0 },
+      ],
+      constraints: [
+        { id: 'd1', kind: 'distance', refs: ['a', 'b'], value: 10 },
+        { id: 'd2', kind: 'distance', refs: ['a', 'b'], value: 20 },
+      ],
+    }
+    // dragging b pins it → zero free slots → n===0 branch, over-constrained
+    const res = solve(d, { maxIter: 40, drag: { point: 'b', x: 3, y: 4 } })
+    expect(res.converged).toBe(false)
+    // the dragged point must be restored to its pre-call position
+    expect(getPoint(d, 'b')).toMatchObject({ x: 10, y: 0 })
+  })
 })
