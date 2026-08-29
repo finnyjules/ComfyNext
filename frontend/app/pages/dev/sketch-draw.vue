@@ -3,15 +3,15 @@
 // Dev harness — not linked in the app. Interactive constraint drawing surface.
 definePageMeta({ layout: false })
 import { ref, computed, onMounted } from 'vue'
-import type { SketchDoc, EntityId, ConstraintKind } from '~/lib/sketch/model'
-import { addPoint, addLine, addCircle, addConstraint, deleteEntity } from '~/lib/sketch/edit'
+import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
+import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist } from '~/lib/sketch/geom'
 import { constraintMarks } from '~/lib/sketch/annotate'
 
-type Tool = 'select' | 'point' | 'line' | 'circle'
+type Tool = 'select' | 'point' | 'line' | 'circle' | 'path'
 
 const doc = ref<SketchDoc>({ entities: [], constraints: [] })
 const tool = ref<Tool>('select')
@@ -155,20 +155,119 @@ function place(x: number, y: number) {
       pending.value = null
       runSolve()
     }
+  } else if (tool.value === 'path') {
+    pathClick(x, y)
   }
   // 'select' does nothing on empty-space click
 }
 
+// --- path tool: multi-click anchor chain, line or arc segments ---
+type PendingPath = { anchors: EntityId[]; segments: SegmentSpec[] } | null
+const pendingPath = ref<PendingPath>(null)
+const nextSegment = ref<'line' | 'arc'>('line')
+
+function pathClick(x: number, y: number) {
+  const id = placePoint(x, y, pendingPath.value ? [pendingPath.value.anchors[pendingPath.value.anchors.length - 1]!] : [])
+  if (!pendingPath.value) { pendingPath.value = { anchors: [id], segments: [] }; return }
+  const pp = pendingPath.value
+  const prev = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
+  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); return }  // clicked first anchor → close
+  if (id === pp.anchors[pp.anchors.length - 1]) return                               // ignore double-click same point
+  if (nextSegment.value === 'arc') {
+    const cur = doc.value.entities.find(e => e.id === id) as any
+    // center: midpoint pushed perpendicular by half the chord
+    const mx = (prev.x + cur.x) / 2, my = (prev.y + cur.y) / 2
+    const dx = cur.x - prev.x, dy = cur.y - prev.y
+    const c = addPoint(doc.value, mx - dy / 2, my + dx / 2)
+    pp.segments.push({ kind: 'arc', center: c, sweep: 1 })
+  } else {
+    pp.segments.push({ kind: 'line' })
+  }
+  pp.anchors.push(id)
+}
+
+function finishPath(close = false) {
+  const pp = pendingPath.value
+  pendingPath.value = null
+  if (!pp || pp.anchors.length < 2) return
+  if (close) {
+    // closing segment of the current kind between last and first anchors
+    if (nextSegment.value === 'arc') {
+      const a = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
+      const b = doc.value.entities.find(e => e.id === pp.anchors[0]) as any
+      const c = addPoint(doc.value, (a.x + b.x) / 2 - (b.y - a.y) / 2, (a.y + b.y) / 2 + (b.x - a.x) / 2)
+      pp.segments.push({ kind: 'arc', center: c, sweep: 1 })
+    } else pp.segments.push({ kind: 'line' })
+  }
+  addPath(doc.value, pp.anchors, pp.segments, close)
+  runSolve()
+}
+
+function doRepeat(count: number) {
+  const ptSel = selection.value.filter(id => (doc.value.entities.find(e => e.id === id) as any)?.kind === 'point')
+  const entSel = selection.value.filter(id => !ptSel.includes(id))
+  if (ptSel.length !== 1 || entSel.length === 0 || !Number.isFinite(count) || count < 2) return
+  repeatEntities(doc.value, entSel, ptSel[0]!, Math.round(count))
+  clearSel(); runSolve()
+}
+function repeatPrompt() {
+  const raw = window.prompt('Repeat count?', '6')
+  if (raw == null) return
+  doRepeat(Number(raw))
+}
+function doMirror() {
+  const lineSel = selection.value.filter(id => (doc.value.entities.find(e => e.id === id) as any)?.kind === 'line')
+  const entSel = selection.value.filter(id => !lineSel.includes(id))
+  if (lineSel.length !== 1 || entSel.length === 0) return
+  mirrorEntities(doc.value, entSel, lineSel[0]!)
+  clearSel(); runSolve()
+}
+function flip(axis: 'h' | 'v') {
+  const pts = selection.value.map(id => doc.value.entities.find(e => e.id === id)).filter((e: any) => e?.kind === 'point') as any[]
+  if (!pts.length) return
+  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
+  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+  for (const p of pts) { if (axis === 'h') p.x = 2 * cx - p.x; else p.y = 2 * cy - p.y }
+  runSolve()
+}
+function makeConstruction() {
+  for (const id of selection.value) {
+    const e = doc.value.entities.find(x => x.id === id) as any
+    if (e && e.kind !== 'point') e.construction = !e.construction
+  }
+  clearSel(); runSolve()
+}
+function copySvg(): string {
+  const d = sketchPathData(doc.value)
+  try { navigator.clipboard?.writeText(d) } catch {}
+  return d
+}
+
 // rendering: remap to screen via a shadow doc (points scaled, radii * S)
+// the y-flip mirrors arc winding, so arc segments carried into the shadow doc
+// have their sweep flipped to keep the rendered curve on the correct side
+function toShadowEntities(d: SketchDoc) {
+  return d.entities.map(e => e.kind === 'point'
+    ? { ...e, x: sx(e.x), y: sy(e.y) }
+    : e.kind === 'circle' ? { ...e, r: e.r * S }
+    : e.kind === 'path' ? { ...e, segments: e.segments.map(s => s.kind === 'arc' ? { ...s, sweep: (1 - s.sweep) as 0 | 1 } : s) }
+    : { ...e })
+}
 const pathScreen = computed(() => {
   const d = doc.value
-  const shadow: SketchDoc = {
-    entities: d.entities.map(e => e.kind === 'point'
-      ? { ...e, x: sx(e.x), y: sy(e.y) }
-      : e.kind === 'circle' ? { ...e, r: e.r * S } : { ...e }),
-    constraints: [],
-  }
+  const shadow: SketchDoc = { entities: toShadowEntities(d), constraints: [] }
   return sketchPathData(shadow)
+})
+const constructionScreen = computed(() => {
+  const d = doc.value
+  const shadow: SketchDoc = { entities: toShadowEntities(d), constraints: [] }
+  const parts: string[] = []
+  for (const e of d.entities) {
+    if (e.kind === 'point' || !e.construction) continue
+    const dstr = entityPath(shadow, e.id)
+    if (dstr) parts.push(dstr)
+  }
+  return parts.join(' ')
 })
 const pts = computed(() => doc.value.entities.filter(e => e.kind === 'point') as any[])
 const marks = computed(() => constraintMarks(doc.value))
@@ -190,10 +289,7 @@ function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
 }
 function entityPathScreen(id: EntityId): string {
   const d = doc.value
-  const shadow: SketchDoc = {
-    entities: d.entities.map(e => e.kind === 'point' ? { ...e, x: sx(e.x), y: sy(e.y) } : e.kind === 'circle' ? { ...e, r: e.r * S } : { ...e }),
-    constraints: [],
-  }
+  const shadow: SketchDoc = { entities: toShadowEntities(d), constraints: [] }
   return entityPath(shadow, id)
 }
 function onPointerDownSvg(ev: PointerEvent) {
@@ -209,7 +305,7 @@ function onPointerMove(ev: PointerEvent) {
 }
 function onPointerUp() { dragId = null }
 
-function reset() { doc.value = { entities: [], constraints: [] }; pending.value = null; status.value = 'ready' }
+function reset() { doc.value = { entities: [], constraints: [] }; pending.value = null; pendingPath.value = null; status.value = 'ready' }
 
 onMounted(() => {
   ;(window as any).__sketchDraw = {
@@ -220,7 +316,7 @@ onMounted(() => {
     pathData: () => sketchPathData(doc.value),
     entityCount: () => doc.value.entities.length,
     constraintCount: () => doc.value.constraints.length,
-    setTool: (t: Tool) => { tool.value = t; pending.value = null },
+    setTool: (t: Tool) => { tool.value = t; pending.value = null; pendingPath.value = null },
     reset,
     place: (x: number, y: number) => place(x, y),
     drag: (id: EntityId, x: number, y: number) => runSolve({ point: id, x, y }),
@@ -229,6 +325,14 @@ onMounted(() => {
     apply: (kind: ConstraintKind, value?: number) => apply(kind, value),
     del: () => del(),
     availableConstraints: () => availableConstraints(),
+    setNextSegment: (k: 'line' | 'arc') => { nextSegment.value = k },
+    finishPath: (close = false) => finishPath(close),
+    repeat: (ids: EntityId[], centerId: EntityId, count: number) => { repeatEntities(doc.value, ids, centerId, count); runSolve() },
+    mirror: (ids: EntityId[], axisId: EntityId) => { mirrorEntities(doc.value, ids, axisId); runSolve() },
+    flipH: () => flip('h'),
+    flipV: () => flip('v'),
+    makeConstruction: () => makeConstruction(),
+    copySvg: () => copySvg(),
   }
   ready.value = true
 })
@@ -238,26 +342,52 @@ onMounted(() => {
   <div :data-ready="ready ? '' : undefined" style="font-family: ui-sans-serif, system-ui; padding: 12px; color: #e5e5e5; background: #0b0b0b; min-height: 100vh">
     <h1 style="font-size: 14px; margin: 0 0 8px">Sketch Draw</h1>
     <div style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
-      <button v-for="t in (['select','point','line','circle'] as Tool[])" :key="t"
-              :data-tool="t" @click="() => { tool = t; pending = null }"
+      <button v-for="t in (['select','point','line','circle','path'] as Tool[])" :key="t"
+              :data-tool="t" @click="() => { tool = t; pending = null; pendingPath = null }"
               :style="{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer',
                         background: tool === t ? '#2563eb' : '#1a1a1a', color: '#fff' }">{{ t }}</button>
       <button data-act="reset" @click="reset" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer">reset</button>
       <span data-status style="margin-left: 8px; font-size: 12px; color: #9ca3af">{{ status }}</span>
     </div>
-    <div style="display: flex; gap: 6px; margin: 8px 0; min-height: 28px; align-items: center">
+    <div v-if="tool === 'path'" style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
+      <span style="font-size: 12px; color: #9ca3af">next segment:</span>
+      <button data-seg="line" @click="nextSegment = 'line'"
+              :style="{ padding: '3px 9px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer', fontSize: '12px',
+                        background: nextSegment === 'line' ? '#2563eb' : '#1a1a1a', color: '#fff' }">line</button>
+      <button data-seg="arc" @click="nextSegment = 'arc'"
+              :style="{ padding: '3px 9px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer', fontSize: '12px',
+                        background: nextSegment === 'arc' ? '#2563eb' : '#1a1a1a', color: '#fff' }">arc</button>
+      <button data-act="close" @click="finishPath(true)"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">close</button>
+      <button data-act="finish" @click="finishPath(false)"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">finish</button>
+    </div>
+    <div style="display: flex; gap: 6px; margin: 8px 0; min-height: 28px; align-items: center; flex-wrap: wrap">
       <span style="font-size: 12px; color: #9ca3af">sel: {{ selection.length }}</span>
       <button v-for="v in availableConstraints()" :key="v.kind" :data-verb="v.kind"
               @click="() => applyWithValue(v)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">{{ v.label }}</button>
       <button v-if="selection.length" data-verb="fix" @click="() => { for (const id of selection) { const e = doc.entities.find(x => x.id === id); if (e && e.kind === 'point') (e as any).fixed = true } clearSel(); runSolve() }"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Fix</button>
+      <button v-if="selection.length" data-verb="repeat" @click="repeatPrompt"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Repeat…</button>
+      <button v-if="selection.length" data-verb="mirror" @click="doMirror"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Mirror</button>
+      <button v-if="selection.length" data-verb="construction" @click="makeConstruction"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Make construction</button>
+      <button v-if="selection.length" data-verb="flip-h" @click="flip('h')"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Flip H</button>
+      <button v-if="selection.length" data-verb="flip-v" @click="flip('v')"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Flip V</button>
+      <button data-verb="copy-svg" @click="copySvg"
+              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Copy SVG</button>
       <button v-if="selection.length" data-act="delete" @click="del"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #7f1d1d; background: #1a1a1a; color: #fca5a5; cursor: pointer; font-size: 12px">Delete</button>
     </div>
     <svg width="680" height="460" style="background: #fafafa; border-radius: 8px; touch-action: none; cursor: crosshair"
          @pointerdown="onPointerDownSvg" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointerleave="onPointerUp">
       <path :d="pathScreen" fill="none" stroke="#3730a3" stroke-width="1.5" />
+      <path :d="constructionScreen" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4 3" />
       <template v-for="e in doc.entities" :key="'hit-' + e.id">
         <path v-if="e.kind !== 'point'" :d="entityPathScreen(e.id)" fill="none" stroke="transparent" stroke-width="12"
               :style="{ cursor: 'pointer' }" @pointerdown="(ev) => { if (tool==='select') { pick(e.id); ev.stopPropagation() } }" :data-ent="e.id" />

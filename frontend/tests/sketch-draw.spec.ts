@@ -79,3 +79,49 @@ test('select two circles and apply concentric via the API', async ({ page }) => 
   // concentric ⇒ the two centers coincide
   expect(Math.hypot(centers[0].x - centers[1].x, centers[0].y - centers[1].y)).toBeLessThan(0.01)
 })
+
+test('knot: unit path repeated 6x stays symmetric and welded under drag', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const result = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // center (fixed) via point tool then fix through the doc
+    D.setTool('point'); D.place(8, 6)
+    const ctr = D.doc.entities.find((e: any) => e.kind === 'point').id
+    D.doc.entities.find((e: any) => e.id === ctr).fixed = true
+    // unit: line up + arc over — drawn with the path tool API
+    D.setTool('path')
+    D.place(8, 1); D.place(8, 3)                     // line segment
+    D.setNextSegment('arc'); D.place(10.5, 4.5)      // arc segment
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    // repeat 6x about the center
+    D.repeat([path.id], ctr, 6)
+    const paths = D.doc.entities.filter((e: any) => e.kind === 'path')
+    const rotCount = D.doc.constraints.filter((c: any) => c.kind === 'rotatedFrom').length
+    // drag the unit's outer anchor; symmetry must hold through the rules
+    const outer = path.anchors[2]
+    D.drag(outer, 11, 5.5)
+    // check: every 60° copy of `outer` equals rotate(outer, k*60) about ctr
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const o = P(outer), c = P(ctr)
+    let maxErr = 0
+    for (const k of [1, 2, 3, 4, 5]) {
+      const con = D.doc.constraints.find((x: any) => x.kind === 'rotatedFrom' && x.refs[1] === outer && Math.round(x.value) === k * 60)
+      const cp = P(con.refs[0])
+      const a = k * 60 * Math.PI / 180
+      const rx = c.x + Math.cos(a) * (o.x - c.x) - Math.sin(a) * (o.y - c.y)
+      const ry = c.y + Math.sin(a) * (o.x - c.x) + Math.cos(a) * (o.y - c.y)
+      maxErr = Math.max(maxErr, Math.hypot(cp.x - rx, cp.y - ry))
+    }
+    return { paths: paths.length, rotCount, maxErr, status: D.status(), svg: D.copySvg().length }
+  })
+
+  expect(result.paths).toBe(6)
+  expect(result.rotCount).toBeGreaterThanOrEqual(15)   // ≥3 pts × 5 copies
+  expect(result.maxErr).toBeLessThan(0.01)             // symmetry held under drag
+  expect(result.svg).toBeGreaterThan(50)               // real SVG came out
+})

@@ -30,3 +30,34 @@ describe('constraintMarks', () => {
     expect(rad.text).toBe('3')
   })
 })
+
+describe('repeat/mirror/path glyphs', () => {
+  const doc2: SketchDoc = {
+    entities: [
+      { id: 'op', kind: 'point', x: 2, y: 2 },
+      { id: 'ctr', kind: 'point', x: 1, y: 1 },
+      { id: 'cp', kind: 'point', x: 5, y: 5 },   // the rotated copy point
+      { id: 'ec', kind: 'point', x: 4, y: 4 },   // equalDist's arc center
+      { id: 'pa', kind: 'point', x: 1, y: 1 },
+      { id: 'pb', kind: 'point', x: 7, y: 7 },
+    ],
+    constraints: [
+      { id: 'k5', kind: 'rotatedFrom', refs: ['cp', 'op', 'ctr'], value: 60 },
+      { id: 'k6', kind: 'equalDist', refs: ['ec', 'pa', 'ec', 'pb'] },
+    ],
+  }
+
+  it('marks a rotatedFrom constraint with ↻ anchored at the copy point', () => {
+    const marks = constraintMarks(doc2)
+    const rot = marks.find(m => m.id === 'k5')!
+    expect(rot.glyph).toBe('↻')
+    expect(rot.x).toBe(5)
+    expect(rot.y).toBe(5)
+  })
+
+  it('marks an equalDist constraint with E', () => {
+    const marks = constraintMarks(doc2)
+    const eq = marks.find(m => m.id === 'k6')!
+    expect(eq.glyph).toBe('E')
+  })
+})
