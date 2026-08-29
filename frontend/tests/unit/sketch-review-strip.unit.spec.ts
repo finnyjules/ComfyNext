@@ -13,27 +13,29 @@ describe('SketchReviewStrip — presentation', () => {
     const imgs = tiles(w).map(t => t.find('img').attributes('src'))
     expect(imgs).toEqual(IMGS)
   })
-  it('bar order is Cancel then Re-roll then Keep', () => {
+  it('bar order is Cancel then Re-roll (Keep is per-card, not in the bar)', () => {
     const w = mount(SketchReviewStrip, { props: base() })
     const ids = w.get('[data-testid="sketch-actions"]').findAll('[data-testid^="sketch-"]')
       .map(b => b.attributes('data-testid'))
-    expect(ids).toEqual(['sketch-cancel', 'sketch-reroll', 'sketch-keep'])
+    expect(ids).toEqual(['sketch-cancel', 'sketch-reroll'])
   })
-  it('Keep is disabled until a tile is selected', async () => {
+  it('every sketch tile has its own Keep', () => {
     const w = mount(SketchReviewStrip, { props: base() })
-    expect(w.get('[data-testid="sketch-keep"]').attributes('disabled')).toBeDefined()
-    await w.setProps({ selected: 1 })
-    expect(w.get('[data-testid="sketch-keep"]').attributes('disabled')).toBeUndefined()
+    expect(tiles(w).length).toBe(4)
+    for (const t of tiles(w)) {
+      const cell = t.element.closest('.group') as HTMLElement
+      expect(cell.querySelector('[data-testid="sketch-keep"]')).toBeTruthy()
+    }
   })
 })
 
 describe('SketchReviewStrip — emits', () => {
-  it('hovering a tile emits hover(index); leaving emits hover(null)', async () => {
+  it('Keep on a card selects that card then keeps it', async () => {
     const w = mount(SketchReviewStrip, { props: base() })
-    await tiles(w)[2]!.trigger('mouseenter')
-    expect(w.emitted('hover')!.at(-1)).toEqual([2])
-    await tiles(w)[2]!.trigger('mouseleave')
-    expect(w.emitted('hover')!.at(-1)).toEqual([null])
+    const keep = w.findAll('[data-testid="sketch-keep"]')[1]!
+    await keep.trigger('click')
+    expect(w.emitted('select')!.at(-1)).toEqual([1])
+    expect(w.emitted('keep')).toHaveLength(1)
   })
   it('clicking a tile emits select(index)', async () => {
     const w = mount(SketchReviewStrip, { props: base() })
@@ -42,7 +44,7 @@ describe('SketchReviewStrip — emits', () => {
   })
   it('Keep emits keep, Cancel emits cancel, Re-roll emits reroll', async () => {
     const w = mount(SketchReviewStrip, { props: base({ selected: 0 }) })
-    await w.get('[data-testid="sketch-keep"]').trigger('click')
+    await w.findAll('[data-testid="sketch-keep"]')[0]!.trigger('click')
     await w.get('[data-testid="sketch-cancel"]').trigger('click')
     await w.get('[data-testid="sketch-reroll"]').trigger('click')
     expect(w.emitted('keep')).toHaveLength(1)
@@ -51,13 +53,8 @@ describe('SketchReviewStrip — emits', () => {
   })
   it('busy disables Keep and Re-roll', () => {
     const w = mount(SketchReviewStrip, { props: base({ selected: 0, busy: true }) })
-    expect(w.get('[data-testid="sketch-keep"]').attributes('disabled')).toBeDefined()
+    expect(w.findAll('[data-testid="sketch-keep"]')[0]!.attributes('disabled')).toBeDefined()
     expect(w.get('[data-testid="sketch-reroll"]').attributes('disabled')).toBeDefined()
-  })
-  it('the hovered tile shows a preview above it', async () => {
-    const w = mount(SketchReviewStrip, { props: base() })
-    await tiles(w)[0]!.trigger('mouseenter')
-    expect(w.get('[data-testid="sketch-tip"]').isVisible()).toBe(true)
   })
 })
 

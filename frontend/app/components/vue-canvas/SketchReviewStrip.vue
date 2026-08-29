@@ -1,15 +1,16 @@
 <script setup lang="ts">
 /**
  * Canvas sketch review strip — four instant sketches, docked above the prompt
- * bar, reviewed before any land. PRESENTATION + gesture only: it shows the
- * images and reports what the user did (hover/select/keep/cancel/reroll, and —
- * Task 2 — dropAt). The canvas host turns a commit into one image node and
- * tears down the transient sketch-pad state. Borrows the take strip's calm
- * vocabulary but is its own component (canvas context: finished sketch images,
- * drag-to-place, no studio preview to drive).
+ * bar, reviewed before any land. A twin of the studio take strip: same tray,
+ * same 96px ReviewTile chrome, same per-card Keep on hover, same Cancel/Re-roll
+ * bar below. PRESENTATION + gesture only — reports what the user did
+ * (hover/select/keep/cancel/reroll/dropAt); the canvas host turns a commit into
+ * one image node and tears down the transient sketch-pad state.
  */
 import { ref } from 'vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import ReviewTile from '~/components/vue-canvas/studio/ReviewTile.vue'
+import { TRAY_FLOATING, TILES_ROW, ACTIONS_BAR } from '~/components/vue-canvas/studio/reviewStripStyles'
 
 const props = withDefaults(defineProps<{
   images: string[]
@@ -18,7 +19,6 @@ const props = withDefaults(defineProps<{
 }>(), { busy: false })
 
 const emit = defineEmits<{
-  hover: [index: number | null]
   select: [index: number]
   keep: []
   cancel: []
@@ -26,53 +26,36 @@ const emit = defineEmits<{
   dropAt: [payload: { index: number; clientX: number; clientY: number }]
 }>()
 
-const hovered = ref<number | null>(null)
-function onHover(i: number | null) { hovered.value = i; emit('hover', i) }
-
-const TILE = 'relative h-[64px] w-[64px] shrink-0 overflow-hidden rounded-[6px] border border-white/12 transition enabled:cursor-pointer hover:border-white/30'
-
 // Drag-to-place: press-move past threshold lifts the tile into a ghost that
 // follows the pointer; release reports the drop point in screen space. A
-// press-release under threshold stays a click (select) — the click guard
-// below (draggedThisPress) is what tells the two apart.
+// press-release under threshold stays a click (select) — draggedThisPress
+// tells the two apart. ReviewTile owns pointer capture + forwards the events.
 const DRAG_THRESHOLD = 4
 const drag = ref<{ index: number; x: number; y: number; started: boolean } | null>(null)
 const draggedThisPress = ref(false)
 
-function onPointerDown(i: number, e: PointerEvent) {
+function onDown(i: number, e: PointerEvent) {
   draggedThisPress.value = false
   drag.value = { index: i, x: e.clientX, y: e.clientY, started: false }
-  // Keep receiving move/up on this element even once the pointer leaves the
-  // 64px tile — without capture the browser re-targets those events to
-  // whatever's under the cursor, which breaks the drag the moment it heads
-  // toward the canvas. happy-dom/jsdom may not implement this — guard it.
-  const el = e.currentTarget as Element
-  if (el?.setPointerCapture) { try { el.setPointerCapture(e.pointerId) } catch { /* no-op in test env */ } }
 }
-function onPointerMove(e: PointerEvent) {
+function onMove(e: PointerEvent) {
   const d = drag.value
   if (!d) return
   if (!d.started && Math.hypot(e.clientX - d.x, e.clientY - d.y) < DRAG_THRESHOLD) return
   d.started = true
   d.x = e.clientX; d.y = e.clientY
 }
-function onPointerUp(e: PointerEvent) {
+function onUp(e: PointerEvent) {
   const d = drag.value
   drag.value = null
   draggedThisPress.value = !!d?.started
-  const el = e.currentTarget as Element
-  if (el?.releasePointerCapture) { try { el.releasePointerCapture(e.pointerId) } catch { /* no-op in test env */ } }
   if (d?.started) emit('dropAt', { index: d.index, clientX: e.clientX, clientY: e.clientY })
 }
-// The OS can steal a gesture mid-drag (e.g. a system swipe) — without this,
-// drag.value never clears and the ghost sticks around until the next
-// pointerdown. Mirrors onPointerUp's cleanup but never emits dropAt.
-function onPointerCancel(e: PointerEvent) {
+// The OS can steal a gesture mid-drag — clear drag state, never emit dropAt.
+function onCancel() {
   const d = drag.value
   drag.value = null
   draggedThisPress.value = !!d?.started
-  const el = e.currentTarget as Element
-  if (el?.releasePointerCapture) { try { el.releasePointerCapture(e.pointerId) } catch { /* no-op in test env */ } }
 }
 function onTileClick(i: number) {
   if (draggedThisPress.value) return
@@ -81,39 +64,30 @@ function onTileClick(i: number) {
 </script>
 
 <template>
-  <div data-testid="sketch-strip"
-       class="flex items-center gap-1.5 rounded-[9px] border border-white/10 bg-[#0b0d11]/95 p-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.5)] backdrop-blur">
-    <div class="flex items-center gap-1.5">
-      <div v-for="(src, i) in images" :key="i" class="relative shrink-0">
-        <button data-testid="sketch-tile" type="button"
-                :data-index="i" :aria-pressed="selected === i ? 'true' : 'false'"
-                :class="[TILE, selected === i ? 'border-action ring-1 ring-action' : '']"
-                @mouseenter="onHover(i)" @mouseleave="onHover(null)" @focus="onHover(i)" @blur="onHover(null)"
-                @pointerdown="onPointerDown(i, $event)" @pointermove="onPointerMove" @pointerup="onPointerUp"
-                @pointercancel="onPointerCancel" @click="onTileClick(i)">
-          <!-- draggable="false": an <img> is natively draggable by default —
-               without this, a real press-move past a few px starts the
-               browser's OWN native image drag, which fires a spontaneous
-               pointercancel and kills our custom drag-to-place before the
-               ghost ever appears. Only visible live; jsdom/happy-dom never
-               trigger native drag-start, so the unit suite can't catch it. -->
-          <img :src="src" alt="" draggable="false" class="h-full w-full object-cover">
-        </button>
-        <!-- hover preview: a larger look, floated above this tile. Sibling of
-             the tile button, not a child of it — the tile clips to its
-             rounded corners via overflow-hidden, which would otherwise clip
-             this away entirely since it sits outside the tile's own box. -->
-        <div v-if="hovered === i" data-testid="sketch-tip"
-             class="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-10 h-[128px] w-[128px] -translate-x-1/2 overflow-hidden rounded-[8px] border border-white/15 shadow-[0_10px_30px_rgba(0,0,0,0.55)]">
-          <img :src="src" alt="" class="h-full w-full object-cover">
-        </div>
-      </div>
+  <div data-testid="sketch-strip" :class="TRAY_FLOATING">
+    <div :class="TILES_ROW">
+      <ReviewTile v-for="(src, i) in images" :key="i"
+                  tile-testid="sketch-tile" :selected="selected === i" draggable
+                  @click="onTileClick(i)"
+                  @tilepointerdown="onDown(i, $event)" @tilepointermove="onMove"
+                  @tilepointerup="onUp" @tilepointercancel="onCancel">
+        <!-- draggable="false": a native <img> drag fires a spurious
+             pointercancel that would kill our drag-to-place before the ghost
+             appears (live-only; jsdom never starts native drag). -->
+        <img :src="src" alt="" draggable="false" class="h-full w-full object-cover">
+        <template #actions>
+          <StudioButton data-testid="sketch-keep" variant="primary" class="pointer-events-auto"
+                        :disabled="busy" @click.stop="emit('select', i); emit('keep')">
+            Keep
+          </StudioButton>
+        </template>
+      </ReviewTile>
     </div>
 
-    <div data-testid="sketch-actions" class="ml-1 flex items-center gap-2 border-l border-white/10 pl-2">
+    <div data-testid="sketch-actions" :class="ACTIONS_BAR">
       <StudioButton data-testid="sketch-cancel" variant="subtle" @click="emit('cancel')">Cancel</StudioButton>
+      <span class="flex-1" />
       <StudioButton data-testid="sketch-reroll" variant="neutral" :disabled="busy" @click="emit('reroll')">↻ Re-roll</StudioButton>
-      <StudioButton data-testid="sketch-keep" variant="primary" :disabled="busy || selected === null" @click="emit('keep')">Keep</StudioButton>
     </div>
 
     <div v-if="drag?.started" data-testid="sketch-ghost"
