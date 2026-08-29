@@ -167,7 +167,7 @@ const pendingPath = ref<PendingPath>(null)
 const nextSegment = ref<'line' | 'arc'>('line')
 
 function pathClick(x: number, y: number) {
-  const id = placePoint(x, y, pendingPath.value ? [pendingPath.value.anchors[pendingPath.value.anchors.length - 1]!] : [])
+  const id = placePoint(x, y)
   if (!pendingPath.value) { pendingPath.value = { anchors: [id], segments: [] }; return }
   const pp = pendingPath.value
   const prev = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
