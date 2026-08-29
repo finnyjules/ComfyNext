@@ -71,11 +71,10 @@ function onTileClick(i: number) {
 </script>
 
 <template>
-  <!-- Fixed tray width so the flex-1 ReviewTiles distribute into even ~92px
-       tiles: the take strip gets its width from the studio column, but this
-       tray is teleported into a shrink-to-fit `fixed` wrapper, so without a
-       width the tiles would size to the sketches' intrinsic dimensions. -->
-  <div data-testid="sketch-strip" :class="[TRAY_FLOATING, 'w-[400px]']">
+  <!-- Tray fills its wrapper so the flex-1 ReviewTiles distribute across the
+       full width: the wrapper is sized to match the prompt bar's live width
+       (VueNodeCanvas's sketchStripDockStyle), not a fixed guess. -->
+  <div data-testid="sketch-strip" :class="[TRAY_FLOATING, 'w-full']">
     <!-- error: the run failed — a message in place of the tiles, never
          eternal skeletons. Re-roll (enabled, busy is false here) retries. -->
     <div v-if="error" data-testid="sketch-error"
@@ -104,7 +103,7 @@ function onTileClick(i: number) {
         <template #actions>
           <StudioButton data-testid="sketch-keep" variant="primary" class="pointer-events-auto"
                         :disabled="busy" @click.stop="emit('select', i); emit('keep')">
-            Keep
+            Add to canvas
           </StudioButton>
         </template>
       </ReviewTile>
@@ -116,10 +115,16 @@ function onTileClick(i: number) {
       <StudioButton data-testid="sketch-reroll" variant="neutral" :disabled="busy" @click="emit('reroll')">↻ Re-roll</StudioButton>
     </div>
 
-    <div v-if="drag?.started" data-testid="sketch-ghost"
-         class="pointer-events-none fixed z-50 h-[80px] w-[80px] overflow-hidden rounded-[6px] border border-white/25 shadow-[0_10px_30px_rgba(0,0,0,0.6)]"
-         :style="{ left: drag.x + 'px', top: drag.y + 'px', transform: 'translate(-50%, -50%) rotate(-3deg)' }">
-      <img :src="images[drag.index]" alt="" class="h-full w-full object-cover">
-    </div>
+    <!-- Teleported to <body>: the tray's backdrop-blur makes it a containing
+         block for `fixed` descendants, so a ghost left inside would position
+         against the blurred tray instead of the viewport and never appear
+         under the cursor over the canvas. -->
+    <Teleport to="body">
+      <div v-if="drag?.started" data-testid="sketch-ghost"
+           class="pointer-events-none fixed z-[60] h-[80px] w-[80px] overflow-hidden rounded-[6px] border border-white/25 shadow-[0_10px_30px_rgba(0,0,0,0.6)]"
+           :style="{ left: drag.x + 'px', top: drag.y + 'px', transform: 'translate(-50%, -50%) rotate(-3deg)' }">
+        <img :src="images[drag.index]" alt="" class="h-full w-full object-cover">
+      </div>
+    </Teleport>
   </div>
 </template>

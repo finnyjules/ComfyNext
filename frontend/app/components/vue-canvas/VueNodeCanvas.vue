@@ -1058,8 +1058,8 @@ const sketchReviewBusy = ref(false)
 // re-measured on resize/content-growth while the strip is open.
 const SKETCH_STRIP_GAP = 12
 const SKETCH_STRIP_FALLBACK_BOTTOM = 112 // pre-measurement / no-match fallback (old bottom-28 estimate)
-const sketchStripDockStyle = ref<{ bottom: string, left: string, transform: string }>({
-  bottom: `${SKETCH_STRIP_FALLBACK_BOTTOM}px`, left: '50%', transform: 'translateX(-50%)',
+const sketchStripDockStyle = ref<{ bottom: string, left: string, width: string, transform: string }>({
+  bottom: `${SKETCH_STRIP_FALLBACK_BOTTOM}px`, left: '50%', width: '400px', transform: 'translateX(-50%)',
 })
 function updateSketchStripDock(): void {
   const bar = document.querySelector('[data-testid="canvas-bottom-bar-stack"]') as HTMLElement | null
@@ -1068,6 +1068,7 @@ function updateSketchStripDock(): void {
   sketchStripDockStyle.value = {
     bottom: `${Math.max(0, window.innerHeight - rect.top + SKETCH_STRIP_GAP)}px`,
     left: `${rect.left + rect.width / 2}px`,
+    width: `${rect.width}px`,
     transform: 'translateX(-50%)',
   }
 }

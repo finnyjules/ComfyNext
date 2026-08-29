@@ -87,11 +87,11 @@ describe('SketchReviewStrip — drag to place', () => {
     const tile = tiles(w)[2]!
     await tile.trigger('pointerdown', { clientX: 100, clientY: 100, pointerId: 1 })
     await tile.trigger('pointermove', { clientX: 140, clientY: 180, pointerId: 1 })
-    expect(w.find('[data-testid="sketch-ghost"]').exists()).toBe(true)
+    expect(!!document.body.querySelector('[data-testid="sketch-ghost"]')).toBe(true)
     await tile.trigger('pointerup', { clientX: 140, clientY: 180, pointerId: 1 })
     expect(w.emitted('dropAt')![0]).toEqual([{ index: 2, clientX: 140, clientY: 180 }])
     expect(w.emitted('select')).toBeUndefined()
-    expect(w.find('[data-testid="sketch-ghost"]').exists()).toBe(false)
+    expect(!!document.body.querySelector('[data-testid="sketch-ghost"]')).toBe(false)
     w.unmount()
   })
   it('a press-release under threshold is a click (select), not a drop', async () => {
@@ -130,10 +130,10 @@ describe('SketchReviewStrip — drag to place', () => {
     const tile = tiles(w)[2]!
     await tile.trigger('pointerdown', { clientX: 100, clientY: 100, pointerId: 1 })
     await tile.trigger('pointermove', { clientX: 140, clientY: 180, pointerId: 1 })
-    expect(w.find('[data-testid="sketch-ghost"]').exists()).toBe(true)
+    expect(!!document.body.querySelector('[data-testid="sketch-ghost"]')).toBe(true)
     await tile.trigger('pointercancel', { pointerId: 1 })
     expect(w.emitted('dropAt')).toBeUndefined()
-    expect(w.find('[data-testid="sketch-ghost"]').exists()).toBe(false)
+    expect(!!document.body.querySelector('[data-testid="sketch-ghost"]')).toBe(false)
     w.unmount()
   })
 })
