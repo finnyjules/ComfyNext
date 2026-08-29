@@ -1394,7 +1394,8 @@ function deleteSelectedArrow() {
 }
 
 // Global keyboard: ESC cancels pending arrow; S/C/A spawn annotations at
-// the cursor (or viewport center if cursor unknown). All shortcuts bail when
+// the cursor (or viewport center if cursor unknown); F drops a Frame at the
+// viewport center. All shortcuts bail when
 // focus is on a text input so they don't intercept typing in node widgets.
 let lastMouseClient: { x: number; y: number } | null = null
 function trackMouseClient(e: MouseEvent) { lastMouseClient = { x: e.clientX, y: e.clientY } }
@@ -1458,7 +1459,28 @@ function onGlobalKey(e: KeyboardEvent) {
   } else if (e.key === 'a' || e.key === 'A') {
     beginArrowFromPoint(spawn.x, spawn.y)
     e.preventDefault()
+  } else if (e.key === 'f' || e.key === 'F') {
+    void createFrameAtCenter()
+    e.preventDefault()
   }
+}
+
+// F: drop a Frame (Compositor) on the canvas, selected and ready to edit.
+// Minted through `createNodeData` — the same path Add ▸ Frame and
+// `combineIntoFrame` use — so the node shape is identical, and landed at the
+// viewport center like every other added node (annotations spawn at the cursor;
+// a Frame is a big card, and Add ▸ Frame's center placement is the one users
+// already know). Drag-out framing is deliberately not built here.
+async function createFrameAtCenter() {
+  if (!objectInfo.value['Compositor']) await fetchObjectInfo()
+  if (!objectInfo.value['Compositor']) {
+    toast.error('Couldn’t add a Frame', { description: 'The Compositor node isn’t available — is ComfyUI running?' })
+    return
+  }
+  const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+  const frame = createNodeData('Compositor', { x: center.x, y: center.y })
+  nodes.value.push(frame as any)
+  selectNode(frame.id)
 }
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKey)

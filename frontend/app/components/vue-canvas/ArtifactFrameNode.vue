@@ -353,8 +353,13 @@ const editMode = ref(false)
 function toggleEdit() { editMode.value ? exitEdit() : (editMode.value = true) }
 function exitEdit() { editMode.value = false; editor.endEdit(); editor.selectLocal(null) }
 function onArtboardDblClick(e: MouseEvent) {
-  if (editor.onCanvasDblClick(e)) return
+  // Edit mode FIRST, then begin text editing. The inline textarea is gated on
+  // `editMode`, and paint deliberately skips the layer being edited — so
+  // beginning a text edit while the card is still idle used to make the text
+  // vanish: nothing painted it and no textarea rendered to hold it. One
+  // double-click now both enters edit mode and starts editing the text it hit.
   if (!editMode.value) editMode.value = true
+  editor.onCanvasDblClick(e)
 }
 
 // Pointer down on the artboard: ONE selection path — the editor hit-tests every
@@ -368,6 +373,12 @@ function onArtboardPointerDown(e: PointerEvent) {
 // A wired layer's move/scale/rotate is the editor's, and it reaches the backend
 // through the editor's `layer{N}_*` write-through — so the hand-rolled drag loop
 // that wrote those widgets directly (and could not undo) is gone.
+
+// Inline text editor: the editor owns "when to focus" (see its focus contract),
+// the host only says WHICH element. Add text and double-click therefore both
+// land with the caret in the box and the placeholder selected.
+const editRef = ref<HTMLTextAreaElement | null>(null)
+editor.registerEditFocus(() => editRef.value)
 
 // Inline text editor positioning (mirrors the modal).
 const editingStyle = computed(() => {
@@ -953,8 +964,22 @@ function onDrop(e: DragEvent) {
 function onKeydown(e: KeyboardEvent) {
   if (!editMode.value) return
   const ae = document.activeElement
-  const typing = ae instanceof Element && ae.matches('input, textarea, [contenteditable]')
-  if (e.key === 'Escape') { if (addMenuOpen.value) { addMenuOpen.value = false; return } if (editor.editingId.value) editor.endEdit(); else exitEdit() }
+  // Where the key was actually pressed, not only where focus is NOW: the inline
+  // textarea's own Escape handler ends the edit, Vue unmounts the textarea in the
+  // microtask before this window listener runs, and focus has already fallen back
+  // to <body> by then. `e.target` still names the box the key was typed into.
+  const tgt = e.target as Element | null
+  const typing = (tgt instanceof Element && !!tgt.closest('input, textarea, [contenteditable]'))
+    || (ae instanceof Element && ae.matches('input, textarea, [contenteditable]'))
+  if (e.key === 'Escape') {
+    if (addMenuOpen.value) { addMenuOpen.value = false; return }
+    if (editor.editingId.value) { editor.endEdit(); return }
+    // Escape #1 leaves the text box, Escape #2 leaves edit mode — without this
+    // guard the textarea's own handler and this one would fire as one gesture
+    // and drop the whole card out of edit mode.
+    if (typing) return
+    exitEdit()
+  }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && editor.selectedId.value && !typing) {
     e.preventDefault(); editor.deleteLocal(editor.selectedId.value)
   }
@@ -1120,7 +1145,7 @@ onUnmounted(() => {
         </template>
 
         <!-- Inline text editor -->
-        <textarea v-if="editMode && editor.editingLayer.value" :value="editor.editingLayer.value.text"
+        <textarea v-if="editMode && editor.editingLayer.value" ref="editRef" data-testid="frame-card-text-edit" :value="editor.editingLayer.value.text"
           class="nopan nodrag absolute bg-transparent outline-none resize-none overflow-hidden border border-dashed border-cyan-400/70 px-0.5"
           :style="editingStyle"
           @input="editor.setLocal(editor.editingLayer.value!.id, { text: ($event.target as HTMLTextAreaElement).value })"

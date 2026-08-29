@@ -370,6 +370,26 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   function beginEdit(id: string) { selectLocal(id); editingId.value = id }
   function endEdit() { editingId.value = null }
 
+  // ── Inline text-editor focus contract ──────────────────────────────────────
+  // `beginEdit` only flips `editingId`; the <textarea> that renders it belongs
+  // to the HOST (the Frame card, the modal). Hosts register their textarea
+  // getter ONCE here, so EVERY path into text editing — Add text, a canvas
+  // double-click, the layers panel — lands with the caret in the box and the
+  // placeholder selected, instead of each host wiring its own watcher per
+  // entry point (which is how "Add text then type" ended up doing nothing).
+  let editFocusTarget: (() => HTMLTextAreaElement | null | undefined) | null = null
+  function registerEditFocus(get: () => HTMLTextAreaElement | null | undefined) { editFocusTarget = get }
+  /** Focus + select-all the host's textarea once the DOM has caught up with
+   *  `editingId`. Two ticks because a host may gate the textarea on state it
+   *  flips in the same tick (the card's `editMode`). */
+  function focusEditTarget() {
+    const get = editFocusTarget
+    if (!get) return
+    const take = () => { const el = get(); if (!el) return false; el.focus(); el.select(); return true }
+    nextTick(() => { if (!take()) nextTick(() => { take() }) })
+  }
+  watch(editingId, (id) => { if (id) focusEditTarget() })
+
   // ── Geometry ────────────────────────────────────────────────────────────────
   // Every box measurement in the editor goes through here, so this is the one
   // place the host's wired resolver has to be installed: a `wired` layer's box
@@ -864,7 +884,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   return {
     localLayers, selectedId, selected, selectLocal,
     setLocal, addLocal, deleteLocal, moveLocalZ,
-    editingId, editingLayer, beginEdit, endEdit,
+    editingId, editingLayer, beginEdit, endEdit, registerEditFocus, focusEditTarget,
     boxPx, handlePositions, hud,
     selectionBox, selectionHandles, startGroupResize,
     hitTest, startScale, startRotate, startResize,

@@ -1472,8 +1472,11 @@ function onStageBackgroundClick(e: MouseEvent) {
 }
 
 // ── Text editing: focus the inline textarea when editing starts ─────────────
+// The "when" lives in the editor's focus contract (shared with the Frame card),
+// so Add text, double-click and the layers panel all behave the same; the host
+// only says WHICH element.
 const editRef = ref<HTMLTextAreaElement | null>(null)
-watch(editingId, (id) => { if (id) nextTick(() => { editRef.value?.focus(); editRef.value?.select() }) })
+editor.registerEditFocus(() => editRef.value)
 const editingStyle = computed(() => {
   const l = editingLayer.value
   if (!l) return {}
@@ -3894,7 +3897,14 @@ async function onBrushFillImageFile(e: Event) {
 
 function handleKeydown(e: KeyboardEvent) {
   const ae = document.activeElement
-  const typing = ae instanceof Element && ae.matches('input, textarea, [contenteditable]')
+  // Where the key was pressed, not only where focus is NOW: the inline
+  // textarea's own Escape handler ends the edit, Vue unmounts the box in the
+  // microtask before this listener runs, and focus is already back on <body> —
+  // so an activeElement-only guard let one Escape both leave the text AND close
+  // the whole modal. `e.target` still names the box it was typed into.
+  const tgt = e.target as Element | null
+  const typing = (tgt instanceof Element && !!tgt.closest('input, textarea, [contenteditable]'))
+    || (ae instanceof Element && ae.matches('input, textarea, [contenteditable]'))
   if (e.key === 'Escape') {
     if (zoomMenuOpen.value) { zoomMenuOpen.value = false; return }
     if (shapesMenuOpen.value) { shapesMenuOpen.value = false; return }
@@ -4420,6 +4430,7 @@ onUnmounted(() => {
         <textarea
           v-if="editingLayer"
           ref="editRef"
+          data-testid="frame-modal-text-edit"
           :value="editingLayer.text"
           class="absolute bg-transparent outline-none resize-none overflow-hidden border border-dashed border-yellow-400/70 px-0.5 nopan nodrag"
           :style="editingStyle"
