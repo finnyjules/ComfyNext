@@ -58,6 +58,29 @@ describe('SketchReviewStrip — emits', () => {
   })
 })
 
+describe('SketchReviewStrip — loading + error states', () => {
+  it('no images, no error: shows 4 pending skeleton tiles, no image tiles, no per-card Keep — Cancel still works', async () => {
+    const w = mount(SketchReviewStrip, { props: base({ images: [], error: false }) })
+    expect(w.findAll('[data-testid="sketch-pending"]')).toHaveLength(4)
+    expect(w.findAll('[data-testid="sketch-tile"]')).toHaveLength(0)
+    expect(w.findAll('[data-testid="sketch-keep"]')).toHaveLength(0)
+    await w.get('[data-testid="sketch-cancel"]').trigger('click')
+    expect(w.emitted('cancel')).toHaveLength(1)
+  })
+  it('error: shows the error row, no pending tiles — Re-roll retries', async () => {
+    const w = mount(SketchReviewStrip, { props: base({ images: [], error: true }) })
+    expect(w.get('[data-testid="sketch-error"]').exists()).toBe(true)
+    expect(w.findAll('[data-testid="sketch-pending"]')).toHaveLength(0)
+    await w.get('[data-testid="sketch-reroll"]').trigger('click')
+    expect(w.emitted('reroll')).toHaveLength(1)
+  })
+  it('images present: unchanged ready state, no pending tiles', () => {
+    const w = mount(SketchReviewStrip, { props: base() })
+    expect(w.findAll('[data-testid="sketch-pending"]')).toHaveLength(0)
+    expect(tiles(w)).toHaveLength(4)
+  })
+})
+
 describe('SketchReviewStrip — drag to place', () => {
   it('a press-move-release past threshold emits dropAt with index + point, not select', async () => {
     const w = mount(SketchReviewStrip, { props: base(), attachTo: document.body })

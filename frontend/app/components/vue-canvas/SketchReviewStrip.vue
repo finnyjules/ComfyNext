@@ -7,7 +7,7 @@
  * (select/keep/cancel/reroll/dropAt); the canvas host turns a commit into
  * one image node and tears down the transient sketch-pad state.
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import ReviewTile from '~/components/vue-canvas/studio/ReviewTile.vue'
 import { TRAY_FLOATING, TILES_ROW, ACTIONS_BAR } from '~/components/vue-canvas/studio/reviewStripStyles'
@@ -16,7 +16,10 @@ const props = withDefaults(defineProps<{
   images: string[]
   selected: number | null
   busy?: boolean
-}>(), { busy: false })
+  /** The in-flight (or last) generation failed. Overrides loading — the strip
+   *  shows the error row instead of eternal skeletons. */
+  error?: boolean
+}>(), { busy: false, error: false })
 
 const emit = defineEmits<{
   select: [index: number]
@@ -25,6 +28,10 @@ const emit = defineEmits<{
   reroll: []
   dropAt: [payload: { index: number; clientX: number; clientY: number }]
 }>()
+
+// Opened the instant the prompt is submitted, before any sketch exists — no
+// images yet and no error means the batch is still cooking on the server.
+const loading = computed(() => !props.error && props.images.length === 0)
 
 // Drag-to-place: press-move past threshold lifts the tile into a ghost that
 // follows the pointer; release reports the drop point in screen space. A
@@ -69,7 +76,22 @@ function onTileClick(i: number) {
        tray is teleported into a shrink-to-fit `fixed` wrapper, so without a
        width the tiles would size to the sketches' intrinsic dimensions. -->
   <div data-testid="sketch-strip" :class="[TRAY_FLOATING, 'w-[400px]']">
-    <div :class="TILES_ROW">
+    <!-- error: the run failed — a message in place of the tiles, never
+         eternal skeletons. Re-roll (enabled, busy is false here) retries. -->
+    <div v-if="error" data-testid="sketch-error"
+         class="flex h-[96px] items-center justify-center text-center text-[12px] text-white/50">
+      Couldn’t sketch that — try again
+    </div>
+    <!-- loading: opened the instant the prompt was submitted, before the
+         batch exists — four non-interactive pulsing placeholders, same
+         chrome as the ready tiles, no actions/click. -->
+    <div v-else-if="loading" :class="TILES_ROW">
+      <ReviewTile v-for="i in 4" :key="i" tile-testid="sketch-pending" :selected="false">
+        <span class="block h-full w-full animate-pulse bg-white/[0.07]" />
+      </ReviewTile>
+    </div>
+    <!-- ready: the batch landed. -->
+    <div v-else :class="TILES_ROW">
       <ReviewTile v-for="(src, i) in images" :key="i"
                   tile-testid="sketch-tile" :selected="selected === i" draggable
                   @click="onTileClick(i)"

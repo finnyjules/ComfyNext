@@ -1042,8 +1042,8 @@ const sketchPad = reactive<{ anchor: { x: number, y: number } | null, seed: numb
 // are discarded when the strip closes. `sketchPad` above still tracks the
 // hidden generator node (padNodeId) and its anchor/prompt/seed for re-roll
 // and teardown — only what happens to its OUTPUT changed.
-const sketchReview = reactive<{ open: boolean, images: string[], selected: number | null }>(
-  { open: false, images: [], selected: null },
+const sketchReview = reactive<{ open: boolean, images: string[], selected: number | null, error: boolean }>(
+  { open: false, images: [], selected: null, error: false },
 )
 // True while a re-roll's run is in flight (Keep/Re-roll disabled) — separate
 // from `sketchReview` itself since the strip's own busy/idle-ness isn't part
@@ -2956,6 +2956,7 @@ function handleBridgeMessage(event: MessageEvent) {
             sketchReview.images = tagged.images.slice(0, MAX_SKETCH_ITEMS)
             sketchReview.selected = null
             sketchReview.open = true
+            sketchReview.error = false
             sketchReviewBusy.value = false
             return
           }
@@ -2984,13 +2985,17 @@ function handleBridgeMessage(event: MessageEvent) {
           errorMessage: event.data.exception_message || null,
           runningSince: null,
         }
-        // A failed Re-roll never reaches the success branch above, so
-        // sketchReviewBusy would otherwise stay stuck true — the hidden pad
-        // has no visible error ring, so that reads as the strip hanging
-        // forever. Clear it so Keep/Re-roll re-enable; the prior four takes
-        // stay in sketchReview.images so the strip remains usable.
+        // A failed run (first submit OR Re-roll) never reaches the success
+        // branch above, so sketchReviewBusy would otherwise stay stuck true —
+        // the hidden pad has no visible error ring, so that reads as the
+        // strip hanging forever (or, on first submit, an eternal skeleton).
+        // Clear busy so Keep/Re-roll re-enable, and flip the strip to its
+        // error state — a Re-roll failure still has the prior four takes in
+        // sketchReview.images, but the error message + retry affordance take
+        // priority over showing stale sketches as if nothing went wrong.
         if (target?.data?.properties?.sketchPad === true) {
           sketchReviewBusy.value = false
+          sketchReview.error = true
         }
       }
     }
@@ -3848,11 +3853,16 @@ async function startSketch(prompt: string): Promise<void> {
   const clean = cleanSketchPrompt(prompt.trim())
   if (!clean) return
   // A fresh prompt-bar submission (as opposed to Re-roll, which reuses the
-  // open strip) replaces whatever the strip was showing — close it now so a
-  // stale batch never lingers on screen while the new one is in flight.
-  sketchReview.open = false
+  // open strip) replaces whatever the strip was showing. Open it NOW, in its
+  // loading state (no images, no error → 4 pulsing skeleton tiles) — a cold
+  // Replicate boot can take 10-20s, and the old behaviour of staying closed
+  // until the whole batch landed left the user staring at nothing that long.
+  // The `executed`/`execution_error` handlers fill it in or flip it to error.
+  sketchReview.open = true
   sketchReview.images = []
   sketchReview.selected = null
+  sketchReview.error = false
+  sketchReviewBusy.value = true
   sketchPad.prompt = clean
   sketchPad.seed = Math.floor(Math.random() * 2_147_483_647)
   if (!sketchPad.anchor) {
@@ -3987,6 +3997,7 @@ function onSketchReroll(): void {
   applyWidgetOverridesTo(pad, { seed })
   sketchPad.seed = seed
   sketchReview.selected = null
+  sketchReview.error = false
   sketchReviewBusy.value = true
   window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
     detail: { targetIds: [sketchPad.padNodeId], direction: 'self', skipCostConfirm: true },
@@ -8298,6 +8309,7 @@ defineExpose({
           :images="sketchReview.images"
           :selected="sketchReview.selected"
           :busy="sketchReviewBusy"
+          :error="sketchReview.error"
           @select="onSketchSelect"
           @keep="onSketchKeep"
           @cancel="onSketchCancel"
