@@ -1,84 +1,98 @@
-import type { SketchDoc, SketchConstraint, LineEntity, CircleEntity } from './model'
-import { getEntity, getPoint, lineEndpoints, circleCenter } from './model'
+import type { SketchDoc, SketchConstraint, SketchEntity, PointEntity, LineEntity, CircleEntity, EntityId } from './model'
 import { dist, distPointToLine } from './geom'
 
-function circleOf(doc: SketchDoc, id: string): CircleEntity | null {
-  const e = getEntity(doc, id)
+type EntityMap = Map<EntityId, SketchEntity>
+
+function pointOf(map: EntityMap, id: EntityId): PointEntity | null {
+  const e = map.get(id)
+  return e && e.kind === 'point' ? e : null
+}
+function circleOf(map: EntityMap, id: EntityId): CircleEntity | null {
+  const e = map.get(id)
   return e && e.kind === 'circle' ? e : null
 }
-function lineOf(doc: SketchDoc, id: string): LineEntity | null {
-  const e = getEntity(doc, id)
+function lineOf(map: EntityMap, id: EntityId): LineEntity | null {
+  const e = map.get(id)
   return e && e.kind === 'line' ? e : null
 }
+// inline replacement for model.ts's lineEndpoints/circleCenter, resolved via the map
+function lineEnds(map: EntityMap, l: LineEntity): { a: PointEntity; b: PointEntity } | null {
+  const a = pointOf(map, l.p1); const b = pointOf(map, l.p2)
+  if (!a || !b) return null
+  return { a, b }
+}
+function circleCtr(map: EntityMap, c: CircleEntity): PointEntity | null {
+  return pointOf(map, c.center)
+}
 
-function residualsFor(doc: SketchDoc, c: SketchConstraint): number[] | null {
+function residualsFor(map: EntityMap, c: SketchConstraint): number[] | null {
   switch (c.kind) {
     case 'coincident': {
-      const a = getPoint(doc, c.refs[0]!); const b = getPoint(doc, c.refs[1]!)
+      const a = pointOf(map, c.refs[0]!); const b = pointOf(map, c.refs[1]!)
       if (!a || !b) return null
       return [a.x - b.x, a.y - b.y]
     }
     case 'concentric': {
-      const a = circleOf(doc, c.refs[0]!); const b = circleOf(doc, c.refs[1]!)
+      const a = circleOf(map, c.refs[0]!); const b = circleOf(map, c.refs[1]!)
       if (!a || !b) return null
-      const ca = circleCenter(doc, a); const cb = circleCenter(doc, b)
+      const ca = circleCtr(map, a); const cb = circleCtr(map, b)
       if (!ca || !cb) return null
       return [ca.x - cb.x, ca.y - cb.y]
     }
     case 'pointOnLine': {
-      const p = getPoint(doc, c.refs[0]!); const l = lineOf(doc, c.refs[1]!)
+      const p = pointOf(map, c.refs[0]!); const l = lineOf(map, c.refs[1]!)
       if (!p || !l) return null
-      const e = lineEndpoints(doc, l); if (!e) return null
+      const e = lineEnds(map, l); if (!e) return null
       return [distPointToLine({ x: p.x, y: p.y }, e.a, e.b)]
     }
     case 'pointOnCircle': {
-      const p = getPoint(doc, c.refs[0]!); const cir = circleOf(doc, c.refs[1]!)
+      const p = pointOf(map, c.refs[0]!); const cir = circleOf(map, c.refs[1]!)
       if (!p || !cir) return null
-      const cen = circleCenter(doc, cir); if (!cen) return null
+      const cen = circleCtr(map, cir); if (!cen) return null
       return [dist({ x: p.x, y: p.y }, cen) - cir.r]
     }
     case 'tangentLineCircle': {
-      const l = lineOf(doc, c.refs[0]!); const cir = circleOf(doc, c.refs[1]!)
+      const l = lineOf(map, c.refs[0]!); const cir = circleOf(map, c.refs[1]!)
       if (!l || !cir) return null
-      const e = lineEndpoints(doc, l); const cen = circleCenter(doc, cir)
+      const e = lineEnds(map, l); const cen = circleCtr(map, cir)
       if (!e || !cen) return null
       return [Math.abs(distPointToLine(cen, e.a, e.b)) - cir.r]
     }
     case 'tangentCircleCircle': {
-      const a = circleOf(doc, c.refs[0]!); const b = circleOf(doc, c.refs[1]!)
+      const a = circleOf(map, c.refs[0]!); const b = circleOf(map, c.refs[1]!)
       if (!a || !b) return null
-      const ca = circleCenter(doc, a); const cb = circleCenter(doc, b)
+      const ca = circleCtr(map, a); const cb = circleCtr(map, b)
       if (!ca || !cb) return null
       return [dist(ca, cb) - (a.r + b.r)]
     }
     case 'horizontal': {
-      const l = lineOf(doc, c.refs[0]!); if (!l) return null
-      const e = lineEndpoints(doc, l); if (!e) return null
+      const l = lineOf(map, c.refs[0]!); if (!l) return null
+      const e = lineEnds(map, l); if (!e) return null
       return [e.a.y - e.b.y]
     }
     case 'vertical': {
-      const l = lineOf(doc, c.refs[0]!); if (!l) return null
-      const e = lineEndpoints(doc, l); if (!e) return null
+      const l = lineOf(map, c.refs[0]!); if (!l) return null
+      const e = lineEnds(map, l); if (!e) return null
       return [e.a.x - e.b.x]
     }
     case 'distance': {
-      const a = getPoint(doc, c.refs[0]!); const b = getPoint(doc, c.refs[1]!)
+      const a = pointOf(map, c.refs[0]!); const b = pointOf(map, c.refs[1]!)
       if (!a || !b || c.value == null) return null
       return [dist({ x: a.x, y: a.y }, { x: b.x, y: b.y }) - c.value]
     }
     case 'radius': {
-      const cir = circleOf(doc, c.refs[0]!)
+      const cir = circleOf(map, c.refs[0]!)
       if (!cir || c.value == null) return null
       return [cir.r - c.value]
     }
     case 'equalDist': {
-      const a = getPoint(doc, c.refs[0]!); const b = getPoint(doc, c.refs[1]!)
-      const p = getPoint(doc, c.refs[2]!); const q = getPoint(doc, c.refs[3]!)
+      const a = pointOf(map, c.refs[0]!); const b = pointOf(map, c.refs[1]!)
+      const p = pointOf(map, c.refs[2]!); const q = pointOf(map, c.refs[3]!)
       if (!a || !b || !p || !q) return null
       return [dist({ x: a.x, y: a.y }, { x: b.x, y: b.y }) - dist({ x: p.x, y: p.y }, { x: q.x, y: q.y })]
     }
     case 'rotatedFrom': {
-      const cp = getPoint(doc, c.refs[0]!); const og = getPoint(doc, c.refs[1]!); const ce = getPoint(doc, c.refs[2]!)
+      const cp = pointOf(map, c.refs[0]!); const og = pointOf(map, c.refs[1]!); const ce = pointOf(map, c.refs[2]!)
       if (!cp || !og || !ce || c.value == null) return null
       const a = c.value * Math.PI / 180
       const co = Math.cos(a), si = Math.sin(a)
@@ -88,9 +102,9 @@ function residualsFor(doc: SketchDoc, c: SketchConstraint): number[] | null {
       return [cp.x - rx, cp.y - ry]
     }
     case 'mirroredFrom': {
-      const cp = getPoint(doc, c.refs[0]!); const og = getPoint(doc, c.refs[1]!); const l = lineOf(doc, c.refs[2]!)
+      const cp = pointOf(map, c.refs[0]!); const og = pointOf(map, c.refs[1]!); const l = lineOf(map, c.refs[2]!)
       if (!cp || !og || !l) return null
-      const e = lineEndpoints(doc, l); if (!e) return null
+      const e = lineEnds(map, l); if (!e) return null
       const dirx = e.b.x - e.a.x, diry = e.b.y - e.a.y
       const L = Math.hypot(dirx, diry)
       if (L < 1e-12) return null
@@ -101,7 +115,7 @@ function residualsFor(doc: SketchDoc, c: SketchConstraint): number[] | null {
       return [cp.x - rx, cp.y - ry]
     }
     case 'collinear': {
-      const a = getPoint(doc, c.refs[0]!); const b = getPoint(doc, c.refs[1]!); const p = getPoint(doc, c.refs[2]!)
+      const a = pointOf(map, c.refs[0]!); const b = pointOf(map, c.refs[1]!); const p = pointOf(map, c.refs[2]!)
       if (!a || !b || !p) return null
       return [(b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)]
     }
@@ -111,9 +125,11 @@ function residualsFor(doc: SketchDoc, c: SketchConstraint): number[] | null {
 }
 
 export function constraintResiduals(doc: SketchDoc): number[] {
+  const map: EntityMap = new Map()
+  for (const e of doc.entities) map.set(e.id, e)
   const out: number[] = []
   for (const c of doc.constraints) {
-    const r = residualsFor(doc, c)
+    const r = residualsFor(map, c)
     if (r) out.push(...r)
   }
   return out

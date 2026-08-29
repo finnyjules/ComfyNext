@@ -2,7 +2,7 @@
 <script setup lang="ts">
 // Dev harness — not linked in the app. Interactive constraint drawing surface.
 definePageMeta({ layout: false })
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, toRaw } from 'vue'
 import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
 import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, addSmoothHandles } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
@@ -108,8 +108,26 @@ function del() {
   runSolve()
 }
 
+// Solve on a plain (non-reactive) snapshot — every inner-loop read/write in the
+// solver would otherwise pay Vue proxy overhead. structuredClone(toRaw(...)) strips
+// nested reactivity; fall back to a JSON round-trip if structuredClone ever balks
+// at what toRaw hands back. Only positions/radii are copied back afterward — solve
+// never changes entity/constraint structure.
 function runSolve(drag?: DragTarget) {
-  const res = solve(doc.value, { maxIter: 120, drag })
+  let plain: SketchDoc
+  try {
+    plain = structuredClone(toRaw(doc.value))
+  } catch {
+    plain = JSON.parse(JSON.stringify(toRaw(doc.value)))
+  }
+  const res = solve(plain, { maxIter: 120, drag })
+  const solved = new Map(plain.entities.map(e => [e.id, e]))
+  for (const e of doc.value.entities) {
+    const s = solved.get(e.id)
+    if (!s) continue
+    if (e.kind === 'point' && s.kind === 'point') { e.x = s.x; e.y = s.y }
+    else if (e.kind === 'circle' && s.kind === 'circle') { e.r = s.r }
+  }
   status.value = res.converged ? `solved · ${doc.value.entities.length} ent · ${doc.value.constraints.length} con` : `NOT converged (${res.residualNorm.toFixed(2)})`
   return res
 }
