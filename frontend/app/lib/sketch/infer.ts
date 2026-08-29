@@ -39,6 +39,9 @@ export function snapPoint(
   for (const e of doc.entities) {
     if (exclude.has(e.id)) continue
     if (e.kind === 'point') {
+      // construction points are pen/smooth handles, not snap targets; construction
+      // LINES/CIRCLES (guides) still snap below — only points are excluded here
+      if (e.construction) continue
       const d = dist(p, { x: e.x, y: e.y })
       consider({ kind: 'coincident', targetId: e.id, x: e.x, y: e.y, dist: d })
     } else if (e.kind === 'line') {

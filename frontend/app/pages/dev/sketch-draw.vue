@@ -4,7 +4,7 @@
 definePageMeta({ layout: false })
 import { ref, computed, onMounted, toRaw } from 'vue'
 import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
-import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, addSmoothHandles } from '~/lib/sketch/edit'
+import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, addSmoothHandles, isPointReferenced } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
@@ -109,16 +109,18 @@ function del() {
 }
 
 // Solve on a plain (non-reactive) snapshot — every inner-loop read/write in the
-// solver would otherwise pay Vue proxy overhead. structuredClone(toRaw(...)) strips
-// nested reactivity; fall back to a JSON round-trip if structuredClone ever balks
-// at what toRaw hands back. Only positions/radii are copied back afterward — solve
-// never changes entity/constraint structure.
+// solver would otherwise pay Vue proxy overhead. structuredClone can't handle
+// what toRaw hands back once any entity has gone through a delete (a stale Vue
+// proxy reference can end up embedded), so build the plain snapshot explicitly
+// instead. Only positions/radii are copied back afterward — solve never changes
+// entity/constraint structure.
 function runSolve(drag?: DragTarget) {
-  let plain: SketchDoc
-  try {
-    plain = structuredClone(toRaw(doc.value))
-  } catch {
-    plain = JSON.parse(JSON.stringify(toRaw(doc.value)))
+  const plain: SketchDoc = {
+    entities: doc.value.entities.map(e => ({
+      ...toRaw(e),
+      ...(e.kind === 'path' ? { anchors: [...e.anchors], segments: e.segments.map(s => ({ ...toRaw(s) })) } : {}),
+    })),
+    constraints: doc.value.constraints.map(c => ({ ...toRaw(c), refs: [...c.refs] })),
   }
   const res = solve(plain, { maxIter: 120, drag })
   const solved = new Map(plain.entities.map(e => [e.id, e]))
@@ -204,9 +206,11 @@ function pathClick(x: number, y: number) {
   pp.anchors.push(id)
 }
 
-// closing segment between last and first anchors; pen paths always close with a cubic
+// closing segment between last and first anchors; pen paths always close with a cubic.
+// h2 wires the first anchor's own incoming handle back in — if it was drawn smooth,
+// firstHIn holds that handle so the closing curve honors it instead of landing as a cusp.
 function closingSegment(): SegmentSpec {
-  return tool.value === 'pen' ? { kind: 'cubic', h1: lastHOut, h2: null } : { kind: 'line' }
+  return tool.value === 'pen' ? { kind: 'cubic', h1: lastHOut, h2: firstHIn } : { kind: 'line' }
 }
 
 function finishPath(close = false) {
@@ -230,12 +234,16 @@ function finishPath(close = false) {
 type PenDrag = { anchor: EntityId; startX: number; startY: number; smooth: boolean } | null
 let penDrag: PenDrag = null
 let lastHOut: EntityId | null = null
+// the first anchor's incoming handle, if it was drawn smooth — wired into the
+// closing segment's h2 when the path closes (see closingSegment / F3)
+let firstHIn: EntityId | null = null
 
 function penDown(x: number, y: number) {
   const id = placePoint(x, y)
   if (!pendingPath.value) {
     pendingPath.value = { anchors: [id], segments: [] }
     lastHOut = null
+    firstHIn = null
     penDrag = { anchor: id, startX: x, startY: y, smooth: false }
     return
   }
@@ -263,7 +271,12 @@ function penUp(x: number, y: number) {
       const segIn = pp.segments[pp.segments.length - 1]
       if (segIn && segIn.kind === 'cubic') segIn.h2 = hIn
     }
+    if (pp && pp.anchors[0] === anchor) firstHIn = hIn  // this anchor IS the path's first anchor
     lastHOut = hOut
+  } else {
+    // corner anchor — no outgoing handle; must NOT carry the previous smooth
+    // anchor's hOut into the next segment (F1)
+    lastHOut = null
   }
   runSolve()
 }
@@ -333,7 +346,26 @@ const constructionScreen = computed(() => {
   }
   return parts.join(' ')
 })
-const pts = computed(() => doc.value.entities.filter(e => e.kind === 'point') as any[])
+// construction points are handles — only worth drawing while their owning
+// path is selected or is the in-progress draw; otherwise they're stray dots
+const visibleHandleIds = computed(() => {
+  const d = doc.value
+  const out = new Set<EntityId>()
+  const addHandles = (segments: SegmentSpec[]) => {
+    for (const seg of segments) {
+      if (seg.kind !== 'cubic') continue
+      if (seg.h1) out.add(seg.h1)
+      if (seg.h2) out.add(seg.h2)
+    }
+  }
+  for (const e of d.entities) {
+    if (e.kind === 'path' && selection.value.includes(e.id)) addHandles(e.segments)
+  }
+  if (pendingPath.value) addHandles(pendingPath.value.segments)
+  return out
+})
+const pts = computed(() => doc.value.entities.filter(e =>
+  e.kind === 'point' && (!(e as any).construction || visibleHandleIds.value.has(e.id))) as any[])
 const marks = computed(() => constraintMarks(doc.value))
 
 // screen-space arm lines (anchor→handle) for cubic segments of selected or pending paths
@@ -410,20 +442,46 @@ function onPointerUp(ev: PointerEvent) {
   dragId = null
 }
 
+// an abandoned path/pen draw (tool switched away, or reset, before it was
+// committed) leaves its anchors and handles sitting in the doc forever. Delete
+// whichever of them nothing committed ends up referencing — an anchor reused
+// via snap-coincidence with existing geometry stays (deleteEntity would
+// otherwise cascade into whatever committed line/circle/path shares it).
+function cleanupPendingPath() {
+  const pp = pendingPath.value
+  if (!pp) return
+  const candidates = new Set<EntityId>(pp.anchors)
+  for (const s of pp.segments) {
+    if (s.kind === 'cubic') { if (s.h1) candidates.add(s.h1); if (s.h2) candidates.add(s.h2) }
+    else if (s.kind === 'arc') candidates.add(s.center)
+  }
+  if (lastHOut) candidates.add(lastHOut)
+  if (firstHIn) candidates.add(firstHIn)
+  for (const id of candidates) {
+    const p = doc.value.entities.find(e => e.id === id) as any
+    if (!p || p.kind !== 'point' || p.fixed) continue
+    if (!isPointReferenced(doc.value, id)) deleteEntity(doc.value, id)
+  }
+}
+
 function selectTool(t: Tool) {
+  cleanupPendingPath()
   tool.value = t
   pending.value = null
   pendingPath.value = null
   penDrag = null
   lastHOut = null
+  firstHIn = null
 }
 
 function reset() {
+  cleanupPendingPath()
   doc.value = { entities: [], constraints: [] }
   pending.value = null
   pendingPath.value = null
   penDrag = null
   lastHOut = null
+  firstHIn = null
   status.value = 'ready'
 }
 

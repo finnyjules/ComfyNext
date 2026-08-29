@@ -45,6 +45,14 @@ describe('snapPoint', () => {
     expect(r.snap).toBeNull()
     expect(r).toMatchObject({ x: 50, y: 50 })
   })
+
+  it('does not snap to a construction point (a pen/smooth handle), even within tolerance', () => {
+    const d = doc()
+    d.entities.push({ id: 'h', kind: 'point', x: 20, y: 20, construction: true })
+    const r = snapPoint(d, 20.2, 19.9)
+    expect(r.snap?.targetId).not.toBe('h')
+    expect(r.snap).toBeNull()
+  })
 })
 
 describe('inferCircleTangents', () => {

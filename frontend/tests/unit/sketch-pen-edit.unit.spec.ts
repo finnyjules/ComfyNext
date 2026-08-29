@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SketchDoc } from '~/lib/sketch/model'
-import { addPoint, addPath, addSmoothHandles, setAnchorSmooth } from '~/lib/sketch/edit'
+import { addPoint, addPath, addConstraint, deleteEntity, addSmoothHandles, setAnchorSmooth } from '~/lib/sketch/edit'
 import { getPoint } from '~/lib/sketch/model'
 import { solve } from '~/lib/sketch/solve'
 
@@ -41,5 +41,28 @@ describe('setAnchorSmooth', () => {
     expect(path.segments[0].h2).toBeTruthy()     // incoming handle of b
     expect(path.segments[1].h1).toBeTruthy()     // outgoing handle of b
     expect(d.constraints.some(k => k.kind === 'collinear')).toBe(true)
+  })
+})
+
+describe('deleteEntity — handle demotion', () => {
+  it('deleting a handle (cubic h1/h2) demotes the anchor to a cusp instead of deleting the path', () => {
+    const d = empty()
+    const a = addPoint(d, 0, 0)
+    const b = addPoint(d, 6, 0)
+    const hOut = addPoint(d, 2, 1, { construction: true })
+    const hIn = addPoint(d, -2, -1, { construction: true })
+    addConstraint(d, 'collinear', [hIn, a, hOut])
+    const P = addPath(d, [a, b], [{ kind: 'cubic', h1: hOut, h2: null }])
+    expect(P).not.toBe('')
+
+    deleteEntity(d, hOut)
+
+    const path = d.entities.find(e => e.id === P) as any
+    expect(path).toBeTruthy()               // path survives
+    expect(path.segments[0].h1).toBeNull()  // handle slot nulled, not cascaded
+    expect(d.constraints.some(k => k.kind === 'collinear')).toBe(false)  // dangling refs dropped
+    expect(d.entities.some(e => e.id === hOut)).toBe(false)              // the handle point itself is gone
+    expect(d.entities.some(e => e.id === a)).toBe(true)                  // anchors untouched
+    expect(d.entities.some(e => e.id === b)).toBe(true)
   })
 })

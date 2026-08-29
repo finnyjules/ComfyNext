@@ -31,7 +31,7 @@ describe('solve perf (guard scale)', () => {
     expect(doc.constraints.length).toBe(76)
   })
 
-  it('drag-solves well under the interactive budget (mean < 25ms over 10 drags)', () => {
+  it('drag-solves well under the interactive budget (mean < 60ms over 10 drags)', () => {
     const { doc, dragId } = buildGuardDoc()
 
     // warm up the JIT so the first measured iteration isn't skewed by cold-start cost —
@@ -53,8 +53,8 @@ describe('solve perf (guard scale)', () => {
 
     expect(results.every(Boolean)).toBe(true)
     const mean = times.reduce((s, t) => s + t, 0) / times.length
-    // generous CI margin — measured ~2-5ms locally after the fixes, ~563ms before them
-    // generous under shared-machine load; a real regression (O(E) find scans) is >500ms at this scale
+    // generous CI margin for shared-machine load — measured ~2-5ms locally after the
+    // fixes, ~563ms before them; a real regression (O(E) find scans) is >500ms at this scale
     expect(mean).toBeLessThan(60)
   })
 })

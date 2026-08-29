@@ -51,8 +51,18 @@ function pathMemberPoints(p: PathEntity): EntityId[] {
   return [...out]
 }
 
+// true if a path references the given point as an anchor or an arc-segment center
+// (i.e. structurally — losing it must cascade); a cubic h1/h2 reference does not count
+function pathReferencesAsAnchorOrArcCenter(p: PathEntity, pid: EntityId): boolean {
+  if (p.anchors.includes(pid)) return true
+  for (const s of p.segments) {
+    if (s.kind === 'arc' && s.center === pid) return true
+  }
+  return false
+}
+
 // is this point still referenced by any entity currently in the doc?
-function isPointReferenced(doc: SketchDoc, pid: EntityId): boolean {
+export function isPointReferenced(doc: SketchDoc, pid: EntityId): boolean {
   for (const e of doc.entities) {
     if (e.kind === 'line' && (e.p1 === pid || e.p2 === pid)) return true
     if (e.kind === 'circle' && e.center === pid) return true
@@ -75,7 +85,20 @@ export function deleteEntity(doc: SketchDoc, id: EntityId): void {
     for (const other of doc.entities) {
       if (other.kind === 'line' && (other.p1 === id || other.p2 === id)) dependents.push(other.id)
       else if (other.kind === 'circle' && other.center === id) dependents.push(other.id)
-      else if (other.kind === 'path' && pathReferencesPoint(other, id)) dependents.push(other.id)
+      else if (other.kind === 'path') {
+        if (pathReferencesAsAnchorOrArcCenter(other, id)) {
+          dependents.push(other.id)
+        } else if (pathReferencesPoint(other, id)) {
+          // referenced only as a cubic h1/h2 handle — demote to a cusp instead of
+          // cascading the whole path; the collinear rule (if any) dies below via
+          // the dangling-refs filter since it references this point's id
+          for (const s of other.segments) {
+            if (s.kind !== 'cubic') continue
+            if (s.h1 === id) s.h1 = null
+            if (s.h2 === id) s.h2 = null
+          }
+        }
+      }
     }
   }
   // capture path-specific info before the entity is removed
