@@ -24,8 +24,13 @@ function pathD(doc: SketchDoc, p: Extract<SketchEntity, { kind: 'path' }>): stri
       const span = seg.sweep === 1 ? ccw : TAU - ccw
       const large = span > Math.PI ? 1 : 0
       d += ` A ${num(r)} ${num(r)} 0 ${large} ${seg.sweep} ${num(to.x)} ${num(to.y)}`
+    } else if (seg.kind === 'cubic') {
+      const h1 = seg.h1 ? getPoint(doc, seg.h1) : undefined
+      const h2 = seg.h2 ? getPoint(doc, seg.h2) : undefined
+      const c1 = h1 ?? from
+      const c2 = h2 ?? to
+      d += ` C ${num(c1.x)} ${num(c1.y)} ${num(c2.x)} ${num(c2.y)} ${num(to.x)} ${num(to.y)}`
     } else {
-      // 'line' and (until M2 renders curves) 'cubic' both emit straight
       d += ` L ${num(to.x)} ${num(to.y)}`
     }
   }
