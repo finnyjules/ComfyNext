@@ -25,6 +25,12 @@ export const VIDEO_MODEL_USD: Record<string, { usd: number; hint: string }> = {
   'seedance-2.0': { usd: 0.60, hint: '~$0.60 / 5s' },
   'seedance-2.0-fast': { usd: 0.30, hint: '~$0.30 / 5s' },
   'hailuo-2.3': { usd: 0.35, hint: '~$0.35 / 6s' },
+  // H3 at 768p is $0.06/s on fal (verified 2026-08-28); priced at the 5s point.
+  'hailuo-h3': { usd: 0.30, hint: '~$0.30 / 5s' },
+  // H3 Max 768p is a launch promo ($0.04/s) that lists at $0.08/s from Sep 1;
+  // priced at the STABLE post-promo 5s rate so the cliff never turns a run
+  // into a loss (the promo just earns extra margin while it holds).
+  'hailuo-h3-max': { usd: 0.40, hint: '~$0.40 / 5s' },
   'wan-2.7-t2v': { usd: 0.15, hint: '~$0.15 / 5s' },
   'wan-2.5-i2v-fast': { usd: 0.06, hint: '~$0.06 / 5s' },
   'luma-ray-2-720p': { usd: 0.40, hint: '~$0.40 / 5s' },

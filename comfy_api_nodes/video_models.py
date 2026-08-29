@@ -342,6 +342,61 @@ def _b_hailuo_2_3(prompt, ar, dur, seed, image, audio, adv):
     return inp
 
 
+# MiniMax Hailuo H3 (fal.ai). fal's enums diverge from every marketing surface
+# and each mismatch is a silent 200-at-submit / fail-at-result fallover:
+#   - resolution is UPPERCASE-P ("768P"); the catalog stores lowercase "768p".
+#   - duration is a bare INTEGER 5-15, not a "5s"-suffixed string like Veo.
+#   - prompt_expansion_mode is REQUIRED on H3 Max and its enum omits "fast".
+#   - there is no audio flag (native stereo is always on).
+# We expose 768P only, so the flat per-model price stays honest against fal's
+# 2K default (2.2x the 768P rate) until video pricing is resolution-aware.
+_H3_AR       = {"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
+_H3_DURS     = [5, 6, 10]
+_H3_RES      = {"480p": "480P", "768p": "768P", "2k": "2K", "4k": "4K"}
+_H3_PEM_BASE = {"disabled", "fast", "balanced", "quality"}
+_H3_PEM_MAX  = {"disabled", "balanced", "quality"}
+
+
+def _h3_resolution(adv: dict) -> str:
+    """Map the catalog's lowercase resolution to fal's uppercase-P enum."""
+    return _H3_RES.get(_opt_str(adv, "resolution", "768p").lower(), "768P")
+
+
+def _h3_pem(adv: dict, allowed: set[str]) -> str:
+    """prompt_expansion_mode, clamped to the endpoint's allowed set. Always
+    present so H3 Max's required-field constraint is satisfied."""
+    v = _opt_str(adv, "prompt_expansion_mode", "balanced")
+    return v if v in allowed else "balanced"
+
+
+def _b_hailuo_h3_core(prompt, ar, dur, seed, image, adv, pem_allowed):
+    inp: dict[str, Any] = {
+        "prompt": prompt,
+        "duration": _dur_or(_H3_DURS, dur, 5),      # INTEGER for fal
+        "resolution": _h3_resolution(adv),          # UPPERCASE-P, forced
+        "prompt_expansion_mode": _h3_pem(adv, pem_allowed),
+    }
+    # A wired IMAGE tensor (already a data URL) wins over an adv image_url.
+    first = image or _opt_str(adv, "image_url", "")
+    if first:
+        inp["image_url"] = first
+        if last := _opt_str(adv, "end_image_url", ""):
+            inp["end_image_url"] = last
+        # i2v: output aspect follows the image, so no aspect_ratio field.
+    else:
+        inp["aspect_ratio"] = _ar_or(_H3_AR, ar, "16:9")
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _b_hailuo_h3(prompt, ar, dur, seed, image, audio, adv):
+    return _b_hailuo_h3_core(prompt, ar, dur, seed, image, adv, _H3_PEM_BASE)
+
+
+def _b_hailuo_h3_max(prompt, ar, dur, seed, image, audio, adv):
+    return _b_hailuo_h3_core(prompt, ar, dur, seed, image, adv, _H3_PEM_MAX)
+
+
 # ===== Wan (open-source) ====================================================
 
 def _b_wan_2_7_t2v(prompt, ar, dur, seed, image, audio, adv):
@@ -530,6 +585,33 @@ MODELS: list[VideoModel] = [
         aspect_ratios=["16:9", "9:16", "1:1"],
         durations=[6, 10], default_duration=6,
         modes=["t2v", "i2v"], build_input=_b_hailuo_2_3,
+    ),
+    VideoModel(
+        id="hailuo-h3", label="Hailuo H3", brand="MiniMax",
+        replicate_slug="minimax/h3",
+        aspect_ratios=["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        durations=[5, 6, 10], default_duration=5,
+        modes=["t2v", "i2v"], build_input=_b_hailuo_h3,
+        provider="fal", fal_app="minimax/h3",
+        fal_fn_by_mode={
+            "t2v": "text-to-video",
+            "firstLast": "image-to-video",
+            "reference": "reference-to-video",
+        },
+    ),
+    VideoModel(
+        id="hailuo-h3-max", label="Hailuo H3 Max", brand="MiniMax",
+        replicate_slug="minimax/h3-max",
+        aspect_ratios=["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        durations=[5, 6, 10], default_duration=5,
+        modes=["t2v", "i2v"], build_input=_b_hailuo_h3_max,
+        provider="fal", fal_app="minimax/h3-max",
+        # H3 Max has no reference-to-video endpoint; its builder never emits
+        # *_urls arrays, so the reference branch is unreachable here.
+        fal_fn_by_mode={
+            "t2v": "text-to-video",
+            "firstLast": "image-to-video",
+        },
     ),
     VideoModel(
         id="wan-2.7-t2v", label="Wan 2.7 T2V", brand="Wan",

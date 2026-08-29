@@ -361,6 +361,50 @@ export const VIDEO_MODELS: VideoModel[] = [
         default: true, description: 'MiniMax\'s server-side prompt rewriter.' },
     ],
   },
+  {
+    id: 'hailuo-h3',
+    label: 'Hailuo H3',
+    brand: 'MiniMax',
+    replicateSlug: 'minimax/h3',
+    pitch: 'MiniMax\'s frontier model — top-ranked open-weights video, native audio.',
+    description:
+      'Hailuo H3 generates video with native stereo audio, ranking among the ' +
+      'top text-to-video and image-to-video models on the Artificial Analysis ' +
+      'arena. Rendered at 768p; audio is always on.',
+    tags: ['cinematic', 'flagship'],
+    modes: ['t2v', 'i2v'],
+    supportsSeed: true,
+    priceHint: '~$0.30 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 6, 10],
+    defaultDuration: 5,
+    resolutions: ['768p'],
+    defaultResolution: '768p',
+    advanced: [],
+  },
+  {
+    id: 'hailuo-h3-max',
+    label: 'Hailuo H3 Max',
+    brand: 'MiniMax',
+    replicateSlug: 'minimax/h3-max',
+    pitch: 'fal\'s post-trained H3 — #1 image-to-video, faster renders.',
+    description:
+      'H3 Max is fal\'s post-trained variant of Hailuo H3, tuned for prompt ' +
+      'adherence and aesthetics and ranked #1 for image-to-video with audio. ' +
+      'Rendered at 768p; audio is always on.',
+    tags: ['cinematic', 'flagship'],
+    modes: ['t2v', 'i2v'],
+    supportsSeed: true,
+    priceHint: '~$0.40 / 5s',
+    aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 6, 10],
+    defaultDuration: 5,
+    resolutions: ['768p'],
+    defaultResolution: '768p',
+    advanced: [],
+  },
 
   // ===== Wan (open-source) ================================================
   {
