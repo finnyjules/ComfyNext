@@ -123,7 +123,7 @@ import PinImageAnnotationView from '~/components/vue-canvas/PinImageAnnotation.v
 import PinResultAnnotationView from '~/components/vue-canvas/PinResultAnnotation.vue'
 import ArrowsLayer, { type ResolvedArrow } from '~/components/vue-canvas/ArrowsLayer.vue'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
-import { Play, EyeOff, Ban, Copy, Trash2, Group, SquareDashedMousePointer, Palette, Edit3, Frame, PlusSquare, Boxes, ChevronsUpDown, ChevronsDownUp, Lock, Unlock, Flag, StickyNote, ListChecks, Image as ImageIcon, ArrowRight, Check } from 'lucide-vue-next'
+import { Play, EyeOff, Ban, Copy, Trash2, Group, SquareDashedMousePointer, Palette, Edit3, Frame, Maximize2, PlusSquare, Boxes, ChevronsUpDown, ChevronsDownUp, Lock, Unlock, Flag, StickyNote, ListChecks, Image as ImageIcon, ArrowRight, Check } from 'lucide-vue-next'
 import { useBlockLibrary } from '~/composables/useBlockLibrary'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
@@ -1526,20 +1526,22 @@ function onGlobalKey(e: KeyboardEvent) {
 
 // F: drop a Frame (Compositor) on the canvas, selected and ready to edit.
 // Minted through `createNodeData` — the same path Add ▸ Frame and
-// `combineIntoFrame` use — so the node shape is identical, and landed at the
-// viewport center like every other added node (annotations spawn at the cursor;
-// a Frame is a big card, and Add ▸ Frame's center placement is the one users
-// already know). Drag-out framing is deliberately not built here.
-async function createFrameAtCenter() {
+// `combineIntoFrame` use — so the node shape is identical. Placement is caller-
+// chosen: the F key drops it at the viewport centre (the placement users already
+// know from Add ▸ Frame); the pane context menu drops it where the user
+// right-clicked. Drag-out framing is deliberately not built here.
+async function createFrameAt(pos: { x: number; y: number }) {
   if (!objectInfo.value['Compositor']) await fetchObjectInfo()
   if (!objectInfo.value['Compositor']) {
     toast.error('Couldn’t add a Frame', { description: 'The Compositor node isn’t available — is ComfyUI running?' })
     return
   }
-  const center = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-  const frame = createNodeData('Compositor', { x: center.x, y: center.y })
+  const frame = createNodeData('Compositor', { x: pos.x, y: pos.y })
   nodes.value.push(frame as any)
   selectNode(frame.id)
+}
+function createFrameAtCenter() {
+  return createFrameAt(project({ x: window.innerWidth / 2, y: window.innerHeight / 2 }))
 }
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKey)
@@ -6749,8 +6751,14 @@ function paneMenuItems(x: number, y: number): MenuItem[] {
       action: () => beginArrowFromPoint(spawn.x, spawn.y),
       shortcut: 'A',
     },
+    {
+      label: 'Add Frame',
+      icon: Frame,
+      action: () => createFrameAt({ x: spawn.x, y: spawn.y }),
+      shortcut: 'F',
+    },
     { divider: true },
-    { label: 'Fit View', icon: Frame, action: () => fitView({ padding: 0.2 }) },
+    { label: 'Fit View', icon: Maximize2, action: () => fitView({ padding: 0.2 }) },
     { label: 'Select All', icon: SquareDashedMousePointer, action: () => {
       for (const n of nodes.value as any[]) n.selected = true
     } },
