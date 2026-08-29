@@ -1,7 +1,7 @@
 # Frame polish — card hot paths + editor niceties
 
 **Date:** 2026-08-28
-**Status:** approved (Julien: "tier 1 and per-corner radius, stroke alignment, dashed strokes, drag-to-scrub numeric fields, layer thumbnails, system-clipboard paste of layers feel important")
+**Status:** landed 2026-08-28 (`ced455c6a`..`1982aed3a`; all 6 feature tasks reviewed; live umbrella pass owed — shared dev server down on unrelated parallel-session server code)
 **Scope:** two clusters. A: the Frame card's hottest gestures. B: six editor-polish features, modal-first (paint changes land in the shared pipeline so the card and bakes inherit them).
 
 ## Cluster A — card hot paths

@@ -74,6 +74,28 @@ mirrors the canvas newest-first (tiles are living references, still-until-hover,
 close and lands as a canvas node; formats = discipline not machinery. Brainstormed via
 visual-companion mockups (persisted in `.superpowers/brainstorm/`), each decision wargamed.
 
+### Frame polish — card hot paths + six editor niceties — LANDED 2026-08-28 (`ced455c6a`..`1982aed3a`)
+
+The daily-gesture friction and the up-close "is this a real editor" gaps, in one program.
+**Card hot paths:** Add text now focuses+selects the textarea so you type immediately (was
+add→dblclick→click→select→type); double-clicking an idle-card text layer no longer makes it
+vanish (edit mode now precedes text edit); **F places a Frame**. A pre-existing Escape
+double-action was fixed in passing (textarea handler + window listener both fired — now
+e.target-aware, a symmetric 2-press ladder). **Editor niceties (modal-first, paint in the
+shared pipeline so card + bakes inherit):** per-corner radius on rects (`number | [tl,tr,br,bl]`,
+plain number unchanged); stroke alignment (center/inside/outside via clip/knockout, closed
+shapes) + dashed strokes (every stroked kind); **drag-to-scrub** on all 48 inspector number
+fields (one `v-scrubnum` directive, fields scrub in display units so no absurd deltas, 3px gate
+preserves click-to-type); ~24px **live layer thumbnails** in the panel (debounced, one-shot
+drain, no standing loop, wired thumbs use live slot pixels); layers ride the **OS clipboard**
+(⌘C writes JSON+PNG in-gesture, ⌘V pastes across frames/projects/sessions, wired materializes
+to a snapshot first). Every field optional, absent = byte-identical, none animatable v1, SVG
+export parity out of scope. 77 unit tests; each task per-reviewed + fix-looped. Ledgered
+follow-up: outside-align allocates a device-sized scratch per stroke — swap to bbox-sized before
+it reaches motion/Elements. **OWED:** live umbrella pass + the OS-clipboard hand-check (shared
+dev server was down on unrelated parallel-session server code). Spec/plan
+2026-08-28-frame-polish-hotpaths.
+
 ### Frame — wired layers become native layers + the modal breathes — LANDED 2026-08-28 (`925c43728`..`8d3cac809`+fixes)
 
 **Toolbar regroup fast-follow (same day, `eb2900d0e`+`49a995341`):** the modal's bottom bar
