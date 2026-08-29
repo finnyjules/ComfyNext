@@ -96,6 +96,25 @@ Phase 2 must also fix the solver's dead in-loop early-break (burns full maxIter 
 per-pointer-move). Phases 3–4: draw-time inference chips + persistent constraint badges + selection
 verbs; agent verbs + curvature-comb overlay.
 
+### Sketch drawing surface — Phase 2 (standalone) LANDED (dev-only) 2026-08-29 (`cc194e3a6`..`294672b0b`)
+
+The solver became a **drawing tool** — you place geometry and the relationships you draw with are
+captured automatically. New page **`/dev/sketch-draw`**: Point/Line/Circle tools click-to-place with
+**draw-time snapping** (drop a point near a line → it goes on the line; finish a circle near a line/
+circle → it goes tangent, no menu), **Select** drags points with live re-solve, a **context-sensitive
+constraint bar** (2 circles → Concentric/Tangent · line+circle → Tangent · 1 line → Horizontal/Vertical
+· point+line → Point-on-line · 1 circle → Radius… · 2 points → Coincident/Distance…), **Delete** with
+cascade, and **visible constraint badges + dimension chips** on the drawing (T · R 3 · H …). New
+dependency-light modules: `edit.ts` (authoring + cascading delete), `ids.ts` (collision-free ids),
+`infer.ts` (snap + tangency inference), `merge.ts` (tolerant validator), `annotate.ts` (badge
+placement). **LIVE-VERIFIED**: three circles drawn tangent to a line auto-captured all 3 tangents;
+tilting the line through steep angles kept every circle tangent (error 0.0000). Select-two-and-apply
+also works: applying Tangent to a *non-tangent* circle solved it into tangency (error 0). 17 new unit
+tests (98/98 sketch suite) + 2 E2E. Plan: `superpowers/plans/2026-08-29-sketch-drawing-surface-phase2.md`.
+**Still NOT in Shape Studio** — the mount is a deliberate next decision (changes a shipped surface; the
+drawing model is proven standalone first). Next: mount as a `sketch` layer kind in Shape Studio (draw
+→ array → boolean-fold), then arcs + agent verbs + curvature comb.
+
 ### Frame polish — card hot paths + six editor niceties — LANDED 2026-08-28 (`ced455c6a`..`1982aed3a`)
 
 The daily-gesture friction and the up-close "is this a real editor" gaps, in one program.
