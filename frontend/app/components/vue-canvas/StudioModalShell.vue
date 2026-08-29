@@ -33,6 +33,9 @@ const props = defineProps<{
   agentPlaceholder?: string
   fullBleed?: boolean
   fullBleedBottomOffset?: number
+  /** Stack above another full-screen overlay (e.g. the Timeline editor at z-100)
+   *  when this studio is opened OVER it — the clip-in-place editor. Default z-50. */
+  elevated?: boolean
 }>()
 const emit = defineEmits<{ close: [] }>()
 
@@ -104,7 +107,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+  <div class="fixed inset-0 flex items-center justify-center bg-black/70" :class="elevated ? 'z-[110]' : 'z-50'">
     <div ref="rootEl" tabindex="-1" role="dialog" aria-modal="true"
          class="flex h-[820px] max-h-[92vh] w-[1400px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e0e10] text-white outline-none">
       <div class="flex shrink-0 items-center gap-2 px-4 pt-3 pb-1">

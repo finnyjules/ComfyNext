@@ -1805,7 +1805,7 @@ async function exportWebEmbed() {
 </script>
 
 <template>
-  <StudioModalShell title="Expressive Studio" :breadcrumb="effect.label" @close="closeEditor">
+  <StudioModalShell title="Expressive Studio" :breadcrumb="effect.label" :elevated="clipMode" @close="closeEditor">
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg" style="background:#0e0e10" />
