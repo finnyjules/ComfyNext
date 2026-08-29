@@ -74,6 +74,28 @@ mirrors the canvas newest-first (tiles are living references, still-until-hover,
 close and lands as a canvas node; formats = discipline not machinery. Brainstormed via
 visual-companion mockups (persisted in `.superpowers/brainstorm/`), each decision wargamed.
 
+### Sketch constraints — precise-drawing solver: Phase 1 LANDED (dev-only) 2026-08-29 (`c4a2b5d3f`..`cf7ae59cf`)
+
+Constraint-aware precise drawing, inspired by Opacity's rebuilt pen tool (draw with relationships —
+tangent/concentric/on-line — that persist as live rules; drag anything and the drawing re-solves so
+every rule stays true). Phase 1 proves the **solver** in isolation before it touches any studio.
+New dependency-light kernel `frontend/app/lib/sketch/` (no paper/three): `model.ts` (entities +
+constraints, stable ids — all positional DOF live in `point` entities; lines/circles reference point
+ids), `residuals.ts` (10 constraint kinds as residuals — coincident · point-on-line · point-on-circle ·
+tangent line↔circle · tangent circle↔circle · concentric · horizontal · vertical · distance · radius),
+`solve.ts` (Levenberg-Marquardt over a flat param vector; drag pins one point; **reverts positions when
+over-constrained**; `W_REG=1e-4` so constraints satisfy tightly), `sketchPath.ts` (doc → SVG). Proving
+ground at **`/dev/sketch-solver-lab`** exposes `window.__sketchLab` for forced-sync verification.
+**LIVE-VERIFIED**: swept a line endpoint through 6 positions — the tangent circle rolled to stay
+tangent every time (tangency error 0.00000, converged). 23 unit tests + 1 invariant E2E, all green.
+Spec: `superpowers/specs/2026-08-28-sketch-constraints-design.md`. Plan:
+`superpowers/plans/2026-08-29-sketch-solver-phase1.md`. **Next**: Phase 2 mounts a `sketch` **layer
+kind inside Shape Studio** (sketch = another shape source into the existing clone/arrange/boolean/fill
+pipeline — so a drawn constrained unit can be arrayed radially + boolean-folded, the B-option payoff);
+Phase 2 must also fix the solver's dead in-loop early-break (burns full maxIter — matters at 60fps
+per-pointer-move). Phases 3–4: draw-time inference chips + persistent constraint badges + selection
+verbs; agent verbs + curvature-comb overlay.
+
 ### Frame polish — card hot paths + six editor niceties — LANDED 2026-08-28 (`ced455c6a`..`1982aed3a`)
 
 The daily-gesture friction and the up-close "is this a real editor" gaps, in one program.
