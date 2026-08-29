@@ -342,6 +342,9 @@ export interface TextLayer extends LayerCommon {
   textTransform?: 'uppercase' | 'lowercase' | 'capitalize'
   strokeColor: Paint
   strokeWidth: number    // normalized to canvas width (0 = no outline)
+  /** Dashed outline (see StrokeDash). `strokeText` honours setLineDash, so the
+   *  text outline dashes exactly like a shape's does. Absent ⇒ solid. */
+  strokeDash?: StrokeDash
   boxW?: number          // optional text-box width (normalized to canvas width);
                          // set => words auto-wrap to fit, unset => explicit \n only
   boxH?: number          // optional text-box height (normalized to canvas width);
@@ -369,7 +372,53 @@ export interface TextLayer extends LayerCommon {
  */
 export type RectRadius = number | [number, number, number, number]
 
-export interface RectLayer extends LayerCommon {
+/**
+ * Where a closed shape's outline sits relative to its edge. Canvas2D only
+ * strokes CENTERED (half in, half out) — the other two are built from that:
+ * 'inside' clips to the shape and strokes at 2× width (the outer half is
+ * clipped away), 'outside' strokes at 2× width and knocks the interior out.
+ * Absent ⇒ 'center', which is exactly what every shape did before this existed.
+ *
+ * Closed kinds only (rect, ellipse, polygon, star, path). A line and a text
+ * outline have no interior to align against, so they stay centered.
+ */
+export type StrokeAlign = 'center' | 'inside' | 'outside'
+
+/**
+ * Dashed outline: `dash` px on, `gap` px off, both normalized to canvas width
+ * like every other dimension (path layers carry them in the same LOCAL units as
+ * their `strokeWidth`, so a dash scales with the shape). Absent ⇒ solid.
+ *
+ * NOT animatable in v1 (layer motion only produces transform/opacity deltas).
+ */
+export interface StrokeDash { dash: number; gap: number }
+
+/** Fields every stroked closed shape shares. Both optional; absent = today. */
+interface StrokeStyleFields {
+  strokeAlign?: StrokeAlign
+  strokeDash?: StrokeDash
+}
+
+/**
+ * The concrete `setLineDash` segments for a stored dash, in the caller's units
+ * (`scale` = the same factor the caller uses for `lineWidth`, so the dash keeps
+ * its ratio to the outline's thickness at any size). Returns null for "solid" —
+ * absent, malformed, or a non-positive dash — which is the untouched legacy path.
+ */
+export function strokeDashSegments(dash: StrokeDash | undefined | null, scale = 1): [number, number] | null {
+  if (!dash || typeof dash !== 'object') return null
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  const d = num(dash.dash) * scale
+  if (!(d > 0)) return null
+  return [d, Math.max(0, num(dash.gap) * scale)]
+}
+
+/** Normalize a stored `strokeAlign` (anything unrecognized ⇒ 'center'). */
+export function strokeAlignOf(v: unknown): StrokeAlign {
+  return v === 'inside' || v === 'outside' ? v : 'center'
+}
+
+export interface RectLayer extends LayerCommon, StrokeStyleFields {
   kind: 'rect'
   w: number; h: number    // normalized to canvas width
   fill: Paint             // '' / 'none' = no fill; or a gradient / patterned Fill
@@ -399,7 +448,7 @@ export function cornerRadii(radius: RectRadius | undefined | null, w: number, h:
     : [one(radius), one(radius), one(radius), one(radius)]
 }
 
-export interface EllipseLayer extends LayerCommon {
+export interface EllipseLayer extends LayerCommon, StrokeStyleFields {
   kind: 'ellipse'
   w: number; h: number
   fill: Paint
@@ -415,7 +464,7 @@ export interface EllipseLayer extends LayerCommon {
  * uniform multiplier the resize handle drives; `bbox` is the un-scaled local
  * extent (cached on import/edit) used for selection boxes and hit-testing.
  */
-export interface PathLayer extends LayerCommon {
+export interface PathLayer extends LayerCommon, StrokeStyleFields {
   kind: 'path'
   d: string               // SVG path data, local units, centered on (0,0)
   bbox: { w: number; h: number } // un-scaled local extent (width-fraction units)
@@ -431,6 +480,8 @@ export interface LineLayer extends LayerCommon {
   w: number               // length, normalized to canvas width
   stroke: Paint
   strokeWidth: number
+  /** Dashes apply to a line too; alignment doesn't (no interior). */
+  strokeDash?: StrokeDash
 }
 
 export interface ImageLayer extends LayerCommon {
@@ -473,14 +524,14 @@ export interface WiredLayer extends LayerCommon {
   depthKey?: string
 }
 
-export interface PolygonLayer extends LayerCommon {
+export interface PolygonLayer extends LayerCommon, StrokeStyleFields {
   kind: 'polygon'
   w: number; h: number
   sides: number          // integer >= 3
   cornerRadius: number   // 0..1 ratio (scale-invariant)
   fill: Paint; stroke: Paint; strokeWidth: number
 }
-export interface StarLayer extends LayerCommon {
+export interface StarLayer extends LayerCommon, StrokeStyleFields {
   kind: 'star'
   w: number; h: number
   points: number         // integer >= 3
@@ -696,6 +747,7 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
     return createPathLayer({
       d, bbox: { w, h }, scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation,
       opacity: layer.opacity, fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+      strokeAlign: layer.strokeAlign, strokeDash: layer.strokeDash,
     })
   }
   if (layer.kind === 'ellipse') {
@@ -708,6 +760,7 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
     return createPathLayer({
       d, bbox: { w: layer.w, h: layer.h }, scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation,
       opacity: layer.opacity, fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+      strokeAlign: layer.strokeAlign, strokeDash: layer.strokeDash,
     })
   }
   if (layer.kind === 'line') {
@@ -715,7 +768,7 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
     return createPathLayer({
       d: `M ${f(-w / 2)} 0 L ${f(w / 2)} 0`, bbox: { w, h: Math.max(layer.strokeWidth, 0.001) },
       scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation, opacity: layer.opacity,
-      fill: 'none', stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+      fill: 'none', stroke: layer.stroke, strokeWidth: layer.strokeWidth, strokeDash: layer.strokeDash,
     })
   }
   if (layer.kind === 'polygon') {
@@ -725,6 +778,7 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
       d, bbox: { w: layer.w, h: layer.h }, scale: 1,
       x: layer.x, y: layer.y, rotation: layer.rotation, opacity: layer.opacity,
       fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+      strokeAlign: layer.strokeAlign, strokeDash: layer.strokeDash,
     })
   }
   if (layer.kind === 'star') {
@@ -734,6 +788,7 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
       d, bbox: { w: layer.w, h: layer.h }, scale: 1,
       x: layer.x, y: layer.y, rotation: layer.rotation, opacity: layer.opacity,
       fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+      strokeAlign: layer.strokeAlign, strokeDash: layer.strokeDash,
     })
   }
   return null
@@ -1428,6 +1483,95 @@ function paintLayer(
   }
 }
 
+/**
+ * A device-sized scratch canvas that shares `ctx`'s CURRENT transform, so
+ * anything drawn on it lands on exactly the same pixels it would have on `ctx`.
+ * Stamped back 1:1 in device space by `stampScratch`. Returns null where there's
+ * no DOM (SSR / unit tests), and callers then take a safe fallback.
+ */
+function scratchLike(ctx: CanvasRenderingContext2D): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null
+  const dev = ctx.canvas
+  const c = document.createElement('canvas')
+  c.width = Math.max(1, dev.width || 1)
+  c.height = Math.max(1, dev.height || 1)
+  const o = c.getContext('2d')
+  if (!o) return null
+  o.setTransform(ctx.getTransform())
+  return o
+}
+
+/** Composite a `scratchLike` canvas back onto `ctx` (device pixels, 1:1). The
+ *  caller's globalAlpha / blend still apply, so the stamped ink behaves like it
+ *  had been drawn inline. */
+function stampScratch(ctx: CanvasRenderingContext2D, scratch: CanvasRenderingContext2D) {
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.drawImage(scratch.canvas, 0, 0)
+  ctx.restore()
+}
+
+/**
+ * Stroke a closed shape honouring alignment + dashes. THE single place any
+ * shape's outline is painted, so the card, the modal and client bakes agree.
+ *
+ * - center (default): `lineWidth = width; strokeStyle = …; stroke()` — literally
+ *   the statements every kind ran before this helper existed, so an absent
+ *   `strokeAlign`/`strokeDash` is byte-identical to the legacy path.
+ * - inside: clip to the shape, stroke at 2× width — the outer half is clipped away.
+ * - outside: stroke at 2× width on a scratch canvas, knock the interior out of
+ *   THAT, then stamp it. The knockout MUST NOT happen on `ctx`: a
+ *   `destination-out` fill there would eat the layer's own fill and every pixel
+ *   of backdrop under the shape.
+ *
+ * `path` (a Path2D) is used when supplied; otherwise the shape is the current
+ * path on `ctx`, and `build` re-creates it on the scratch context.
+ */
+function strokeAligned(ctx: CanvasRenderingContext2D, o: {
+  width: number
+  style: (c: CanvasRenderingContext2D) => string | CanvasGradient | CanvasPattern
+  align?: StrokeAlign
+  dash?: [number, number] | null
+  path?: Path2D | null
+  fillRule?: CanvasFillRule
+  build?: (c: CanvasRenderingContext2D) => void
+}) {
+  if (!(o.width > 0)) return
+  const dash = o.dash ?? null
+  const strokeOn = (c: CanvasRenderingContext2D, w: number) => {
+    c.lineWidth = w
+    c.strokeStyle = o.style(c)
+    if (dash) c.setLineDash([dash[0], dash[1]])
+    if (o.path) c.stroke(o.path); else c.stroke()
+    // Deterministic reset: a leaked dash pattern would silently dash the NEXT
+    // layer painted on this shared context.
+    if (dash) c.setLineDash([])
+  }
+  const align = strokeAlignOf(o.align)
+  if (align === 'inside') {
+    ctx.save()
+    if (o.path) ctx.clip(o.path, o.fillRule || 'nonzero'); else ctx.clip(o.fillRule || 'nonzero')
+    strokeOn(ctx, o.width * 2)
+    ctx.restore()
+    return
+  }
+  if (align === 'outside') {
+    const s = scratchLike(ctx)
+    if (s) {
+      if (o.build) o.build(s)
+      strokeOn(s, o.width * 2)
+      s.globalCompositeOperation = 'destination-out'
+      if (o.path) s.fill(o.path, o.fillRule || 'nonzero'); else s.fill(o.fillRule || 'nonzero')
+      s.globalCompositeOperation = 'source-over'
+      stampScratch(ctx, s)
+      return
+    }
+    // No scratch canvas available — fall back to the centered stroke rather
+    // than knocking out on the shared context (which would eat the backdrop).
+  }
+  strokeOn(ctx, o.width)
+}
+
 // Per-kind shape rendering. Caller has already applied opacity + the layer's
 // translate/rotate to `ctx`; here we just paint the geometry at the origin.
 // `wiredLive`: same pre-resolved-content seam as `localLayerBox` above — paintLayer
@@ -1438,21 +1582,31 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     drawText(ctx, layer, W)
   } else if (layer.kind === 'rect') {
     const w = layer.w * W, h = layer.h * W
-    ctx.beginPath()
     // One rounded path for every corner shape: a plain `radius` yields four
-    // equal radii, so uniform rects draw exactly as before.
-    ctx.roundRect(-w / 2, -h / 2, w, h, cornerRadii(layer.radius, w, h, W))
+    // equal radii, so uniform rects draw exactly as before. `build` re-creates
+    // the same path on the outside-align scratch canvas.
+    const radii = cornerRadii(layer.radius, w, h, W)
+    const build = (c: CanvasRenderingContext2D) => { c.beginPath(); c.roundRect(-w / 2, -h / 2, w, h, radii) }
+    build(ctx)
     if (hasPaint(layer.fill)) { ctx.fillStyle = resolvePaint(ctx, layer.fill, { w, h }, _fieldCtx); ctx.fill() }
     if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
-      ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = resolvePaint(ctx, layer.stroke, { w, h }, _fieldCtx); ctx.stroke()
+      strokeAligned(ctx, {
+        width: layer.strokeWidth * W,
+        style: (c) => resolvePaint(c, layer.stroke, { w, h }, _fieldCtx),
+        align: layer.strokeAlign, dash: strokeDashSegments(layer.strokeDash, W), build,
+      })
     }
   } else if (layer.kind === 'ellipse') {
     const w = layer.w * W, h = layer.h * W
-    ctx.beginPath()
-    ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2)
+    const build = (c: CanvasRenderingContext2D) => { c.beginPath(); c.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2) }
+    build(ctx)
     if (hasPaint(layer.fill)) { ctx.fillStyle = resolvePaint(ctx, layer.fill, { w, h }, _fieldCtx); ctx.fill() }
     if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
-      ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = resolvePaint(ctx, layer.stroke, { w, h }, _fieldCtx); ctx.stroke()
+      strokeAligned(ctx, {
+        width: layer.strokeWidth * W,
+        style: (c) => resolvePaint(c, layer.stroke, { w, h }, _fieldCtx),
+        align: layer.strokeAlign, dash: strokeDashSegments(layer.strokeDash, W), build,
+      })
     }
   } else if (layer.kind === 'path') {
     drawPath(ctx, layer, W)
@@ -1464,6 +1618,9 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
       drawPath(ctx, {
         ...layer, kind: 'path', d, bbox: { w: layer.w, h: layer.h }, scale: 1, fillRule: 'nonzero',
         fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
+        // Alignment + dashes ride along: at scale 1 a polygon/star's local units
+        // ARE width-normalized, so both mean the same thing on either side.
+        strokeAlign: layer.strokeAlign, strokeDash: layer.strokeDash,
       } as any, W)
     }
   } else if (layer.kind === 'line') {
@@ -1474,7 +1631,12 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     ctx.lineCap = 'round'
     ctx.lineWidth = Math.max(1, layer.strokeWidth * W)
     ctx.strokeStyle = hasPaint(layer.stroke) ? resolvePaint(ctx, layer.stroke, { w, h: Math.max(layer.strokeWidth * W, 1) }, _fieldCtx) : '#ffffff'
+    // A line has no interior, so alignment doesn't apply — dashes do. Reset the
+    // pattern right after so it can't leak into the next layer's stroke.
+    const dash = strokeDashSegments(layer.strokeDash, W)
+    if (dash) ctx.setLineDash([dash[0], dash[1]])
     ctx.stroke()
+    if (dash) ctx.setLineDash([])
   } else if (layer.kind === 'image') {
     const w = layer.w * W, h = layer.h * W
     const img = _imageCache.get(imageLayerUrl(layer.filename))
@@ -1582,10 +1744,13 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
   }
   const textBox = { w: Math.max(blockW, 1), h: Math.max(H, 1) }
   const stroke = hasPaint(layer.strokeColor) && layer.strokeWidth > 0
+  // `strokeText` honours setLineDash, so a text outline dashes like a shape's.
+  const dash = stroke ? strokeDashSegments(layer.strokeDash, W) : null
   if (stroke) {
     ctx.lineJoin = 'round'
     ctx.lineWidth = layer.strokeWidth * W
     ctx.strokeStyle = resolvePaint(ctx, layer.strokeColor, textBox, _fieldCtx)
+    if (dash) ctx.setLineDash([dash[0], dash[1]])
   }
   ctx.fillStyle = resolvePaint(ctx, layer.color, textBox, _fieldCtx)
   const fontPx = layer.fontSize * W
@@ -1623,6 +1788,7 @@ function drawText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: number) {
       if (layer.strikethrough) ctx.fillRect(left, y - decoThick / 2, lw, decoThick)
     }
   }
+  if (dash) ctx.setLineDash([])   // never leak the pattern to the next layer
 }
 
 /**
@@ -1655,10 +1821,12 @@ function drawExpressiveText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: 
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
   const stroke = hasPaint(layer.strokeColor) && layer.strokeWidth > 0
+  const dash = stroke ? strokeDashSegments(layer.strokeDash, W) : null
   if (stroke) {
     ctx.lineJoin = 'round'
     ctx.lineWidth = layer.strokeWidth * W
     ctx.strokeStyle = resolvePaint(ctx, layer.strokeColor, textBox, _fieldCtx)
+    if (dash) ctx.setLineDash([dash[0], dash[1]])
   }
   ctx.fillStyle = resolvePaint(ctx, layer.color, textBox, _fieldCtx)
   const fontPx = layer.fontSize * W
@@ -1674,6 +1842,7 @@ function drawExpressiveText(ctx: CanvasRenderingContext2D, layer: TextLayer, W: 
       if (layer.strikethrough) ctx.fillRect(x, y - decoThick / 2, wd.w, decoThick)
     }
   }
+  if (dash) ctx.setLineDash([])   // never leak the pattern to the next layer
 }
 
 /**
@@ -1709,11 +1878,20 @@ function drawPath(ctx: CanvasRenderingContext2D, layer: PathLayer, W: number) {
     ctx.fill(p, layer.fillRule || 'nonzero')
   }
   if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
-    ctx.lineWidth = layer.strokeWidth
-    ctx.strokeStyle = resolvePaint(ctx, layer.stroke, layer.bbox, _fieldCtx)
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'
-    ctx.stroke(p)
+    // Width, dash and alignment all live in the path's LOCAL units (the ctx is
+    // already scaled by `s`), so an outline scales with the shape.
+    strokeAligned(ctx, {
+      width: layer.strokeWidth,
+      style: (c) => resolvePaint(c, layer.stroke, layer.bbox, _fieldCtx),
+      align: layer.strokeAlign,
+      dash: strokeDashSegments(layer.strokeDash),
+      path: p,
+      fillRule: layer.fillRule || 'nonzero',
+      // The scratch canvas inherits this ctx's transform but not its line joins.
+      build: (c) => { c.lineJoin = 'round'; c.lineCap = 'round' },
+    })
   }
   ctx.restore()
 }

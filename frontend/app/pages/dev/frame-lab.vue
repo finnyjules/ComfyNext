@@ -21,7 +21,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import CompositorModal from '~/components/vue-canvas/CompositorModal.vue'
 import ArtifactFrameNode from '~/components/vue-canvas/ArtifactFrameNode.vue'
-import { createTextLayer, createRectLayer, createImageLayer } from '~/composables/useCompositorLayers'
+import { createTextLayer, createRectLayer, createImageLayer, createLineLayer } from '~/composables/useCompositorLayers'
 
 definePageMeta({ layout: false })
 
@@ -43,6 +43,37 @@ const a1 = createTextLayer({ id: 'a1', text: 'Title', x: 0.3, y: 0.85, fontSize:
 const a2 = createRectLayer({ id: 'a2', x: 0.3, y: 0.9, w: 0.2, h: 0.03, fill: '#54f4cf' } as any)
 const b1 = createTextLayer({ id: 'b1', text: 'Subtitle', x: 0.7, y: 0.85, fontSize: 0.04 } as any)
 ;(a1 as any).groupId = 'A'; (a2 as any).groupId = 'A'; (b1 as any).groupId = 'B'
+
+// ── Stroke style fixtures (alignment + dashes) ──────────────────────────────
+// A column down the left edge: one backdrop plate, then the SAME square drawn
+// three times with the same fat outline and a different `strokeAlign`, plus a
+// dashed line and a dashed square. The plate sits UNDER the outside-aligned
+// square on purpose: that alignment knocks the shape's interior out of its own
+// outline, and if the knockout ever reached the shared canvas the plate (and the
+// square's fill) would show a hole here.
+const strokePlate = createRectLayer({
+  id: 'strokeplate', x: 0.13, y: 0.45, w: 0.22, h: 0.78, radius: 0.01, fill: '#3a2a55', stroke: '', strokeWidth: 0,
+} as any)
+const strokeCenter = createRectLayer({
+  id: 'strokecenter', x: 0.13, y: 0.16, w: 0.13, h: 0.13, radius: 0,
+  fill: '#ffffff', stroke: '#54f4cf', strokeWidth: 0.02,
+} as any)
+const strokeInside = createRectLayer({
+  id: 'strokeinside', x: 0.13, y: 0.34, w: 0.13, h: 0.13, radius: 0,
+  fill: '#ffffff', stroke: '#54f4cf', strokeWidth: 0.02, strokeAlign: 'inside',
+} as any)
+const strokeOutside = createRectLayer({
+  id: 'strokeoutside', x: 0.13, y: 0.52, w: 0.13, h: 0.13, radius: 0,
+  fill: '#ffffff', stroke: '#54f4cf', strokeWidth: 0.02, strokeAlign: 'outside',
+} as any)
+const strokeDashedRect = createRectLayer({
+  id: 'strokedashedrect', x: 0.13, y: 0.70, w: 0.13, h: 0.13, radius: 0.02,
+  fill: '', stroke: '#f2ff5a', strokeWidth: 0.008, strokeDash: { dash: 0.02, gap: 0.014 },
+} as any)
+const strokeDashedLine = createLineLayer({
+  id: 'strokedashedline', x: 0.13, y: 0.80, w: 0.18,
+  stroke: '#f2ff5a', strokeWidth: 0.006, strokeDash: { dash: 0.02, gap: 0.014 },
+} as any)
 
 // ── Unified wired-layer fixture ─────────────────────────────────────────────
 // The rect the migrated wired layer for slot 1 is masked BY. Fixed id so the
@@ -97,7 +128,8 @@ const node = reactive({
     images: [] as string[],
     properties: {
       // NOTE: no `sailor_frameSchema` — this frame has never been migrated.
-      sailor_localLayers: [pic, plain, tracked, underlined, struck, upper, combo, a1, a2, b1, maskRect, caption],
+      sailor_localLayers: [pic, plain, tracked, underlined, struck, upper, combo, a1, a2, b1, maskRect, caption,
+        strokePlate, strokeCenter, strokeInside, strokeOutside, strokeDashedRect, strokeDashedLine],
       sailor_localGroups: [
         { id: 'A', parentId: 'C', name: 'Row' },
         { id: 'B', parentId: 'C', name: 'Side' },

@@ -63,6 +63,7 @@ import { DEFAULT_TORN_EDGE } from '~/lib/compositor/tornEdge'
 import CompositorFeatherPanel from '~/components/vue-canvas/compositor/CompositorFeatherPanel.vue'
 import { DEFAULT_FEATHER } from '~/lib/compositor/feather'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
+import StrokeStyleRow from '~/components/vue-canvas/compositor/StrokeStyleRow.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
 import { isChainEffect, isGpuEffect } from '~/lib/compositor/postEffects'
@@ -5453,6 +5454,10 @@ onUnmounted(() => {
                 <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Outline width"
                   class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+                <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
+                  :show-align="false" :out-width="outWidth"
+                  @update:align="(v: any) => setLocal(selectedLocal!.id, { strokeAlign: v })"
+                  @update:dash="(v: any) => setLocal(selectedLocal!.id, { strokeDash: v })" />
               </div>
             </div>
           </template>
@@ -5471,6 +5476,10 @@ onUnmounted(() => {
               <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
                 class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
+                show-align :out-width="outWidth"
+                @update:align="(v: any) => setLocal(selectedLocal!.id, { strokeAlign: v })"
+                @update:dash="(v: any) => setLocal(selectedLocal!.id, { strokeDash: v })" />
             </div>
             <div v-if="selectedLocal.kind === 'rect'">
               <div class="panel-label mb-1.5">Corner radius</div>
@@ -5513,6 +5522,10 @@ onUnmounted(() => {
               <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
                 class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
+                show-align :out-width="outWidth"
+                @update:align="(v: any) => setLocal(selectedLocal!.id, { strokeAlign: v })"
+                @update:dash="(v: any) => setLocal(selectedLocal!.id, { strokeDash: v })" />
             </div>
             <div>
               <div class="panel-label mb-1.5">Sides</div>
@@ -5542,6 +5555,10 @@ onUnmounted(() => {
               <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).strokeWidth)" placeholder="Stroke width"
                 class="mt-1.5 w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
+                show-align :out-width="outWidth"
+                @update:align="(v: any) => setLocal(selectedLocal!.id, { strokeAlign: v })"
+                @update:dash="(v: any) => setLocal(selectedLocal!.id, { strokeDash: v })" />
             </div>
             <div>
               <div class="panel-label mb-1.5">Points</div>
@@ -5576,6 +5593,10 @@ onUnmounted(() => {
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setSizePx(selectedLocal!.id, 'strokeWidth', parseFloat(($event.target as HTMLInputElement).value) || 1)" />
             </div>
+            <div>
+              <StrokeStyleRow :dash="(selectedLocal as any).strokeDash" :out-width="outWidth"
+                @update:dash="(v: any) => setLocal(selectedLocal!.id, { strokeDash: v })" />
+            </div>
           </template>
 
           <!-- Path (vector) controls -->
@@ -5589,6 +5610,10 @@ onUnmounted(() => {
               <div class="panel-label mb-1.5">Stroke</div>
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
+              <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
+                show-align :out-width="outWidth"
+                @update:align="(v: any) => setLocal(selectedLocal!.id, { strokeAlign: v })"
+                @update:dash="(v: any) => setLocal(selectedLocal!.id, { strokeDash: v })" />
             </div>
           </template>
 
