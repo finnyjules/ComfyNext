@@ -249,6 +249,19 @@ export function useTimelineStore() {
     } as Partial<Clip>)
   }
 
+  /** Edit a Space Type clip's content in place. Replaces state and DETACHES the
+   *  clip from its origin node (spec 1's detach model): once edited, the clip is
+   *  its own thing, so the "Sync from node" affordance stops offering to revert
+   *  the edit. Placement and trim are untouched — only `state` and `origin`. */
+  function updateSpaceTypeClipState(clipId: string, next: SpaceTypeState) {
+    const clip = state.value.tracks.flatMap(t => t.clips).find(c => c.id === clipId) as SpaceTypeClip | undefined
+    if (!clip || clip.kind !== 'spacetype') return
+    updateClip(clipId, {
+      state: JSON.parse(JSON.stringify(next)),
+      origin: undefined,
+    } as Partial<Clip>)
+  }
+
   function removeClip(clipId: string) {
     dispatch({ type: 'remove_clip', clip_id: clipId })
     if (selectedClipId.value === clipId) selectedClipId.value = null
@@ -500,6 +513,7 @@ export function useTimelineStore() {
     addMotionClip,
     addSpaceTypeClip,
     syncSpaceTypeClipFromNode,
+    updateSpaceTypeClipState,
     removeClip,
     updateClip,
     moveClip,

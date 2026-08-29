@@ -4,6 +4,7 @@
  *  studio consumes this interface instead of hard-coding the node path — the
  *  seam symbols/instances (spec 2) will later hang off. */
 import type { SpaceTypeState } from '~~/shared/spacetype/state'
+import { useTimelineStore } from '~/composables/useTimelineStore'
 
 export interface SpaceTypeStateSource {
   /** Current state, or null when there is nothing saved yet (fresh node). The
@@ -32,6 +33,22 @@ export function nodeSpaceTypeStateSource(getNode: () => any | undefined): SpaceT
       if (!n.data.properties) n.data.properties = {}
       const prev = n.data.properties.sailor_spaceType || {}
       n.data.properties.sailor_spaceType = { ...prev, ...next }
+    },
+  }
+}
+
+/** State stored on a timeline clip's .state. Reads/writes through the singleton
+ *  timeline store, so it shares the store's undo history and persistence. */
+export function clipSpaceTypeStateSource(clipId: string): SpaceTypeStateSource {
+  const store = useTimelineStore()
+  return {
+    label: 'Space Type · clip',
+    read() {
+      const clip = store.state.value.tracks.flatMap((t: any) => t.clips).find((c: any) => c.id === clipId)
+      return clip && clip.kind === 'spacetype' ? clip.state : null
+    },
+    write(next) {
+      store.updateSpaceTypeClipState(clipId, next)
     },
   }
 }
