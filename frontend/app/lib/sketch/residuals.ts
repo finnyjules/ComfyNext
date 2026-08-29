@@ -1,6 +1,6 @@
 import type { SketchDoc, SketchConstraint, LineEntity, CircleEntity } from './model'
 import { getEntity, getPoint, lineEndpoints, circleCenter } from './model'
-import { dist, distPointToLine, type Vec2 } from './geom'
+import { dist, distPointToLine } from './geom'
 
 function circleOf(doc: SketchDoc, id: string): CircleEntity | null {
   const e = getEntity(doc, id)
