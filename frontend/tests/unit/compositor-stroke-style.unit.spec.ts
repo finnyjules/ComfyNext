@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
-  strokeDashSegments, strokeAlignOf, paintLayerStack,
-  createRectLayer, createLineLayer,
-  type LocalLayer, type RectLayer, type LineLayer,
+  strokeDashSegments, strokeAlignOf, strokeAligned, outsideStrokePadPx, paintLayerStack,
+  createRectLayer, createLineLayer, createPathLayer,
+  type LocalLayer, type RectLayer, type LineLayer, type CornerPin,
 } from '~/composables/useCompositorLayers'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
@@ -37,6 +37,49 @@ describe('strokeAlignOf', () => {
     expect(strokeAlignOf(undefined)).toBe('center')
     expect(strokeAlignOf('center')).toBe('center')
     expect(strokeAlignOf('middle')).toBe('center')
+  })
+})
+
+// An outside-aligned stroke paints entirely beyond localLayerBox's plain w×h (see
+// the box's own "no stroke padding" comment) — the corner-pin offscreen has to be
+// padded by exactly this much, and only in this one case, or it clips the stroke
+// away (center/inside) or shrinks a byte-identical no-stroke box (everything else).
+describe('outsideStrokePadPx', () => {
+  it('is 0 for a rect with no stroke at all', () => {
+    const l = createRectLayer({ stroke: '', strokeWidth: 0.1, strokeAlign: 'outside' })
+    expect(outsideStrokePadPx(l, 200)).toBe(0)
+  })
+
+  it('is 0 for a rect with a zero-width stroke', () => {
+    const l = createRectLayer({ stroke: '#fff', strokeWidth: 0, strokeAlign: 'outside' })
+    expect(outsideStrokePadPx(l, 200)).toBe(0)
+  })
+
+  it('is 0 for center and inside alignment — those stay exactly as before', () => {
+    const center = createRectLayer({ stroke: '#fff', strokeWidth: 0.1, strokeAlign: 'center' })
+    const inside = createRectLayer({ stroke: '#fff', strokeWidth: 0.1, strokeAlign: 'inside' })
+    const absent = createRectLayer({ stroke: '#fff', strokeWidth: 0.1 })
+    expect(outsideStrokePadPx(center, 200)).toBe(0)
+    expect(outsideStrokePadPx(inside, 200)).toBe(0)
+    expect(outsideStrokePadPx(absent, 200)).toBe(0)
+  })
+
+  it('is the full stroke width in px for an outside-aligned rect/ellipse/polygon/star', () => {
+    // strokeWidth is normalized to canvas width for these kinds — 0.1 * 200 = 20px.
+    const l = createRectLayer({ stroke: '#fff', strokeWidth: 0.1, strokeAlign: 'outside' })
+    expect(outsideStrokePadPx(l, 200)).toBe(20)
+  })
+
+  it('scales a path\'s pad by its own `scale`, not just canvas width', () => {
+    // strokeWidth is LOCAL units at scale=1 for a path — the rendered ctx is
+    // pre-scaled by (scale*W), so the outward px extent must fold scale in too.
+    const l = createPathLayer({ stroke: '#fff', strokeWidth: 0.1, strokeAlign: 'outside', scale: 2 })
+    expect(outsideStrokePadPx(l, 200)).toBe(40) // 0.1 * 2 * 200
+  })
+
+  it('is 0 for a line — alignment does not apply (no interior)', () => {
+    const l = createLineLayer({ stroke: '#fff', strokeWidth: 0.1 })
+    expect(outsideStrokePadPx(l, 200)).toBe(0)
   })
 })
 
@@ -259,6 +302,72 @@ describe('stroke alignment — where the ink lands', () => {
   })
 })
 
+// Corner-pin renders a layer to a box-sized offscreen (localLayerBox — plain w×h,
+// NO stroke padding) and warps that onto the pin quad. An outside-aligned stroke
+// lies entirely beyond that box (see the previous describe block) and used to be
+// 100% clipped away by the offscreen's own edges. `paintWithSizes` intercepts every
+// canvas the paint makes and records what its width/height end up being SET to
+// (production code always creates-then-sizes: `document.createElement('canvas');
+// cc.width = …; cc.height = …`), so these tests observe the real offscreen size the
+// warp path builds — not just the pure `outsideStrokePadPx` calculation.
+function paintWithSizes(layers: LocalLayer[], W = 200, H = 200) {
+  const sizes: { w: number; h: number }[] = []
+  const { ctx, rec } = makeCtx('main', W, H)
+  ;(globalThis as any).document = {
+    createElement(tag: string) {
+      if (tag !== 'canvas') return {}
+      scratchCount += 1
+      const inner = makeCtx(`scratch${scratchCount}`).ctx.canvas as any
+      return new Proxy(inner, {
+        set(target, prop, value) {
+          target[prop] = value
+          // Production always sets `.width` then `.height` right after — capture
+          // only once BOTH have landed (on the `height` write), not the
+          // momentarily-mismatched state mid-assignment (width already new,
+          // height still the object's default).
+          if (prop === 'height') sizes.push({ w: target.width, h: target.height })
+          return true
+        },
+      })
+    },
+  }
+  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local' as const, key: `l:${l.id}`, layer: l })), layers)
+  return { rec, sizes }
+}
+
+describe('corner-pin offscreen padding for outside-aligned strokes', () => {
+  // A non-identity pin so cornerPinActive() sees real distortion and the warp
+  // path (not the plain fast path) actually runs.
+  const PIN: CornerPin = { tl: { x: -0.1, y: 0 }, tr: { x: 0.1, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } }
+
+  it('grows the offscreen by the full stroke width on each side when outside-aligned', () => {
+    // SQ() is a 100×100 box (0.5 of 200px) with a 20px outline (strokeWidth 0.1).
+    const { sizes } = paintWithSizes([SQ({ strokeAlign: 'outside', cornerPin: PIN })])
+    // 100 + 2*20 = 140 on both axes, and centered (translate to the new center is
+    // exercised implicitly — a mis-centered draw would still report this size).
+    expect(sizes).toContainEqual({ w: 140, h: 140 })
+  })
+
+  it('does NOT pad a centered stroke — the box stays exactly what it was', () => {
+    const { sizes } = paintWithSizes([SQ({ strokeAlign: 'center', cornerPin: PIN })])
+    expect(sizes).toContainEqual({ w: 100, h: 100 })
+    expect(sizes.some(s => s.w > 100 || s.h > 100)).toBe(false)
+  })
+
+  it('does NOT pad an inside-aligned stroke — it never left the box to begin with', () => {
+    const { sizes } = paintWithSizes([SQ({ strokeAlign: 'inside', cornerPin: PIN })])
+    expect(sizes).toContainEqual({ w: 100, h: 100 })
+    expect(sizes.some(s => s.w > 100 || s.h > 100)).toBe(false)
+  })
+
+  it('does NOT pad a layer with no stroke at all', () => {
+    const l = createRectLayer({ x: 0.5, y: 0.5, w: 0.5, h: 0.5, radius: 0, fill: '#fff', stroke: '', strokeWidth: 0, cornerPin: PIN })
+    const { sizes } = paintWithSizes([l])
+    expect(sizes).toContainEqual({ w: 100, h: 100 })
+    expect(sizes.some(s => s.w > 100 || s.h > 100)).toBe(false)
+  })
+})
+
 describe('dashed strokes', () => {
   // 100px line (0.5 of 200), 10px dash + 10px gap: on 0..10, off 10..20, …
   const dashed = (partial: Partial<LineLayer> = {}) =>
@@ -283,23 +392,37 @@ describe('dashed strokes', () => {
     expect(ink(-35, 0)).toBe(true)
   })
 
-  it('does not leak the pattern into the next layer', () => {
+  it('a dashed layer followed by a solid one paints the solid one without gaps', () => {
+    // Real coverage of the PLUMBING (paintLayer wraps every layer's draw in its
+    // own save()/restore(), so layers never see each other's canvas state) —
+    // this can catch a regression there, but NOT a missing reset inside
+    // strokeAligned itself: see the next test for that claim specifically.
     const solid = createLineLayer({ id: 'solid', x: 0.5, y: 0.75, w: 0.5, strokeWidth: 0.05, stroke: '#ffffff' } as any)
     const { rec } = paint([dashed(), solid])
     const strokes = rec.ops.filter(o => o.kind === 'stroke')
     expect(strokes).toHaveLength(2)
-    // The second line is painted solid: probe the point that fell in a gap on
-    // the dashed one (both lines are drawn in the same local coordinates).
     const second: Recorder = { name: 'second', ops: [strokes[1]!] }
     expect(inkAt(second, { x: -35, y: 0 })).toBe(true)
   })
 
-  it('dashes a shape outline too, and resets afterwards', () => {
-    const { rec } = paint([SQ({ strokeDash: { dash: 0.05, gap: 0.05 } }), createLineLayer({ id: 'after', x: 0.5, y: 0.5, w: 0.5, strokeWidth: 0.05, stroke: '#fff' } as any)])
+  // The claim above ("resets afterwards") can't actually fail through paintLayer:
+  // its per-layer save()/restore() would isolate the canvas dash state even if
+  // strokeAligned's own `if (dash) c.setLineDash([])` reset were deleted. Calling
+  // the exported helper directly, on the SAME ctx, with NO save()/restore() in
+  // between, is the only way to observe the reset strokeAligned makes itself —
+  // deleting that line flips this test to fail (the second stroke would inherit
+  // the first call's [10,10] pattern and go dark at the gap probe point).
+  it('strokeAligned resets its own dash pattern (observable with no enclosing save/restore)', () => {
+    const { ctx, rec } = makeCtx('direct')
+    const line = (c: CanvasRenderingContext2D) => { c.beginPath(); c.moveTo(-50, 0); c.lineTo(50, 0) }
+    line(ctx)
+    strokeAligned(ctx, { width: 10, style: () => '#fff', dash: [10, 10] })
+    line(ctx)
+    strokeAligned(ctx, { width: 10, style: () => '#fff', dash: null })
     const strokes = rec.ops.filter(o => o.kind === 'stroke')
     expect(strokes).toHaveLength(2)
-    const after: Recorder = { name: 'after', ops: [strokes[1]!] }
-    expect(inkAt(after, { x: -35, y: 0 })).toBe(true)   // solid again
+    const second: Recorder = { name: 'second', ops: [strokes[1]!] }
+    expect(inkAt(second, { x: -35, y: 0 })).toBe(true) // 15px along → dark under a leaked [10,10] pattern
   })
 
   it('dashes an inside-aligned outline without leaving the pattern set', () => {

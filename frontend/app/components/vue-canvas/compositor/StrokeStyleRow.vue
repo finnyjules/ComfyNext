@@ -21,7 +21,22 @@ const props = defineProps<{
   showAlign?: boolean
   /** Output width in px — the same scale the inspector's other size fields use. */
   outWidth: number
+  /**
+   * Extra multiplier folded into the px↔norm conversion. A `path` layer paints
+   * inside a ctx pre-scaled by `(layer.scale||1)*W`, and stores its dash in the
+   * SAME local units as `strokeWidth` (local units at scale=1 — see PathLayer),
+   * so its row must divide/multiply by that scale too, or a resized path renders
+   * a dash at the wrong size. Every other kind stores dash already normalized to
+   * `outWidth` directly (its ctx is never pre-scaled by anything but W), so they
+   * omit this and get the no-op default of 1. Ignored — normalizes to a no-op —
+   * for a value that isn't a positive finite number.
+   */
+  scale?: number
 }>()
+const scale = computed(() => {
+  const s = props.scale
+  return typeof s === 'number' && Number.isFinite(s) && s > 0 ? s : 1
+})
 const emit = defineEmits<{
   (e: 'update:align', v: StrokeAlign): void
   (e: 'update:dash', v: StrokeDash | undefined): void
@@ -29,8 +44,8 @@ const emit = defineEmits<{
 
 const align = computed<StrokeAlign>(() => (props.align === 'inside' || props.align === 'outside' ? props.align : 'center'))
 const dashed = computed(() => !!props.dash)
-const px = (norm: number) => Math.round(norm * props.outWidth)
-const norm = (v: number) => Math.max(0, v) / props.outWidth
+const px = (norm: number) => Math.round(norm * props.outWidth * scale.value)
+const norm = (v: number) => Math.max(0, v) / (props.outWidth * scale.value)
 
 function setDashed(on: boolean) {
   // A first switch to Dashed needs visible marks: 12px on, 8px off.

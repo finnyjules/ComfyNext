@@ -1044,6 +1044,29 @@ export function localLayerBox(
   return { w: (layer as RectLayer).w * W, h: (layer as RectLayer).h * W }
 }
 
+/**
+ * How far an OUTSIDE-aligned stroke reaches beyond `localLayerBox`, in px — the
+ * padding a corner-pin (or any other box-sized) offscreen needs so that stroke
+ * survives instead of landing entirely off-canvas and getting clipped away (see
+ * `strokeAligned`'s 'outside' knockout, which paints the whole 2×width ring
+ * starting AT the silhouette edge — none of it is inside the box).
+ *
+ * 0 for every other case (no stroke, center, inside, or a kind without
+ * `strokeAlign` at all) — callers that add this unconditionally to a box's
+ * half-extent stay byte-identical to before when it's 0.
+ */
+export function outsideStrokePadPx(layer: LocalLayer, W: number): number {
+  if (layer.kind !== 'rect' && layer.kind !== 'ellipse' && layer.kind !== 'polygon' && layer.kind !== 'star' && layer.kind !== 'path') return 0
+  const l = layer
+  if (!hasPaint(l.stroke) || !(l.strokeWidth > 0)) return 0
+  if (strokeAlignOf(l.strokeAlign) !== 'outside') return 0
+  // A path's strokeWidth is stored in local units AT scale=1 (see PathLayer),
+  // so its px extent also carries the layer's own uniform scale; every other
+  // stroked kind stores strokeWidth already normalized to canvas width.
+  const scale = l.kind === 'path' ? (l.scale ?? 1) : 1
+  return l.strokeWidth * scale * W
+}
+
 /** Draw a single local layer onto a 2D context sized W×H. */
 // Clip the context to a layer's mask region (canvas space). Caller wraps this in
 // save()/restore(). No-op shape support beyond rect/ellipse for now.
@@ -1375,7 +1398,16 @@ function paintLayer(
       drawLayerContent(c, layer, W, wiredLive); return
     }
     const box = localLayerBox(measureCtx(), layer, W, H, wiredLive)
-    const bw = Math.max(1, Math.round(box.w)), bh = Math.max(1, Math.round(box.h))
+    // Outside-aligned strokes paint entirely beyond localLayerBox's plain w×h
+    // (see outsideStrokePadPx) and would be 100% clipped by this offscreen's
+    // edges otherwise. Pad it — and grow the quad it warps into by the same
+    // amount, keeping the shape centered — so the stroke survives the pin. 0
+    // for every other case (no stroke, center, inside) keeps this identical to
+    // before: same bw/bh, same quad. Skipped when DOF already produced the
+    // source canvas (dofCanvas is used as-is, unpadded — a rarer combination
+    // left as a pre-existing gap, not what this fix targets).
+    const pad = dofCanvas ? 0 : outsideStrokePadPx(layer, W)
+    const bw = Math.max(1, Math.round(box.w + pad * 2)), bh = Math.max(1, Math.round(box.h + pad * 2))
     // Corner-pin warps whatever the content is — including the defocused version, so
     // the two effects compose instead of one silently winning.
     let cc: HTMLCanvasElement
@@ -1388,7 +1420,7 @@ function paintLayer(
       cctx.translate(bw / 2, bh / 2)
       drawLayerContent(cctx, layer, W, wiredLive)
     }
-    const hw = box.w / 2, hh = box.h / 2
+    const hw = box.w / 2 + pad, hh = box.h / 2 + pad
     const quad: Quad = [
       { x: -hw + cp.tl.x * hw, y: -hh + cp.tl.y * hh },
       { x:  hw + cp.tr.x * hw, y: -hh + cp.tr.y * hh },
@@ -1526,8 +1558,14 @@ function stampScratch(ctx: CanvasRenderingContext2D, scratch: CanvasRenderingCon
  *
  * `path` (a Path2D) is used when supplied; otherwise the shape is the current
  * path on `ctx`, and `build` re-creates it on the scratch context.
+ *
+ * Exported so the dash-pattern reset (see the "Deterministic reset" comment
+ * below) can be unit-tested directly: calling this twice on the SAME ctx with
+ * no enclosing save()/restore() is the only way to observe it, since every
+ * real caller (paintLayer) already wraps each layer's draw in save()/restore(),
+ * which would mask a missing reset on its own.
  */
-function strokeAligned(ctx: CanvasRenderingContext2D, o: {
+export function strokeAligned(ctx: CanvasRenderingContext2D, o: {
   width: number
   style: (c: CanvasRenderingContext2D) => string | CanvasGradient | CanvasPattern
   align?: StrokeAlign

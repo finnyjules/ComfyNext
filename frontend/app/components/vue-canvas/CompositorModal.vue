@@ -5611,7 +5611,7 @@ onUnmounted(() => {
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
               <StrokeStyleRow class="mt-1.5" :align="(selectedLocal as any).strokeAlign" :dash="(selectedLocal as any).strokeDash"
-                show-align :out-width="outWidth"
+                show-align :out-width="outWidth" :scale="(selectedLocal as any).scale || 1"
                 @update:align="(v: any) => setLocal(selectedLocal!.id, { strokeAlign: v })"
                 @update:dash="(v: any) => setLocal(selectedLocal!.id, { strokeDash: v })" />
             </div>
