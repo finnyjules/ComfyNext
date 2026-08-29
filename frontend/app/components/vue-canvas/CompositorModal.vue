@@ -9,7 +9,7 @@ import {
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
   type WiredLayer,
-  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
+  cornerRadii, drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
   hasAnimatedShaderFill, withWiredContent, _registerWiredContent,
 } from '~/composables/useCompositorLayers'
 import { migrateFrameToUnifiedLayers } from '~/lib/compositor/wiredMigration'
@@ -2359,6 +2359,37 @@ const outWidth = computed(() => {
 function pxW(norm: number) { return Math.round(norm * outWidth.value) }
 function setSizePx(id: string, key: string, px: number) { setLocal(id, { [key]: Math.max(0, px) / outWidth.value }) }
 
+// ── Corner radius (linked ⇔ per-corner) ──────────────────────────────────────
+// A rect stores `radius` as ONE number (uniform) or as [tl, tr, br, bl]. The
+// linked field writes a plain number — editing it always re-links all four —
+// and the expand toggle reveals the four per-corner fields. Displayed values are
+// the STORED ones (unclamped): the painter clamps to half the shorter side, so a
+// squashed rect still remembers the radius you typed.
+const radiusExpanded = ref(false)
+const CORNER_LABELS = ['Top left', 'Top right', 'Bottom right', 'Bottom left']
+function radiusCorners(l: any): number[] {
+  const r = l?.radius
+  const one = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return Array.isArray(r) ? [one(r[0]), one(r[1]), one(r[2]), one(r[3])] : [one(r), one(r), one(r), one(r)]
+}
+/** A doc that already carries four corners opens expanded, whatever the toggle says. */
+const radiusRowExpanded = computed(() => radiusExpanded.value || Array.isArray((selectedLocal.value as any)?.radius))
+/** The linked field shows the largest corner when they differ (a number input can't say "mixed"). */
+function radiusLinkedPx(l: any) { return pxW(Math.max(...radiusCorners(l))) }
+function setRadiusLinkedPx(l: any, px: number) { setLocal(l.id, { radius: Math.max(0, px) / outWidth.value }) }
+function setRadiusCornerPx(l: any, i: number, px: number) {
+  const c = radiusCorners(l)
+  c[i] = Math.max(0, px) / outWidth.value
+  setLocal(l.id, { radius: [c[0]!, c[1]!, c[2]!, c[3]!] })
+}
+function toggleRadiusExpanded(l: any) {
+  if (radiusRowExpanded.value) {
+    // Collapsing re-links: the four corners fold back to the largest of them.
+    if (Array.isArray(l?.radius)) setLocal(l.id, { radius: Math.max(...radiusCorners(l)) })
+    radiusExpanded.value = false
+  } else radiusExpanded.value = true
+}
+
 // ── Expressive text layout ────────────────────────────────────────────────
 function setExpressive(l: any, patch: Partial<ExpressiveParams>) {
   if (!l) return
@@ -2996,8 +3027,8 @@ function onGenPointerUp(e: PointerEvent) {
 // per-kind geometry (1 unit = artboard width), so "Use shape" matches the canvas.
 function drawMaskShape(ctx: CanvasRenderingContext2D, l: any, W: number) {
   if (l.kind === 'rect') {
-    const w = l.w * W, h = l.h * W, r = Math.max(0, Math.min((l.radius || 0) * W, Math.min(w, h) / 2))
-    ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r); ctx.fill()
+    const w = l.w * W, h = l.h * W
+    ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, cornerRadii(l.radius, w, h, W)); ctx.fill()
   } else if (l.kind === 'ellipse') {
     const w = l.w * W, h = l.h * W
     ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill()
@@ -5443,9 +5474,28 @@ onUnmounted(() => {
             </div>
             <div v-if="selectedLocal.kind === 'rect'">
               <div class="panel-label mb-1.5">Corner radius</div>
-              <input type="number" min="0" step="1" :value="pxW((selectedLocal as any).radius)"
-                class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
-                @input="setSizePx(selectedLocal!.id, 'radius', parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+              <div class="flex items-center gap-1.5">
+                <input type="number" min="0" step="1" :value="radiusLinkedPx(selectedLocal)" data-radius-linked
+                  class="flex-1 min-w-0 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setRadiusLinkedPx(selectedLocal, parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+                <button
+                  class="shrink-0 size-[26px] flex items-center justify-center rounded border transition-colors"
+                  :class="radiusRowExpanded ? 'bg-white/10 border-white/20 text-white/90' : 'bg-white/[0.04] border-white/[0.06] text-white/50 hover:text-white/80'"
+                  :title="radiusRowExpanded ? 'Use one radius for every corner' : 'Set each corner separately'"
+                  data-radius-expand
+                  @click="toggleRadiusExpanded(selectedLocal)">
+                  <component :is="radiusRowExpanded ? ChevronUp : ChevronDown" class="size-3.5" />
+                </button>
+              </div>
+              <div v-if="radiusRowExpanded" class="grid grid-cols-2 gap-1.5 mt-1.5">
+                <div v-for="(label, i) in CORNER_LABELS" :key="label">
+                  <div class="panel-label mb-1">{{ label }}</div>
+                  <input type="number" min="0" step="1" :value="pxW(radiusCorners(selectedLocal)[i]!)"
+                    :data-radius-corner="i"
+                    class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                    @input="setRadiusCornerPx(selectedLocal, i, parseFloat(($event.target as HTMLInputElement).value) || 0)" />
+                </div>
+              </div>
             </div>
           </template>
 

@@ -357,13 +357,46 @@ export interface TextLayer extends LayerCommon {
   expressive?: ExpressiveParams
 }
 
+/**
+ * A rectangle's corner rounding. A plain number is UNIFORM (what every rect
+ * stored before per-corner radii existed, so saved docs are byte-identical);
+ * the tuple is per-corner, clockwise from the top-left: [tl, tr, br, bl].
+ * Either form is normalized to canvas width, like every other dimension.
+ *
+ * NOT animatable: layer motion (lib/motion) only ever produces transform/opacity
+ * deltas, so no keyframe or preset can reach `radius` in either form — and the
+ * agent's setLayerProps accepts a number only (lib/agent/surfaces/compositor.ts).
+ */
+export type RectRadius = number | [number, number, number, number]
+
 export interface RectLayer extends LayerCommon {
   kind: 'rect'
   w: number; h: number    // normalized to canvas width
   fill: Paint             // '' / 'none' = no fill; or a gradient / patterned Fill
   stroke: Paint
   strokeWidth: number     // normalized to canvas width
-  radius: number          // normalized to canvas width
+  radius: RectRadius      // normalized to canvas width; number = uniform
+}
+
+/**
+ * Resolve a rect's `radius` to four concrete corner radii in the SAME units as
+ * `w`/`h`, clamped so no corner can exceed half the shorter side (and never
+ * negative / NaN). `scale` converts the stored width-normalized radius into the
+ * caller's space (px when drawing, 1 when staying in local units).
+ *
+ * This is the single place a rect's rounding is interpreted — paint, the
+ * shape→path conversion and the mask silhouette all go through it, so the card,
+ * the modal and client bakes agree by construction.
+ */
+export function cornerRadii(radius: RectRadius | undefined | null, w: number, h: number, scale = 1): [number, number, number, number] {
+  const max = Math.max(0, Math.min(Math.abs(w), Math.abs(h)) / 2)
+  const one = (v: unknown) => {
+    const n = typeof v === 'number' && Number.isFinite(v) ? v * scale : 0
+    return Math.max(0, Math.min(n, max))
+  }
+  return Array.isArray(radius)
+    ? [one(radius[0]), one(radius[1]), one(radius[2]), one(radius[3])]
+    : [one(radius), one(radius), one(radius), one(radius)]
 }
 
 export interface EllipseLayer extends LayerCommon {
@@ -646,14 +679,20 @@ export function shapeToPathLayer(layer: LocalLayer): PathLayer | null {
   const f = (v: number) => +v.toFixed(5)
   if (layer.kind === 'rect') {
     const { w, h } = layer
-    const r = Math.max(0, Math.min(layer.radius, Math.min(w, h) / 2))
+    const [tl, tr, br, bl] = cornerRadii(layer.radius, w, h)
     const x0 = -w / 2, x1 = w / 2, y0 = -h / 2, y1 = h / 2
-    const d = r <= 0
+    // Square corners emit a plain line so a zero-radius rect keeps its old,
+    // curve-free path data; a uniform radius reproduces the old string exactly.
+    const d = (tl + tr + br + bl) <= 0
       ? `M ${f(x0)} ${f(y0)} L ${f(x1)} ${f(y0)} L ${f(x1)} ${f(y1)} L ${f(x0)} ${f(y1)} Z`
-      : `M ${f(x0 + r)} ${f(y0)} L ${f(x1 - r)} ${f(y0)} Q ${f(x1)} ${f(y0)} ${f(x1)} ${f(y0 + r)}` +
-        ` L ${f(x1)} ${f(y1 - r)} Q ${f(x1)} ${f(y1)} ${f(x1 - r)} ${f(y1)}` +
-        ` L ${f(x0 + r)} ${f(y1)} Q ${f(x0)} ${f(y1)} ${f(x0)} ${f(y1 - r)}` +
-        ` L ${f(x0)} ${f(y0 + r)} Q ${f(x0)} ${f(y0)} ${f(x0 + r)} ${f(y0)} Z`
+      : `M ${f(x0 + tl)} ${f(y0)} L ${f(x1 - tr)} ${f(y0)}` +
+        (tr > 0 ? ` Q ${f(x1)} ${f(y0)} ${f(x1)} ${f(y0 + tr)}` : '') +
+        ` L ${f(x1)} ${f(y1 - br)}` +
+        (br > 0 ? ` Q ${f(x1)} ${f(y1)} ${f(x1 - br)} ${f(y1)}` : '') +
+        ` L ${f(x0 + bl)} ${f(y1)}` +
+        (bl > 0 ? ` Q ${f(x0)} ${f(y1)} ${f(x0)} ${f(y1 - bl)}` : '') +
+        ` L ${f(x0)} ${f(y0 + tl)}` +
+        (tl > 0 ? ` Q ${f(x0)} ${f(y0)} ${f(x0 + tl)} ${f(y0)}` : '') + ' Z'
     return createPathLayer({
       d, bbox: { w, h }, scale: 1, x: layer.x, y: layer.y, rotation: layer.rotation,
       opacity: layer.opacity, fill: layer.fill, stroke: layer.stroke, strokeWidth: layer.strokeWidth,
@@ -1399,9 +1438,10 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     drawText(ctx, layer, W)
   } else if (layer.kind === 'rect') {
     const w = layer.w * W, h = layer.h * W
-    const r = Math.max(0, Math.min(layer.radius * W, Math.min(w, h) / 2))
     ctx.beginPath()
-    ctx.roundRect(-w / 2, -h / 2, w, h, r)
+    // One rounded path for every corner shape: a plain `radius` yields four
+    // equal radii, so uniform rects draw exactly as before.
+    ctx.roundRect(-w / 2, -h / 2, w, h, cornerRadii(layer.radius, w, h, W))
     if (hasPaint(layer.fill)) { ctx.fillStyle = resolvePaint(ctx, layer.fill, { w, h }, _fieldCtx); ctx.fill() }
     if (hasPaint(layer.stroke) && layer.strokeWidth > 0) {
       ctx.lineWidth = layer.strokeWidth * W; ctx.strokeStyle = resolvePaint(ctx, layer.stroke, { w, h }, _fieldCtx); ctx.stroke()

@@ -16,6 +16,10 @@ const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft_light', 'h
 
 function px(norm: number) { return Math.round((norm || 0) * props.pxBase) }
 function setPx(key: string, v: string) { emit('set', { [key]: Math.max(0, parseFloat(v) || 0) / props.pxBase }) }
+// A rect's radius can be per-corner ([tl, tr, br, bl]). This compact field is the
+// LINKED one: it shows the largest corner and writes a single number back (which
+// re-links all four). Per-corner editing lives in the modal inspector.
+function radiusPx(r: unknown) { return px(Array.isArray(r) ? Math.max(...r.map(v => Number(v) || 0)) : (r as number)) }
 const hasFill = computed(() => props.layer.fill && props.layer.fill !== 'none')
 // A path's fill may be a gradient object; show a neutral swatch for the color
 // input (which, if used, replaces the gradient with a solid color).
@@ -67,7 +71,7 @@ const pathFillColor = computed(() =>
       <input type="number" min="0" :value="px(layer.strokeWidth)" title="Stroke width"
         class="w-11 h-6 bg-white/[0.06] rounded text-[11px] text-center text-white/85 outline-none"
         @input="setPx('strokeWidth', ($event.target as HTMLInputElement).value)" />
-      <input v-if="layer.kind === 'rect'" type="number" min="0" :value="px(layer.radius)" title="Corner radius"
+      <input v-if="layer.kind === 'rect'" type="number" min="0" :value="radiusPx(layer.radius)" title="Corner radius (sets all four)"
         class="w-11 h-6 bg-white/[0.06] rounded text-[11px] text-center text-white/85 outline-none"
         @input="setPx('radius', ($event.target as HTMLInputElement).value)" />
     </template>

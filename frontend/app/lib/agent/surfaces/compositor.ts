@@ -90,6 +90,10 @@ function strokeField(kind: LocalLayerKind): string | null {
 const COMMON_PROPS = new Set(['x', 'y', 'rotation', 'opacity', 'blend', 'visible', 'locked', 'skewX', 'skewY', 'radius'])
 // Props that must stay within bounds (0..1 fractions / sane ranges) so a bad model
 // value can't break rendering.
+// `radius` is clamped as a NUMBER on purpose: a rect may store four per-corner
+// radii, but the agent vocabulary stays uniform-only (an array patch fails the
+// finite-number check and falls back to the layer's current value, so a model
+// can never half-write a corner tuple).
 const PROP_CLAMP: Record<string, [number, number]> = { x: [-1, 2], y: [-1, 2], opacity: [0, 1], rotation: [-360, 360], radius: [0, 1] }
 
 /** The agent-facing command menu. Media ops (generateImage/editImage/
@@ -136,7 +140,10 @@ export function describeCompositor(state: CompositorState): SurfaceSnapshot {
       if (l.boxW != null) cur.boxW = l.boxW
       if (l.strokeColor && l.strokeWidth) { cur.outline = paintLabel(l.strokeColor); cur.outlineWidth = l.strokeWidth }
     } else if (l.kind === 'image') { cur.image = l.filename; cur.w = l.w; cur.h = l.h; if (l.tint) cur.tint = paintLabel(l.tint) }
-    else if (l.kind === 'rect') { cur.w = l.w; cur.h = l.h; cur.fill = paintLabel(l.fill); if (l.radius) cur.radius = l.radius; if (l.stroke) { cur.stroke = paintLabel(l.stroke); cur.strokeWidth = l.strokeWidth } }
+    // `radius` may be per-corner ([tl, tr, br, bl]); describe it as one readable
+    // value so the model never learns to emit an array (setLayerProps takes a
+    // number only — see PROP_CLAMP).
+    else if (l.kind === 'rect') { cur.w = l.w; cur.h = l.h; cur.fill = paintLabel(l.fill); if (l.radius) cur.radius = Array.isArray(l.radius) ? l.radius.join(' / ') : l.radius; if (l.stroke) { cur.stroke = paintLabel(l.stroke); cur.strokeWidth = l.strokeWidth } }
     else if (l.kind === 'ellipse') { cur.w = l.w; cur.h = l.h; cur.fill = paintLabel(l.fill); if (l.stroke) { cur.stroke = paintLabel(l.stroke); cur.strokeWidth = l.strokeWidth } }
     else if (l.kind === 'line') { cur.length = l.w; cur.stroke = paintLabel(l.stroke); cur.strokeWidth = l.strokeWidth }
     else if (l.kind === 'path') { cur.fill = paintLabel(l.fill) }
@@ -186,6 +193,10 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       const layer = findLayer(state, cmd.target)
       if (!layer) return { ok: false, reason: 'invalid', detail: `no layer '${String(cmd.target)}'` }
       const safe = clone(patch)
+      // Rects may store four per-corner radii, but the agent vocabulary is
+      // uniform-only: drop a non-numeric radius instead of clobbering the
+      // corners the user set in the inspector. A numeric one re-links all four.
+      if ('radius' in safe && !Number.isFinite(Number(safe.radius))) delete safe.radius
       for (const [k, [lo, hi]] of Object.entries(PROP_CLAMP)) if (k in safe) safe[k] = clamp(safe[k], lo, hi, ((layer as unknown as Record<string, unknown>)[k] as number) ?? 0)
       Object.assign(layer, safe)
       return { ok: true, template: state, inverse: snapshot() }
