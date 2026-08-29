@@ -10,6 +10,7 @@ import { sketchPathData } from '~/lib/sketch/sketchPath'
 
 const doc = ref<SketchDoc>({ entities: [], constraints: [] })
 const status = ref('empty')
+const ready = ref(false)
 
 // world→screen: 40px per unit, origin near lower-left of a 640x420 board
 const S = 34, OX = 60, OY = 360
@@ -72,11 +73,12 @@ onMounted(() => {
     setPoint: (id: EntityId, x: number, y: number) => runSolve({ point: id, x, y }),
     pathData: () => sketchPathData(doc.value),
   }
+  ready.value = true
 })
 </script>
 
 <template>
-  <div style="font-family: ui-sans-serif, system-ui; padding: 12px; color: #e5e5e5; background: #111; min-height: 100vh">
+  <div :data-ready="ready ? '' : undefined" style="font-family: ui-sans-serif, system-ui; padding: 12px; color: #e5e5e5; background: #111; min-height: 100vh">
     <h1 style="font-size: 14px; margin: 0 0 8px">Sketch Solver Lab</h1>
     <div style="display: flex; gap: 8px; margin-bottom: 8px">
       <button data-act="demo" @click="loadTangentDemo" style="padding: 4px 10px">Tangent demo</button>

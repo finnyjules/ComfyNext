@@ -1,10 +1,14 @@
 // tests/sketch-solver-lab.spec.ts
 import { test, expect } from '@playwright/test'
 
-// Distance from a circle center to the line, read straight from the solved doc.
 test('circle stays tangent to the line as the endpoint moves', async ({ page }) => {
   await page.goto('/dev/sketch-solver-lab')
-  await page.getByRole('button', { name: 'Tangent demo' }).click()
+  // wait for the page to hydrate and publish its API (avoids first-click hydration race)
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchLab)
+
+  // load the demo through the API, not a button click
+  await page.evaluate(() => (window as any).__sketchLab.loadTangentDemo())
 
   const perp = async () => page.evaluate(() => {
     const d = (window as any).__sketchLab.doc
@@ -18,7 +22,6 @@ test('circle stays tangent to the line as the endpoint moves', async ({ page }) 
   const before = await perp()
   expect(Math.abs(before.perp - before.r)).toBeLessThan(0.05)
 
-  // rotate the line by moving endpoint b, via the exposed forced-sync API
   await page.evaluate(() => (window as any).__sketchLab.setPoint('b', 12, 7))
   const after = await perp()
   expect(after.perp).toBeCloseTo(after.r, 1) // still tangent after the move
