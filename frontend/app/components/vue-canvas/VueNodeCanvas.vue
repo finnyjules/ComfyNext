@@ -57,7 +57,7 @@ import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { cleanSketchPrompt } from '~/lib/sketch/sketchIntent'
-import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, planKeptCard, type SketchPilePayload } from '~/lib/sketch/sketchPile'
+import { SKETCH_PROP, MAX_SKETCH_ITEMS, KEEP_CARD_SIZE, buildSketchPilePayload, refreshSketchPile, planKeptCard, type SketchPilePayload } from '~/lib/sketch/sketchPile'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import { applyMoodboardWireEffects, applyMoodboardToRestyleNode, clearMoodboardFromGenerateNode, syncMoodboardWidgets } from '~/lib/graph/moodboardApply'
 import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
@@ -1024,15 +1024,31 @@ const {
 registerWireDrag()
 
 // Sketch pad (prompt-bar sketching): one disposable hidden generator node per
-// canvas, feeding one visible SketchPile node. Anchor persists across
-// re-sketches so refresh overwrites the same pile.
+// canvas, feeding the review strip below (never a visible SketchPile node —
+// that's the sketch-NODE flow's own pile, a separate thing). Anchor persists
+// across re-sketches/re-rolls so the strip's "keeper spot" stays put.
 // padNodeId is the transient GENERATOR node's NATURAL numeric id (minted by
 // createNodeData, same convention as every other runnable node) — the run
 // pipeline serializes node ids through Number() when building a workflow.
-// pileNodeId is the SketchPile node's numeric id, used by re-roll (Task 6).
+// pileNodeId is retired for this flow (kept in the shape, always null) — no
+// pile node is ever created for prompt-bar sketching now.
 const sketchPad = reactive<{ anchor: { x: number, y: number } | null, seed: number, prompt: string, promptId: string | null, padNodeId: string | number | null, pileNodeId: string | number | null }>(
   { anchor: null, seed: 0, prompt: '', promptId: null, padNodeId: null, pileNodeId: null },
 )
+
+// Prompt-bar sketch REVIEW STRIP: the pad's batch lands here — never as a
+// pile node. Docked above the prompt bar; the user reviews all four and
+// commits exactly one via Keep or drag-to-place (dropAt), the other three
+// are discarded when the strip closes. `sketchPad` above still tracks the
+// hidden generator node (padNodeId) and its anchor/prompt/seed for re-roll
+// and teardown — only what happens to its OUTPUT changed.
+const sketchReview = reactive<{ open: boolean, images: string[], selected: number | null }>(
+  { open: false, images: [], selected: null },
+)
+// True while a re-roll's run is in flight (Keep/Re-roll disabled) — separate
+// from `sketchReview` itself since the strip's own busy/idle-ness isn't part
+// of the shape Task 4's live pass verifies.
+const sketchReviewBusy = ref(false)
 
 /** Viewport center in graph coords, nudged to the nearest clear spot so the pad
  *  never covers existing cards. Reuses the AABB-nudge from the agent apply path. */
@@ -2889,7 +2905,13 @@ function handleBridgeMessage(event: MessageEvent) {
           // the pad's numeric id is minted per-canvas, not a fixed string) BEFORE
           // the legacy sketch-node fan-out below (Task 8 retires that branch).
           if (target?.data?.properties?.sketchPad === true && tagged.images && tagged.images.length > 1 && sketchPad.anchor) {
-            materializeSketchPileAt(sketchPad.anchor, tagged.images) // real pass, replaces the skeleton pile
+            // Batch lands in the review strip (docked above the prompt bar),
+            // never a pile node — the user reviews all four and commits
+            // exactly one via Keep or drag; Cancel/close discards the rest.
+            sketchReview.images = tagged.images.slice(0, MAX_SKETCH_ITEMS)
+            sketchReview.selected = null
+            sketchReview.open = true
+            sketchReviewBusy.value = false
             return
           }
           // Sketch NODE (properties.sketch — the node-search preset): its
@@ -3729,39 +3751,6 @@ function applyWidgetOverridesTo(node: any, overrides: Record<string, unknown>) {
   node.data = { ...node.data, widgetsValues: wv }
 }
 
-/** Create-or-refresh the prompt-bar sketch pile at `anchor`. `images` may be []
- *  for the skeleton pass (loading shimmer). One node, one payload — replaces
- *  the retired 4-card slot machinery. */
-function materializeSketchPileAt(
-  anchor: { x: number, y: number },
-  images: string[],
-  opts: { loading?: boolean } = {},
-): void {
-  const existing = sketchPad.pileNodeId != null
-    ? (nodes.value as any[]).find((n: any) => n.id === sketchPad.pileNodeId)
-    : null
-  if (existing) {
-    const prev = existing.data?.properties?.[SKETCH_PROP] as SketchPilePayload | undefined
-    const next = prev
-      ? refreshSketchPile(prev, { images, prompt: sketchPad.prompt, seed: sketchPad.seed, loading: opts.loading })
-      : buildSketchPilePayload({ prompt: sketchPad.prompt, seed: sketchPad.seed, sourceNodeId: String(sketchPad.padNodeId ?? ''), images, loading: opts.loading })
-    existing.data = { ...existing.data, properties: { ...existing.data.properties, [SKETCH_PROP]: next } }
-    return
-  }
-  const node = createNodeData('SketchPile', anchor, undefined, {
-    [SKETCH_PROP]: buildSketchPilePayload({
-      prompt: sketchPad.prompt,
-      seed: sketchPad.seed,
-      sourceNodeId: String(sketchPad.padNodeId ?? ''),
-      images,
-      loading: opts.loading,
-    }),
-  })
-  // Keep createNodeData's numeric id (string ids serialize to NaN and drop).
-  ;(nodes.value as any[]).push(node)
-  sketchPad.pileNodeId = node.id
-}
-
 /** Sketch NODE flow: a visible sketch generator's multi-image batch presents
  *  as a pile to its right (the choose-one surface). The node's own take/
  *  filmstrip append stays untouched — provenance and Light Table keep working.
@@ -3795,6 +3784,12 @@ async function startSketch(prompt: string): Promise<void> {
   // SUBJECT, not a literal pencil sketch — the fast-path hands us raw text.
   const clean = cleanSketchPrompt(prompt.trim())
   if (!clean) return
+  // A fresh prompt-bar submission (as opposed to Re-roll, which reuses the
+  // open strip) replaces whatever the strip was showing — close it now so a
+  // stale batch never lingers on screen while the new one is in flight.
+  sketchReview.open = false
+  sketchReview.images = []
+  sketchReview.selected = null
   sketchPad.prompt = clean
   sketchPad.seed = Math.floor(Math.random() * 2_147_483_647)
   if (!sketchPad.anchor) {
@@ -3820,14 +3815,113 @@ async function startSketch(prompt: string): Promise<void> {
     pad.position = sketchPad.anchor
   }
 
-  // Lever 1 — optimistic skeleton: a single shimmering pile appears immediately.
-  materializeSketchPileAt(sketchPad.anchor, [], { loading: true })
-
   await nextTick()
   // Scoped run of just the pad node (never the whole graph). skipCostConfirm:
   // sketches are the cheap tier; the meter still bills normally.
   window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [sketchPad.padNodeId], direction: 'self', skipCostConfirm: true } }))
 }
+
+/** Tear down the transient prompt-bar sketch-pad plumbing — the hidden
+ *  generator node and its auto-created hidden sink (materializeAutoImageSinks
+ *  wires exactly one, satisfying ComfyUI's "prompt has no outputs" check) —
+ *  and reset `sketchPad` to its empty shape. `removeNodes` also drops any
+ *  edges touching them (default `removeConnectedEdges`), so the sink's wire
+ *  goes with it. Called on every path that ends the review (Keep, dropAt,
+ *  Cancel) so no orphan node survives the strip closing. */
+function teardownSketchReview(): void {
+  const ids: string[] = []
+  if (sketchPad.padNodeId != null) {
+    ids.push(String(sketchPad.padNodeId))
+    for (const e of edges.value as any[]) {
+      if (e.source !== String(sketchPad.padNodeId)) continue
+      const t = (nodes.value as any[]).find((n: any) => String(n.id) === String(e.target))
+      if (t?.data?.properties?.sketchSink === true) ids.push(String(t.id))
+    }
+  }
+  // Defensive: a pile node shouldn't exist under the strip flow, but clean up
+  // one left over from an interrupted transition rather than leak it.
+  if (sketchPad.pileNodeId != null) ids.push(String(sketchPad.pileNodeId))
+  if (ids.length) removeNodes(ids)
+  sketchPad.anchor = null
+  sketchPad.seed = 0
+  sketchPad.prompt = ''
+  sketchPad.promptId = null
+  sketchPad.padNodeId = null
+  sketchPad.pileNodeId = null
+}
+
+/** Keep: commit `sketchReview.images[sketchReview.selected]` as a plain Image
+ *  card at the keeper spot. Reuses `planKeptCard` — the SAME plan the sketch-
+ *  stack overlay's Keep uses per item — so the committed node is identical to
+ *  today's kept sketch; there's just no pile node behind it to update. */
+function onSketchKeep(): void {
+  const idx = sketchReview.selected
+  if (idx != null) {
+    const anchor = sketchPad.anchor ?? sketchPadAnchor()
+    const payload = buildSketchPilePayload({
+      prompt: sketchPad.prompt,
+      seed: sketchPad.seed,
+      sourceNodeId: String(sketchPad.padNodeId ?? ''),
+      images: sketchReview.images,
+    })
+    const plan = planKeptCard(anchor, payload, idx)
+    if (plan) {
+      const imageWidgetValue = annotatedImageValueFromViewUrl(plan.image)
+      const card = createNodeData(plan.nodeType, plan.position,
+        imageWidgetValue ? { image: imageWidgetValue } : undefined)
+      card.data = { ...card.data, images: [plan.image] }
+      ;(nodes.value as any[]).push(card)
+    }
+  }
+  teardownSketchReview()
+  sketchReview.open = false
+}
+
+/** Drag-to-place: commit `sketchReview.images[index]` under the drop point.
+ *  Same plain-Image-card construction as Keep (and keepSketchStackItem), just
+ *  positioned at the projected cursor point instead of the keeper column —
+ *  top-left offset by half the keeper card size so the card is centered
+ *  under the cursor, not tucked under its corner. */
+function onSketchDropAt(payload: { index: number, clientX: number, clientY: number }): void {
+  const src = sketchReview.images[payload.index]
+  if (src) {
+    const p = project({ x: payload.clientX, y: payload.clientY })
+    const half = KEEP_CARD_SIZE / 2
+    const position = { x: p.x - half, y: p.y - half }
+    const imageWidgetValue = annotatedImageValueFromViewUrl(src)
+    const card = createNodeData('Image', position, imageWidgetValue ? { image: imageWidgetValue } : undefined)
+    card.data = { ...card.data, images: [src] }
+    ;(nodes.value as any[]).push(card)
+  }
+  teardownSketchReview()
+  sketchReview.open = false
+}
+
+/** Cancel: discard all four, tear down the pad, close the strip. No node. */
+function onSketchCancel(): void {
+  teardownSketchReview()
+  sketchReview.open = false
+}
+
+/** Re-roll: fresh seed onto the SAME pad node + the same scoped run the
+ *  initial sketch used. The new batch lands back in the strip via the
+ *  `executed`-handler diversion above (replacing `sketchReview.images`) — the
+ *  strip itself stays open and busy until it does. */
+function onSketchReroll(): void {
+  if (sketchPad.padNodeId == null) return
+  const pad = (nodes.value as any[]).find((n: any) => n.id === sketchPad.padNodeId)
+  if (!pad) return
+  const seed = Math.floor(Math.random() * 2_147_483_647)
+  applyWidgetOverridesTo(pad, { seed })
+  sketchPad.seed = seed
+  sketchReview.selected = null
+  sketchReviewBusy.value = true
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
+    detail: { targetIds: [sketchPad.padNodeId], direction: 'self', skipCostConfirm: true },
+  }))
+}
+
+function onSketchSelect(i: number): void { sketchReview.selected = i }
 
 // Speculative warm (Task 7, spec §6 lever 2): a throwaway single-output
 // Schnell dispatch fired on prompt-bar focus so the Replicate endpoint isn't
@@ -7245,8 +7339,8 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
     // ComfyUI rejects the run ("Prompt has no outputs"). So they get an auto-sink
     // like any generator — but a HIDDEN one (marked `sketchSink`) so no visible
     // card lands. The pad's own executed event still carries the batch that
-    // materializeSketchPileAt writes into the pile; the sink just satisfies
-    // validation and saves the files.
+    // lands in the review strip (see the executed-handler diversion above);
+    // the sink just satisfies validation and saves the files.
     const hiddenSketchSource = !!(src.data?.properties?.sketchPad || src.data?.properties?.sketchWarm)
 
     const outputs = (src.data?.outputs ?? []) as Array<{ name: string; type: string }>
@@ -8095,6 +8189,29 @@ defineExpose({
         @reroll="rerollSketchStack"
         @close="sketchStackForId = null"
       />
+    </Teleport>
+
+    <!-- Prompt-bar sketch review strip: four fresh sketches, reviewed before
+         any land on the canvas. Teleported like the sketch-stack overlay
+         above so the prompt bar / toolbar can't paint over it; docked
+         directly above them, matching their bottom-center anchor
+         (layouts/default.vue's `bottom-3 left-1/2 -translate-x-1/2` stack). -->
+    <Teleport to="body">
+      <div
+        v-if="sketchReview.open"
+        class="pointer-events-auto fixed bottom-28 left-1/2 z-40 -translate-x-1/2"
+      >
+        <VueCanvasSketchReviewStrip
+          :images="sketchReview.images"
+          :selected="sketchReview.selected"
+          :busy="sketchReviewBusy"
+          @select="onSketchSelect"
+          @keep="onSketchKeep"
+          @cancel="onSketchCancel"
+          @reroll="onSketchReroll"
+          @drop-at="onSketchDropAt"
+        />
+      </div>
     </Teleport>
 
     <!-- Model gallery (image generator model picker) -->
