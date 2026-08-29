@@ -228,7 +228,7 @@ export interface ShaderStudioConfig {
 
 export function defaultConfig(): ShaderStudioConfig {
   return {
-    version: 3,
+    version: 4,
     source: { kind: 'none' },
     resolution: 1536,
     effects: [{ layerId: newLayerId(), id: '', params: {}, enabled: true, customChars: '', blend: 'normal', opacity: 1 }],

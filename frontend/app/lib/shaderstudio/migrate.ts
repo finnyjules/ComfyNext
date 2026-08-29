@@ -27,7 +27,8 @@ export function migrateShaderConfig(raw: any): ShaderStudioConfig {
     if (typeof tr.path === 'string' && tr.path.startsWith('effect.params.')) tr.path = tr.path.replace('effect.params.', 'effects.0.params.')
   }
   if (wasVersion < 3) migrateSpectrumMap(cfg)
-  cfg.version = 3
+  if (wasVersion < 4) migrateTexturedGlass(cfg)
+  cfg.version = 4
   return cfg as ShaderStudioConfig
 }
 
@@ -63,5 +64,51 @@ function migrateSpectrumMap(cfg: any): void {
     const isOld = 'u_hue' in p || 'u_spread' in p || Object.keys(p).length === 0
     // A `u_ramp` key means it was already saved against the NEW gradient_map.
     if (isOld && !('u_ramp' in p) && !('u_mix' in p)) eff.id = 'spectrum_map'
+  }
+}
+
+/**
+ * `blinds` used to be an analytic half-cylinder: refraction was a closed-form
+ * bend across the flute, and the ribs were PAINTED — `u_depth` darkened the seams
+ * and `u_shadeWidth` set how wide the bright crest stayed. It is now a height
+ * field, so the shading is LIT off the surface normal instead: `u_relief` sets
+ * how steep the surface reads and `u_sheen` how hard it glints.
+ *
+ * The two painted-rib uniforms have no counterpart in a lit model, so they are
+ * dropped. Everything else keeps its uniform NAME and only changes label, which
+ * is what lets saved layers and their motion tracks survive: tracks address
+ * uniforms by name (`effects.0.params.u_chromatic`), so a rename would silently
+ * break every recorded animation. `u_mode` likewise extends from a 2-value enum
+ * to a 9-value one with 0 (reeded) and 1 (concentric) unchanged, so no saved
+ * pattern choice moves.
+ *
+ * GATED ON `version < 4`, following `migrateSpectrumMap`. A layer with neither
+ * retired uniform is ambiguous by inspection — it is either an old layer that sat
+ * on defaults or a new one — and only the stored version separates them. Without
+ * the gate this would keep re-seeding `u_relief`/`u_sheen` over a user's own
+ * values every time a config was loaded.
+ */
+function migrateTexturedGlass(cfg: any): void {
+  const RETIRED = ['u_depth', 'u_shadeWidth']
+  for (const eff of cfg.effects ?? []) {
+    if (eff?.id !== 'blinds') continue
+    const p = eff.params ?? (eff.params = {})
+    for (const u of RETIRED) delete p[u]
+    // Seed the lit-shading pair at the calibrated defaults so an old layer reads
+    // as the same material rather than as flat glass.
+    if (!('u_relief' in p)) p.u_relief = 1.0
+    if (!('u_sheen' in p)) p.u_sheen = 0.3
+  }
+  // Animations pointed at the painted-rib uniforms now address nothing. Drop
+  // those tracks rather than leaving them to write into a dead key.
+  const tracks = cfg.motion?.tracks
+  if (Array.isArray(tracks)) {
+    const blinds = new Set(
+      (cfg.effects ?? []).flatMap((e: any, i: number) => (e?.id === 'blinds' ? [i] : [])),
+    )
+    cfg.motion.tracks = tracks.filter((tr: any) => {
+      const m = /^effects\.(\d+)\.params\.(u_\w+)$/.exec(String(tr?.path ?? ''))
+      return !(m && blinds.has(Number(m[1])) && RETIRED.includes(m[2]!))
+    })
   }
 }
