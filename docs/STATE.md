@@ -66,6 +66,14 @@ setTimeout throttling, and page reload killing the client bake outright — expo
 reloads before completing) · `input/` holds 23k+ orphaned bake PNGs, never cleaned ·
 duration row says "frames", means seconds · killing the backend hard-reloads the app.
 
+**THE ROOM UX SPEC'D 2026-08-28** (`superpowers/specs/2026-08-28-timeline-room-ux-design.md`):
+one room, two thin doors, pull replaces push — full-screen surface with the piece playing
+center-stage; Home "Create a video" + canvas "Arrange in time" as the only entries; the rail
+mirrors the canvas newest-first (tiles are living references, still-until-hover, cost shown);
+"＋ Generate" makes a real canvas node; export = a job in the existing queue that survives tab
+close and lands as a canvas node; formats = discipline not machinery. Brainstormed via
+visual-companion mockups (persisted in `.superpowers/brainstorm/`), each decision wargamed.
+
 ### Frame — wired layers become native layers + the modal breathes — LANDED 2026-08-28 (`925c43728`..`8d3cac809`+fixes)
 
 **Toolbar regroup fast-follow (same day, `eb2900d0e`+`49a995341`):** the modal's bottom bar
