@@ -59,7 +59,7 @@ import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData 
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 import { showIfVisible } from '~/lib/studio/sections'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
-import { nodeSpaceTypeStateSource, type SpaceTypeStateSource } from '~/lib/spacetype/stateSource'
+import { nodeSpaceTypeStateSource, clipSpaceTypeStateSource, type SpaceTypeStateSource } from '~/lib/spacetype/stateSource'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { SpaceTypeEmbedConfig } from '~/lib/embed/surfaces/spacetype'
@@ -78,7 +78,7 @@ import { fontSourceUrl, loadFont, fontCacheGet, parseLibraryFontValue } from '~/
 import { outlineFontValue, resolveShape } from '~/lib/spacetype/effects/loft'
 import { libraryToken, resolveLibraryFace } from '~/data/library-fonts'
 
-const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
+const props = defineProps<{ nodeId?: string; nodes?: any[]; edges?: any[]; clipId?: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 // Record generated stills/videos as the current project's assets (Assets panel).
@@ -88,12 +88,17 @@ const { activeTab } = useTabs()
 // Locate this node + its saved config blob on the canvas. The config lives at
 // node.data.properties.sailor_spaceType so it survives serialization
 // (convertToLiteGraph stashes `properties`), letting the editor be reopened.
-function currentNode() { return props.nodes.find((n: any) => n.id === props.nodeId) }
+function currentNode() { return (props.nodes ?? []).find((n: any) => n.id === props.nodeId) }
+
+const clipMode = computed(() => !!props.clipId)
 
 // The studio reads/writes its state through this adapter instead of hard-coding
-// the node path. Task 4 makes it clip-aware; here it is always the node source,
-// so behaviour is identical to before.
-const stateSource = computed<SpaceTypeStateSource>(() => nodeSpaceTypeStateSource(currentNode))
+// the node path. When clipId is set, the studio is clip-backed (Motion timeline);
+// otherwise behaviour is identical to before — a node-backed source.
+const stateSource = computed<SpaceTypeStateSource>(() =>
+  props.clipId
+    ? clipSpaceTypeStateSource(props.clipId)
+    : nodeSpaceTypeStateSource(currentNode))
 
 const fps = ref(30)
 const FPS_OPTIONS = ['24', '30', '60']
@@ -556,7 +561,7 @@ function activeControls(): StudioControlDesc[] {
   return [...effect.value.controls.map(controlDesc), ...fillSwatchControls()]
 }
 const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudioVarBindings(
-  props.nodeId,
+  props.nodeId ?? '',
   activeControls,
   (key, value) => {
     const k = fillKey()
@@ -570,7 +575,7 @@ const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudio
       rebuild()
     }
   },
-  { nodes: () => props.nodes, edges: () => props.edges ?? [] },
+  { nodes: () => props.nodes ?? [], edges: () => props.edges ?? [] },
 )
 
 // Wired collection lookup (studio -> collection, the inverse of wiredTargets) for the
@@ -579,10 +584,10 @@ const wiredColumns = computed<CollectionColumn[]>(() => {
   const edgeList = props.edges ?? []
   const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
   if (!edge) return []
-  const colNode = props.nodes.find((n: any) => String(n.id) === String(edge.source))
+  const colNode = (props.nodes ?? []).find((n: any) => String(n.id) === String(edge.source))
   const c = colNode?.data?.properties?.[COLLECTION_PROP]
   if (!c) return []
-  return effectiveColumns(c, makeLookupResolver(props.nodes))
+  return effectiveColumns(c, makeLookupResolver(props.nodes ?? []))
 })
 
 // Wired collection NODE (not just its columns) — the sweep flow needs to
@@ -591,7 +596,7 @@ function findWiredCollectionNode(): any | null {
   const edgeList = props.edges ?? []
   const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
   if (!edge) return null
-  return props.nodes.find((n: any) => String(n.id) === String(edge.source)) ?? null
+  return (props.nodes ?? []).find((n: any) => String(n.id) === String(edge.source)) ?? null
 }
 
 // Sweep popover state — opened from the "Sweep…" chip menu item on a bound
@@ -1148,7 +1153,7 @@ onMounted(async () => {
   // seeded to the just-hydrated state so the first edit is the first undo step.
   window.addEventListener('keydown', onStudioKey, true)
   resetHistory()
-  registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
+  if (!clipMode.value && props.nodeId) registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
   // NOTE: the live frame source for this node is registered by SpaceTypeNode.vue
   // (the always-mounted node), NOT here. The node stays mounted while this modal
   // is open, so its headless frame source covers downstream consumers in every
@@ -1165,7 +1170,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onStudioKey, true)
   if (histTimer) clearTimeout(histTimer)
   saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
-  unregisterStudioParamBaker(props.nodeId)
+  if (!clipMode.value && props.nodeId) unregisterStudioParamBaker(props.nodeId)
 })
 
 // Global view keys are live for every effect (camera/scene transform read per frame).
@@ -1431,6 +1436,7 @@ async function renderBlobWithOverrides(rawOverrides: Record<string, string | num
 }
 
 async function generateImage() {
+  if (clipMode.value) return  // no origin node to attach an uploaded image to
   if (!engine) return
   baking.value = true
   stopPreview()
