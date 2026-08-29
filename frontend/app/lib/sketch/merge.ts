@@ -6,8 +6,9 @@ const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 const CONSTRAINT_KINDS: ConstraintKind[] = [
   'coincident', 'pointOnLine', 'pointOnCircle', 'tangentLineCircle', 'tangentCircleCircle',
   'concentric', 'horizontal', 'vertical', 'distance', 'radius',
+  'equalDist', 'rotatedFrom', 'mirroredFrom', 'collinear',
 ]
-const NEEDS_VALUE = new Set<ConstraintKind>(['distance', 'radius'])
+const NEEDS_VALUE = new Set<ConstraintKind>(['distance', 'radius', 'rotatedFrom'])
 
 function mergeEntity(raw: any): SketchEntity | null {
   if (!raw || !isStr(raw.id)) return null
@@ -33,11 +34,34 @@ export function mergeSketchDoc(raw: unknown): SketchDoc {
   const r = raw as any
 
   const seen = new Set<string>()
+  // pass 1: non-path entities (unchanged logic)
+  const rawPaths: any[] = []
   if (Array.isArray(r.entities)) {
     for (const e of r.entities) {
+      if (e && e.kind === 'path') { rawPaths.push(e); continue }
       const m = mergeEntity(e)
       if (m && !seen.has(m.id)) { seen.add(m.id); doc.entities.push(m) }
     }
+  }
+  // pass 2: paths, validated against surviving points
+  const pointIds = new Set(doc.entities.filter(e => e.kind === 'point').map(e => e.id))
+  for (const p of rawPaths) {
+    if (!isStr(p.id) || seen.has(p.id)) continue
+    if (!Array.isArray(p.anchors) || p.anchors.length < 2) continue
+    if (!p.anchors.every((a: unknown) => isStr(a) && pointIds.has(a as string))) continue
+    const need = p.closed ? p.anchors.length : p.anchors.length - 1
+    if (!Array.isArray(p.segments) || p.segments.length !== need) continue
+    const segs: any[] = []
+    let ok = true
+    for (const s of p.segments) {
+      if (s && s.kind === 'line') segs.push({ kind: 'line' })
+      else if (s && s.kind === 'arc' && isStr(s.center) && pointIds.has(s.center) && (s.sweep === 0 || s.sweep === 1)) segs.push({ kind: 'arc', center: s.center, sweep: s.sweep })
+      else if (s && s.kind === 'cubic' && (s.h1 == null || (isStr(s.h1) && pointIds.has(s.h1))) && (s.h2 == null || (isStr(s.h2) && pointIds.has(s.h2)))) segs.push({ kind: 'cubic', h1: s.h1 ?? null, h2: s.h2 ?? null })
+      else { ok = false; break }
+    }
+    if (!ok) continue
+    seen.add(p.id)
+    doc.entities.push({ id: p.id, kind: 'path', anchors: [...p.anchors], segments: segs, closed: !!p.closed, ...(p.construction ? { construction: true } : {}) } as any)
   }
 
   const ids = new Set(doc.entities.map(e => e.id))

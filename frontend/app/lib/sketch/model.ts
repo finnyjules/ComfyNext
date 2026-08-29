@@ -5,12 +5,28 @@ export type EntityId = string
 export interface PointEntity { id: EntityId; kind: 'point'; x: number; y: number; construction?: boolean; fixed?: boolean }
 export interface LineEntity { id: EntityId; kind: 'line'; p1: EntityId; p2: EntityId; construction?: boolean }
 export interface CircleEntity { id: EntityId; kind: 'circle'; center: EntityId; r: number; construction?: boolean }
-export type SketchEntity = PointEntity | LineEntity | CircleEntity
+
+export type SegmentSpec =
+  | { kind: 'line' }
+  | { kind: 'arc'; center: EntityId; sweep: 0 | 1 }
+  | { kind: 'cubic'; h1: EntityId | null; h2: EntityId | null }   // reserved for M2
+
+export interface PathEntity {
+  id: EntityId
+  kind: 'path'
+  anchors: EntityId[]           // ordered point ids, length >= 2
+  segments: SegmentSpec[]       // length == anchors.length - 1 (open) or anchors.length (closed)
+  closed: boolean
+  construction?: boolean
+}
+
+export type SketchEntity = PointEntity | LineEntity | CircleEntity | PathEntity
 
 export type ConstraintKind =
   | 'coincident' | 'pointOnLine' | 'pointOnCircle'
   | 'tangentLineCircle' | 'tangentCircleCircle' | 'concentric'
   | 'horizontal' | 'vertical' | 'distance' | 'radius'
+  | 'equalDist' | 'rotatedFrom' | 'mirroredFrom' | 'collinear'
 
 export interface SketchConstraint {
   id: EntityId
