@@ -198,6 +198,30 @@ planner wait + the "…or sketch it?" chip; false sketch costs a wrong paid rend
 Known accepted misses: long diluted studio phrases still sketch; compound-noun
 modifier collisions ("this video game") defer harmlessly. Both reviews Approved.
 
+### Review strips share one tile chrome — sketch strip is now a take-strip twin — LANDED 2026-08-29
+
+The canvas sketch review strip had drifted to look nothing like the refined studio
+take strip (small 64px chips in a single inline row vs the take strip's big 96px
+tiles over an actions bar). Root cause: it was built to a fresh mockup that drifted
+from the shipped take strip. Fix (subagent-driven, 4 tasks, `01035ded5`..`4912d9cd0`):
+extract the drift-prone tile chrome into ONE shared `ReviewTile.vue`
+(`studio/ReviewTile.vue`) — the 96px clipped tile, the `border-action` selection
+ring, and the hover/focus/selected action-reveal overlay — plus shared tray/bar
+class constants (`studio/reviewStripStyles.ts`). Both strips now compose it:
+`studio/TakeStrip.vue` swaps only its inline tile markup for `ReviewTile` (its 42-test
+suite stays green with a single allowlist widening — behaviour + DOM unchanged), and
+`SketchReviewStrip.vue` is rebuilt as a **two-row twin** (four 96px tiles, per-card
+Keep revealed on hover, a Cancel/Re-roll bar below, drag-to-place preserved via
+ReviewTile's forwarded `tilepointer*` events; the dead `hover` emit + `sketch-tip`
+popup removed). `VueNodeCanvas.vue` is untouched (props/emits/testids preserved). A
+`review-strip-parity` test asserts both strips render `ReviewTile` with the identical
+ring, so they can't silently re-diverge. The node-level `TakesStrip.vue` history row
+is out of scope. Final whole-branch review READY TO MERGE; 63 unit tests; sketch strip
+live-verified as a take-strip twin (its tray width pinned so flex tiles distribute
+evenly in the shrink-to-fit floating dock). Spec:
+[2026-08-28-review-strip-shared-shell-design.md](superpowers/specs/2026-08-28-review-strip-shared-shell-design.md)
+· plan: [2026-08-28-review-strip-shared-shell.md](superpowers/plans/2026-08-28-review-strip-shared-shell.md).
+
 ### Canvas sketch review strip — review-then-commit replaces the auto-placed pile — LANDED 2026-08-28
 
 The prompt-bar sketch flow used to drop an auto-placed **pile deck node** onto the
