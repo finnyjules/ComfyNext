@@ -96,6 +96,24 @@ Phase 2 must also fix the solver's dead in-loop early-break (burns full maxIter 
 per-pointer-move). Phases 3–4: draw-time inference chips + persistent constraint badges + selection
 verbs; agent verbs + curvature-comb overlay.
 
+### Sketch tangent-at-joints — M3 LANDED (dev-only) 2026-08-30 (`630bfbc51`..`b6db2f721`)
+
+The flowing-curve magic: arcs now snap **tangent-continuous at shared joints** while drawing (the top
+feel-backlog item, straight from the Opacity videos). Bow an arc off the previous segment and, within
+~12°, it snaps flush — no kink — with a `T` chip at the joint, persisted as a constraint so the join
+stays smooth through edits. Two new residuals `perpendicular`/`parallel` (also the missing **Fusion
+sketch verbs** — see the Fusion-lineage finding) enable line↔arc joints (`perpendicular[La,J,J,Cnew]`
+= line ⊥ radius); arc↔arc reuses `collinear[Cprev,J,Cnew]` (radii align). Pure `tangentJointArc`
+inference in infer.ts decides free-arc vs snapped-tangent-arc during the drag. **LIVE-VERIFIED both
+joint types**: line→arc (line⊥radius dot 0.00000 through 2 endpoint drags, T+R chips mid-drag) and
+arc→arc (tangent-line angle 0.000° through drags). Joints correctly copy through Repeat/Mirror
+(isometry-invariant) and cascade-delete cleanly. 149/149 unit + 6/6 E2E. Plan:
+`superpowers/plans/2026-08-30-sketch-tangent-joints-m3.md`. **Feel-backlog remaining** (see memory
+`opacity-pen-interaction-reference.md`): analytic Jacobian for mandala-scale liveness (200+ pts),
+delight cues (sparkle-on-snap), editable dimension chips, guides-first affordances, right-click menu.
+Also-owed: arc↔arc same-way-bulge can snap to an S-inflection vs a same-curvature hump (both G1;
+tuning). **Shape Studio mount remains the big decision.**
+
 ### Sketch freeform bezier pen — M2 LANDED (dev-only) 2026-08-29 (`904157bb7`..`3d869d042`)
 
 The classic pen, constraint-native, on `/dev/sketch-draw`: **click = corner anchor, click-drag =
