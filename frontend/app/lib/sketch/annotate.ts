@@ -1,7 +1,7 @@
 import type { SketchDoc, SketchConstraint, EntityId, ConstraintKind } from './model'
 import { getEntity, getPoint, lineEndpoints, circleCenter } from './model'
 import type { Vec2 } from './geom'
-import { sub, add, scale, len, dist } from './geom'
+import { dist } from './geom'
 
 export interface ConstraintMark { id: EntityId; kind: ConstraintKind; glyph: string; x: number; y: number; text?: string }
 
@@ -31,10 +31,15 @@ function anchor(doc: SketchDoc, c: SketchConstraint): Vec2 | null {
 export interface ArcDimensionMark { id: string; x: number; y: number; text: string }
 
 // persistent "R n.n" radius chips for every arc segment of every non-construction
-// path, positioned in WORLD coords at an approximation of the arc's midpoint:
-// chord midpoint nudged out to the circle (center + (chordMid - center) normalized * r).
+// path, positioned in WORLD coords at the arc's true midpoint: the point at the
+// mid-angle of the DRAWN arc, matching sketchPath.ts's sweep convention (so the
+// chip lands on the visible side of the arc, not the opposite side). Using the
+// mid-angle (rather than nudging the chord midpoint out to the circle) also
+// keeps semicircles working: a semicircle's chord midpoint coincides with the
+// center, which made the old approach degenerate and skip the mark entirely.
 export function arcDimensionMarks(doc: SketchDoc): ArcDimensionMark[] {
   const out: ArcDimensionMark[] = []
+  const TAU = Math.PI * 2
   for (const e of doc.entities) {
     if (e.kind !== 'path' || e.construction) continue
     for (let i = 0; i < e.segments.length; i++) {
@@ -51,11 +56,11 @@ export function arcDimensionMarks(doc: SketchDoc): ArcDimensionMark[] {
       const en: Vec2 = { x: end.x, y: end.y }
       const radius = dist(c, s)
       if (!Number.isFinite(radius) || radius < 1e-6) continue
-      const chordMid: Vec2 = { x: (s.x + en.x) / 2, y: (s.y + en.y) / 2 }
-      const outward = sub(chordMid, c)
-      const outwardLen = len(outward)
-      if (!Number.isFinite(outwardLen) || outwardLen < 1e-6) continue
-      const arcMid = add(c, scale(outward, radius / outwardLen))
+      const a0 = Math.atan2(s.y - c.y, s.x - c.x)
+      const a1 = Math.atan2(en.y - c.y, en.x - c.x)
+      const ccw = ((a1 - a0) % TAU + TAU) % TAU
+      const midAngle = seg.sweep === 1 ? a0 + ccw / 2 : a0 - (TAU - ccw) / 2
+      const arcMid: Vec2 = { x: c.x + radius * Math.cos(midAngle), y: c.y + radius * Math.sin(midAngle) }
       if (!Number.isFinite(arcMid.x) || !Number.isFinite(arcMid.y)) continue
       out.push({ id: `${e.id}:${i}`, x: arcMid.x, y: arcMid.y, text: `R ${radius.toFixed(1)}` })
     }
