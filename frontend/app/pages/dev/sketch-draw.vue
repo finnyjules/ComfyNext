@@ -9,7 +9,7 @@ import { snapPoint, inferCircleTangents, tangentJointArc } from '~/lib/sketch/in
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist, type Vec2 } from '~/lib/sketch/geom'
-import { constraintMarks } from '~/lib/sketch/annotate'
+import { constraintMarks, arcDimensionMarks } from '~/lib/sketch/annotate'
 
 type Tool = 'select' | 'point' | 'line' | 'circle' | 'path' | 'pen'
 
@@ -488,6 +488,9 @@ const visibleHandleIds = computed(() => {
 const pts = computed(() => doc.value.entities.filter(e =>
   e.kind === 'point' && (!(e as any).construction || visibleHandleIds.value.has(e.id))) as any[])
 const marks = computed(() => constraintMarks(doc.value))
+// persistent "R n.n" radius chips on every finished arc segment — pure read of
+// the doc, never solves; distinct from pathBowChip's live during-drag chip
+const arcDims = computed(() => arcDimensionMarks(doc.value))
 
 // screen-space arm lines (anchor→handle) for cubic segments of selected or pending paths
 const handleArms = computed(() => {
@@ -904,6 +907,10 @@ onMounted(() => {
       <g v-for="m in marks" :key="m.id" pointer-events="none">
         <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" :width="m.text ? 30 : 16" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.glyph }}{{ m.text ? ' ' + m.text : '' }}</text>
+      </g>
+      <g v-for="m in arcDims" :key="m.id" pointer-events="none">
+        <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" width="34" height="14" rx="3" fill="#111827" opacity="0.85" />
+        <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.text }}</text>
       </g>
       <g v-if="pathBowChip" pointer-events="none">
         <rect :x="pathBowChip.x - 18" :y="pathBowChip.y - 20" width="40" height="14" rx="3" fill="#111827" opacity="0.85" />
