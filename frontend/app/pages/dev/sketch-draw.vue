@@ -5,10 +5,10 @@ definePageMeta({ layout: false })
 import { ref, computed, onMounted, toRaw } from 'vue'
 import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
 import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, addSmoothHandles, isPointReferenced } from '~/lib/sketch/edit'
-import { snapPoint, inferCircleTangents } from '~/lib/sketch/infer'
+import { snapPoint, inferCircleTangents, tangentJointArc } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
-import { dist, sub, cross, type Vec2 } from '~/lib/sketch/geom'
+import { dist, type Vec2 } from '~/lib/sketch/geom'
 import { constraintMarks } from '~/lib/sketch/annotate'
 
 type Tool = 'select' | 'point' | 'line' | 'circle' | 'path' | 'pen'
@@ -212,40 +212,63 @@ function pathClick(x: number, y: number) {
   pp.anchors.push(id)
 }
 
-// Circumcenter of (P0, P1, Q) in world (doc) coordinates. sweep/large follow
-// the doc-coords SVG convention (matches pathD in sketchPath.ts): sweep=1
-// means the arc travels ccw from P0 through Q to reach P1. Returns null when
-// the three points are (near-)collinear or the circle would be enormous —
+// Free (or tangent-joint-locked) arc through/near (J, end, pointer) in world
+// (doc) coordinates, via tangentJointArc (~/lib/sketch/infer). sweep/large
+// follow the doc-coords SVG convention (matches pathD in sketchPath.ts):
+// sweep=1 means the arc travels ccw from J through pointer to reach end.
+// tangentDir null → a plain circumcircle-through-three-points free arc (the
+// path's first segment, no joint to honor). tangentDir non-null → when the
+// free arc's tangent at J is already close to it, the center snaps onto the
+// tangent-locked arc instead (see tangentJointArc / snappedTangent). Returns
+// null when no arc fits (near-collinear, or the circle would be enormous) —
 // callers fall back to a straight line in that case.
-function arcThrough(p0: Vec2, p1: Vec2, q: Vec2): { center: Vec2; r: number; sweep: 0 | 1; large: 0 | 1; mid: Vec2 } | null {
-  const v1 = sub(p1, p0), v2 = sub(q, p0)
-  if (Math.abs(cross(v1, v2)) < 1e-6) return null
-  const ax = p0.x, ay = p0.y, bx = p1.x, by = p1.y, cx = q.x, cy = q.y
-  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
-  if (Math.abs(d) < 1e-9) return null
-  const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d
-  const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d
-  const center = { x: ux, y: uy }
-  const r = dist(center, p0)
-  if (r > 1e4) return null
+function bowArc(J: Vec2, end: Vec2, pointer: Vec2, tangentDir: Vec2 | null): { center: Vec2; r: number; sweep: 0 | 1; large: 0 | 1; mid: Vec2; snappedTangent: boolean } | null {
+  const arc = tangentJointArc(J, end, pointer, tangentDir)
+  if (!arc || arc.radius > 1e4) return null
   const TAU = Math.PI * 2
-  const a0 = Math.atan2(p0.y - center.y, p0.x - center.x)
-  const a1 = Math.atan2(p1.y - center.y, p1.x - center.x)
-  const aq = Math.atan2(q.y - center.y, q.x - center.x)
+  const a0 = Math.atan2(J.y - arc.center.y, J.x - arc.center.x)
+  const a1 = Math.atan2(end.y - arc.center.y, end.x - arc.center.x)
   const ccw = ((a1 - a0) % TAU + TAU) % TAU
-  const qccw = ((aq - a0) % TAU + TAU) % TAU
-  const sweep: 0 | 1 = qccw <= ccw ? 1 : 0
-  const span = sweep === 1 ? ccw : TAU - ccw
+  const span = arc.sweep === 1 ? ccw : TAU - ccw
   const large: 0 | 1 = span > Math.PI ? 1 : 0
-  const am = sweep === 1 ? a0 + span / 2 : a0 - span / 2
-  const mid = { x: center.x + r * Math.cos(am), y: center.y + r * Math.sin(am) }
-  return { center, r, sweep, large, mid }
+  const am = arc.sweep === 1 ? a0 + span / 2 : a0 - span / 2
+  const mid = { x: arc.center.x + arc.radius * Math.cos(am), y: arc.center.y + arc.radius * Math.sin(am) }
+  return { center: arc.center, r: arc.radius, sweep: arc.sweep, large, mid, snappedTangent: arc.snappedTangent }
+}
+
+// Tangent info at the shared anchor J = pp.anchors[segIndex], derived from
+// the PREVIOUS committed segment (pp.segments[segIndex - 1]) so a chain of
+// bowed segments can flow smoothly through their shared joints instead of
+// kinking. Null when this is the path's first segment (segIndex 0, no prior
+// segment to be tangent to) — bowArc then falls back to a free arc, same as
+// before this joint-tangent wiring existed.
+type JointInfo =
+  | { tangentDir: Vec2; prevKind: 'line'; La: EntityId; Lb: EntityId }
+  | { tangentDir: Vec2; prevKind: 'arc'; Cprev: EntityId }
+function jointInfoForSegment(pp: { anchors: EntityId[]; segments: SegmentSpec[] }, segIndex: number): JointInfo | null {
+  if (segIndex < 1) return null
+  const prevSeg = pp.segments[segIndex - 1]
+  const jId = pp.anchors[segIndex]
+  const J = jId ? (doc.value.entities.find(e => e.id === jId) as any) : null
+  if (!prevSeg || !J || J.kind !== 'point') return null
+  if (prevSeg.kind === 'line') {
+    const laId = pp.anchors[segIndex - 1]
+    const La = laId ? (doc.value.entities.find(e => e.id === laId) as any) : null
+    if (!laId || !La || La.kind !== 'point') return null
+    return { tangentDir: { x: J.x - La.x, y: J.y - La.y }, prevKind: 'line', La: laId, Lb: jId! }
+  }
+  if (prevSeg.kind === 'arc') {
+    const Cp = doc.value.entities.find(e => e.id === prevSeg.center) as any
+    if (!Cp || Cp.kind !== 'point') return null
+    return { tangentDir: { x: -(J.y - Cp.y), y: J.x - Cp.x }, prevKind: 'arc', Cprev: prevSeg.center }
+  }
+  return null   // prev segment is a cubic — the path tool never produces one, no joint defined
 }
 
 // --- path tool: the real gesture — pointerdown places an anchor (+ a line
 // segment from the previous one, as today); if the pointer moves past the
 // threshold before pointerup, that segment bows into a circular arc through
-// the live pointer (see arcThrough). Mirrors the pen tool's down/move/up shape.
+// the live pointer (see bowArc). Mirrors the pen tool's down/move/up shape.
 type PathDrag = { anchor: EntityId; prevAnchor: EntityId; startX: number; startY: number; bowed: boolean } | null
 let pathDrag: PathDrag = null
 
@@ -279,14 +302,22 @@ function pathUp(x: number, y: number) {
   pathDrag = null
   const pp = pendingPath.value
   if (bowed && pp) {
-    const seg = pp.segments[pp.segments.length - 1]
+    const segIndex = pp.segments.length - 1
+    const seg = pp.segments[segIndex]
     const p0 = doc.value.entities.find(e => e.id === prevAnchor) as any
     const p1 = doc.value.entities.find(e => e.id === anchor) as any
     if (seg && seg.kind === 'line' && p0 && p1) {
-      const arc = arcThrough({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, { x, y })
+      const joint = jointInfoForSegment(pp, segIndex)
+      const arc = bowArc({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, { x, y }, joint?.tangentDir ?? null)
       if (arc) {
         const c = addPoint(doc.value, arc.center.x, arc.center.y)
-        pp.segments[pp.segments.length - 1] = { kind: 'arc', center: c, sweep: arc.sweep }
+        pp.segments[segIndex] = { kind: 'arc', center: c, sweep: arc.sweep }
+        // tangent-continuous with the previous segment: wire the joint constraint
+        // so the solver keeps the flow smooth after later drags (see brief §joint)
+        if (arc.snappedTangent && joint) {
+          if (joint.prevKind === 'arc') addConstraint(doc.value, 'collinear', [joint.Cprev, prevAnchor, c])
+          else addConstraint(doc.value, 'perpendicular', [joint.La, joint.Lb, prevAnchor, c])
+        }
       }
     }
   }
@@ -518,11 +549,12 @@ const previewD = computed(() => {
     const to = screenPt(toId)
     if (!to) break
     if (bowing && i === segCount - 1) {
-      // just-placed segment bowing live under the pointer — arcThrough works in
+      // just-placed segment bowing live under the pointer — bowArc works in
       // world (doc) coords, then flip sweep for the screen's y-flip (see toShadowEntities)
       const p0 = doc.value.entities.find(e => e.id === fromId) as any
       const p1 = doc.value.entities.find(e => e.id === toId) as any
-      const arc = (p0 && p1 && cursor.value) ? arcThrough({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value) : null
+      const joint = jointInfoForSegment(pp, i)
+      const arc = (p0 && p1 && cursor.value) ? bowArc({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value, joint?.tangentDir ?? null) : null
       if (arc) {
         const rScreen = arc.r * S
         const sweepScreen = (1 - arc.sweep) as 0 | 1
@@ -592,15 +624,22 @@ const previewDragHandles = computed(() => {
 })
 
 // live radius chip shown near the bowed arc's midpoint while the path tool
-// drags a segment into a curve — same "R n.n" badge style as constraint marks
+// drags a segment into a curve — same "R n.n" badge style as constraint marks.
+// When the bow is joint-tangent-locked to the previous segment (snappedTangent),
+// also carries J's screen position so the template can drop a small "T" chip there.
 const pathBowChip = computed(() => {
   if (tool.value !== 'path' || !pathDrag || !pathDrag.bowed || !cursor.value) return null
+  const pp = pendingPath.value
   const p0 = doc.value.entities.find(e => e.id === pathDrag!.prevAnchor) as any
   const p1 = doc.value.entities.find(e => e.id === pathDrag!.anchor) as any
-  if (!p0 || !p1) return null
-  const arc = arcThrough({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value)
+  if (!p0 || !p1 || !pp) return null
+  const joint = jointInfoForSegment(pp, pp.segments.length - 1)
+  const arc = bowArc({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value, joint?.tangentDir ?? null)
   if (!arc) return null
-  return { x: sx(arc.mid.x), y: sy(arc.mid.y), text: `R ${arc.r.toFixed(1)}` }
+  return {
+    x: sx(arc.mid.x), y: sy(arc.mid.y), text: `R ${arc.r.toFixed(1)}`,
+    snappedTangent: arc.snappedTangent, jointX: sx(p0.x), jointY: sy(p0.y),
+  }
 })
 
 // pointer handling
@@ -869,6 +908,10 @@ onMounted(() => {
       <g v-if="pathBowChip" pointer-events="none">
         <rect :x="pathBowChip.x - 18" :y="pathBowChip.y - 20" width="40" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="pathBowChip.x - 15" :y="pathBowChip.y - 9" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ pathBowChip.text }}</text>
+      </g>
+      <g v-if="pathBowChip && pathBowChip.snappedTangent" pointer-events="none">
+        <rect :x="pathBowChip.jointX + 6" :y="pathBowChip.jointY - 16" width="16" height="14" rx="3" fill="#111827" opacity="0.85" />
+        <text :x="pathBowChip.jointX + 9" :y="pathBowChip.jointY - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">T</text>
       </g>
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">

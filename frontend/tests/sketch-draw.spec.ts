@@ -204,3 +204,52 @@ test('pen: smooth blob stays smooth under handle and anchor drags', async ({ pag
   expect(out.converged).toBe(true)
   expect(out.d).toContain(' C ')            // real bezier output
 })
+
+test('tangent joint: arc snaps tangent to the previous line and stays smooth', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    // a horizontal line a→J
+    D.pathDown(1, 3); D.pathUp(1, 3)
+    D.pathDown(6, 3); D.pathUp(6, 3)              // J = (6,3), segment 0 = line
+    // bow an arc off J, dragging near-tangent (pointer near the exact-tangent
+    // circle's own boundary point (8,5) — see m3-task-2's report: the brief's
+    // literal pointer here (6.2,5) is only 0.2 off the straight J→Pnew chord,
+    // which is ~78° off tangentDir under the documented free-arc-tangent-angle
+    // rule (verified against ~/lib/sketch/infer.ts directly, and the identical
+    // shape/tolerance is exercised by tests/unit/sketch-tangent-joint.unit.spec.ts's
+    // own (2.2,2)-vs-(3,2) fixtures for the same span=4 case) — so it can never
+    // snap. 8.2 mirrors that fix, translated to this J=(6,3): ~5.4° off horizontal,
+    // inside the 12° tolerance)
+    D.pathDown(6, 7)                               // Pnew above
+    D.pathMove(8.2, 5)                             // near-tangent bulge
+    D.pathUp(8.2, 5)
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    const perpRule = D.doc.constraints.find((c: any) => c.kind === 'perpendicular')
+    // tangent invariant: at J, the line direction ⊥ (arcCenter − J)
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const arcSeg = path.segments[1]
+    const J = P(path.anchors[1]), C = P(arcSeg.center), La = P(path.anchors[0])
+    const lineDir = { x: J.x - La.x, y: J.y - La.y }
+    const radial = { x: C.x - J.x, y: C.y - J.y }
+    const dotBefore = Math.abs(lineDir.x * radial.x + lineDir.y * radial.y)
+    // now drag the line's far endpoint; tangency must hold
+    D.drag(path.anchors[0], 1, 5)
+    const J2 = P(path.anchors[1]), C2 = P(arcSeg.center), La2 = P(path.anchors[0])
+    const ld2 = { x: J2.x - La2.x, y: J2.y - La2.y }, rd2 = { x: C2.x - J2.x, y: C2.y - J2.y }
+    const dotAfter = Math.abs(ld2.x * rd2.x + ld2.y * rd2.y)
+    return { hasPerp: !!perpRule, segKinds: path.segments.map((s: any) => s.kind), dotBefore, dotAfter, d: D.pathData() }
+  })
+
+  expect(out.segKinds).toEqual(['line', 'arc'])
+  expect(out.hasPerp).toBe(true)                 // tangent joint captured
+  expect(out.dotBefore).toBeLessThan(0.01)       // tangent at commit (line ⊥ radius)
+  expect(out.dotAfter).toBeLessThan(0.05)        // still tangent after dragging the line
+  expect(out.d).toContain(' A ')
+})
