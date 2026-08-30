@@ -119,6 +119,22 @@ function residualsFor(map: EntityMap, c: SketchConstraint): number[] | null {
       if (!a || !b || !p) return null
       return [(b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)]
     }
+    case 'perpendicular': {
+      const a = pointOf(map, c.refs[0]!); const b = pointOf(map, c.refs[1]!)
+      const p = pointOf(map, c.refs[2]!); const q = pointOf(map, c.refs[3]!)
+      if (!a || !b || !p || !q) return null
+      const ux = b.x - a.x, uy = b.y - a.y, vx = q.x - p.x, vy = q.y - p.y
+      if (Math.hypot(ux, uy) < 1e-9 || Math.hypot(vx, vy) < 1e-9) return null
+      return [ux * vx + uy * vy]
+    }
+    case 'parallel': {
+      const a = pointOf(map, c.refs[0]!); const b = pointOf(map, c.refs[1]!)
+      const p = pointOf(map, c.refs[2]!); const q = pointOf(map, c.refs[3]!)
+      if (!a || !b || !p || !q) return null
+      const ux = b.x - a.x, uy = b.y - a.y, vx = q.x - p.x, vy = q.y - p.y
+      if (Math.hypot(ux, uy) < 1e-9 || Math.hypot(vx, vy) < 1e-9) return null
+      return [ux * vy - uy * vx]
+    }
     default:
       return null
   }
