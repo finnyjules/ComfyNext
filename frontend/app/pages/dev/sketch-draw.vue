@@ -4,7 +4,7 @@
 definePageMeta({ layout: false })
 import { ref, computed, onMounted, onUnmounted, toRaw } from 'vue'
 import type { SketchDoc, SketchConstraint, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
-import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, isPointReferenced } from '~/lib/sketch/edit'
+import { addPoint, addLine, addCircle, addConstraint, removeConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, isPointReferenced } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents, tangentJointArc } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
@@ -153,7 +153,15 @@ function onKeydown(ev: KeyboardEvent) {
     return
   }
   if (ev.code === 'Space' || ev.key === ' ') { ev.preventDefault(); spaceHeld.value = true; return }
-  if (ev.key === 'Escape') { cancelPath(); return }
+  if (ev.key === 'Escape') {
+    // a live marquee drag or pan takes priority over path-cancel — abort
+    // just that gesture (clear its state, no selection change, no doc
+    // mutation) rather than falling through to cancelPath's path cleanup.
+    if (marqueeStart) { marqueeStart = null; marqueeMoved = false; marqueeRect.value = null; return }
+    if (panning.value) { panning.value = false; return }
+    cancelPath()
+    return
+  }
   if (ev.key === 'Enter') {
     if (pendingPath.value && pendingPath.value.anchors.length >= 2) { ev.preventDefault(); finishPath(false) }
     return
@@ -396,8 +404,27 @@ function onArcDimClick(m: ArcDimensionMark): void {
   setArcRadius(pathId, segIndex, n)
 }
 
-function onConstraintMarkClick(m: ConstraintMark): void {
-  if (m.text == null) return                // only distance/radius carry a value
+// remove a constraint by id: same code path the badge click and the
+// __sketchDraw.removeConstraintById test hook both use. Allowed for ANY
+// constraint kind — including auto-derived ones like equalDist/rotatedFrom
+// (e.g. removing an arc's equalDist lets it degenerate) — undo is the
+// safety net, not a kind-based guard here.
+function removeConstraintById(id: EntityId): void {
+  if (!doc.value.constraints.some(c => c.id === id)) return
+  removeConstraint(doc.value, id)
+  runSolve()
+  commitHistory()
+}
+
+// Constraint-badge click (the Opacity model): a glyph-only badge (no
+// editable value — tangent/perpendicular/parallel/collinear/coincident/
+// concentric/horizontal/vertical/midpoint/equalDist/equalRadius/
+// rotatedFrom/mirroredFrom/pointOn…) removes the constraint on a plain
+// click. A value-bearing chip (distance/radius, m.text set) keeps M4's
+// plain-click-to-edit; shift+click removes it instead.
+function onConstraintMarkClick(m: ConstraintMark, ev: MouseEvent): void {
+  if (m.text == null) { removeConstraintById(m.id); return }
+  if (ev.shiftKey) { removeConstraintById(m.id); return }
   const c = doc.value.constraints.find(x => x.id === m.id)
   if (!c || c.value == null) return
   const raw = window.prompt((c.kind === 'radius' ? 'Radius' : 'Distance') + ' value?', c.value.toFixed(2))
@@ -1266,6 +1293,9 @@ onMounted(() => {
     // the arc-radius-chip / constraint-value-chip click (minus the prompt).
     setArcRadius: (pathId: EntityId, segIndex: number, value: number) => setArcRadius(pathId, segIndex, value),
     setConstraintValue: (constraintId: EntityId, value: number) => setConstraintValue(constraintId, value),
+    // Task 3 test hook: mirrors a constraint-badge click's removal path
+    // exactly (removeConstraint + solve + commit) — see removeConstraintById.
+    removeConstraintById: (id: EntityId) => removeConstraintById(id),
   }
   ready.value = true
   initHistory()
@@ -1335,9 +1365,10 @@ onUnmounted(() => {
               :fill="selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb')"
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
               @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)" :data-point="p.id" />
-      <g v-for="m in marks" :key="m.id" :pointer-events="m.text != null ? 'auto' : 'none'"
-         :style="m.text != null ? 'cursor: pointer' : undefined"
-         @pointerdown.stop @click.stop="onConstraintMarkClick(m)">
+      <g v-for="m in marks" :key="m.id" class="constraint-badge" pointer-events="auto" style="cursor: pointer"
+         :data-constraint="m.id" :data-constraint-kind="m.kind"
+         @pointerdown.stop @click.stop="onConstraintMarkClick(m, $event)">
+        <title>{{ m.text != null ? 'click to edit · shift+click to remove' : 'click to remove' }}</title>
         <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" :width="m.text ? 30 : 16" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.glyph }}{{ m.text ? ' ' + m.text : '' }}</text>
       </g>
@@ -1362,3 +1393,12 @@ onUnmounted(() => {
     </p>
   </div>
 </template>
+
+<style scoped>
+/* constraint badges: subtle hover cue so click-to-remove/edit reads as
+   interactive without changing layout (no scale — badges sit tight next to
+   the geometry they annotate; a scale transform would visibly jump them) */
+.constraint-badge rect { transition: opacity 120ms ease; }
+.constraint-badge:hover rect { opacity: 1; }
+.constraint-badge:hover text { fill: #fff; }
+</style>

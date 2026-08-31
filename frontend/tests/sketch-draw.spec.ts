@@ -899,3 +899,175 @@ test('draw two circles of different radius, select both, apply Equal via the API
   expect(out.status).toMatch(/^solved/)
   expect(Math.abs(out.radii[0] - out.radii[1])).toBeLessThan(0.01)
 })
+
+test('removeConstraintById drops a tangent-joint perpendicular constraint; solve still converges; undo restores it', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    // same line→arc tangent-joint draw as the "tangent joint" test above —
+    // a horizontal line a→J, then an arc bowed near-tangent off J, which
+    // captures a 'perpendicular' constraint at the joint (see that test's
+    // comment for why the bow pointer lands at 8.2,5)
+    D.pathDown(1, 3); D.pathUp(1, 3)
+    D.pathDown(6, 3); D.pathUp(6, 3)              // J = (6,3), segment 0 = line
+    D.pathDown(6, 7)                               // Pnew above
+    D.pathMove(8.2, 5)                             // near-tangent bulge
+    D.pathUp(8.2, 5)
+    D.finishPath(false)
+
+    const consBefore = D.constraintCount()
+    const perp = D.doc.constraints.find((c: any) => c.kind === 'perpendicular')
+
+    D.removeConstraintById(perp.id)
+    const consAfterRemove = D.constraintCount()
+    const goneAfterRemove = !D.doc.constraints.some((c: any) => c.id === perp.id)
+    const statusAfterRemove = D.status()
+
+    D.undo()
+    const consAfterUndo = D.constraintCount()
+    const restored = D.doc.constraints.find((c: any) => c.id === perp.id)
+
+    return {
+      hadPerpBefore: !!perp, consBefore, consAfterRemove, goneAfterRemove, statusAfterRemove,
+      consAfterUndo, restoredBack: !!restored, restoredKind: restored?.kind,
+    }
+  })
+
+  expect(out.hadPerpBefore).toBe(true)                      // tangent joint captured a perpendicular
+  expect(out.consAfterRemove).toBe(out.consBefore - 1)       // exactly one constraint removed
+  expect(out.goneAfterRemove).toBe(true)
+  expect(out.statusAfterRemove).toMatch(/^solved/)           // solving still converges without it
+  expect(out.consAfterUndo).toBe(out.consBefore)             // undo restores the count
+  expect(out.restoredBack).toBe(true)
+  expect(out.restoredKind).toBe('perpendicular')
+})
+
+test('live click: a glyph-only badge is removed by a plain click; a value chip needs shift+click to remove (plain click edits)', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const info = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // a distance constraint (value chip, m.text set) between two points
+    D.setTool('point'); D.place(1, 1); D.place(5, 1)
+    D.setTool('select')
+    const pts = D.doc.entities.filter((e: any) => e.kind === 'point')
+    D.pick(pts[0].id); D.pick(pts[1].id, true)
+    D.apply('distance', 4)
+
+    // a horizontal constraint on a line (glyph-only badge, no value)
+    D.setTool('line'); D.place(1, 4); D.place(4, 6)
+    const line = D.doc.entities.find((e: any) => e.kind === 'line')
+    D.setTool('select'); D.clearSel(); D.pick(line.id)
+    D.apply('horizontal')
+
+    const dist = D.doc.constraints.find((c: any) => c.kind === 'distance')
+    const horiz = D.doc.constraints.find((c: any) => c.kind === 'horizontal')
+    return { distId: dist.id, horizId: horiz.id, consBefore: D.constraintCount() }
+  })
+
+  const cons = () => page.evaluate(() => (window as any).__sketchDraw.doc.constraints)
+
+  // plain click on the glyph-only (horizontal) badge removes it
+  const horizBadge = page.locator(`[data-constraint="${info.horizId}"]`)
+  await expect(horizBadge).toBeVisible()
+  await horizBadge.click()
+  let after = await cons()
+  expect(after.some((c: any) => c.id === info.horizId)).toBe(false)
+  expect(after.length).toBe(info.consBefore - 1)
+
+  // plain click on the value (distance) chip edits — window.prompt is
+  // auto-dismissed by Playwright (cancel), so the value is untouched, but
+  // critically the constraint itself is NOT removed
+  const distBadge = page.locator(`[data-constraint="${info.distId}"]`)
+  await expect(distBadge).toBeVisible()
+  await distBadge.click()
+  after = await cons()
+  expect(after.some((c: any) => c.id === info.distId)).toBe(true)
+
+  // shift+click on the same value chip removes it
+  await distBadge.click({ modifiers: ['Shift'] })
+  after = await cons()
+  expect(after.some((c: any) => c.id === info.distId)).toBe(false)
+})
+
+test('Escape aborts a live marquee drag: clears it without deselecting or touching the doc', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('point'); D.place(2, 2)
+    D.setTool('select')
+    const pt = D.doc.entities.find((e: any) => e.kind === 'point')
+    D.pick(pt.id)   // pre-select, so we can prove Escape doesn't clear it
+  })
+
+  const svg = page.locator('svg[width="680"][height="460"]')   // the sketch canvas — Nuxt DevTools/overlays add other <svg>s
+  const box = await svg.boundingBox()
+  if (!box) throw new Error('svg bounding box not found')
+  // start well away from the point at (2,2) (screen ≈ 108,332) so the
+  // pointerdown lands on empty canvas and starts a marquee candidate
+  const startX = box.x + 500, startY = box.y + 60
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 120, startY + 90, { steps: 5 })   // past the 3px threshold
+
+  await expect(page.locator('[data-marquee]')).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-marquee]')).toHaveCount(0)   // gesture aborted
+
+  await page.mouse.up()   // release off-gesture must be a true no-op now
+
+  const result = await page.evaluate(() => ({
+    sel: (window as any).__sketchDraw.selection,
+    ents: (window as any).__sketchDraw.entityCount(),
+  }))
+  expect(result.sel.length).toBe(1)   // pre-existing selection survived
+  expect(result.ents).toBe(1)         // no stray marquee-select mutation
+})
+
+test('Escape aborts a live pan: ends the pan without moving the viewport further', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  await page.evaluate(() => (window as any).__sketchDraw.reset())
+
+  const svg = page.locator('svg[width="680"][height="460"]')   // the sketch canvas — Nuxt DevTools/overlays add other <svg>s
+  const box = await svg.boundingBox()
+  if (!box) throw new Error('svg bounding box not found')
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2
+
+  const initial = await page.evaluate(() => (window as any).__sketchDraw.getViewport())
+
+  await page.keyboard.down('Space')
+  await page.mouse.move(cx, cy)
+  await page.mouse.down()
+  await page.mouse.move(cx + 60, cy + 40, { steps: 5 })   // pan in progress
+
+  const during = await page.evaluate(() => (window as any).__sketchDraw.getViewport())
+  expect(during).not.toEqual(initial)   // the pan actually moved the viewport
+
+  await page.keyboard.press('Escape')
+  const afterEscape = await page.evaluate(() => (window as any).__sketchDraw.getViewport())
+  expect(afterEscape).toEqual(during)   // Escape itself didn't move the viewport, just ended the gesture
+
+  await page.mouse.move(cx + 200, cy + 200, { steps: 5 })   // further drag must NOT pan anymore
+  const afterMove = await page.evaluate(() => (window as any).__sketchDraw.getViewport())
+  expect(afterMove).toEqual(during)
+
+  await page.mouse.up()
+  await page.keyboard.up('Space')
+})
