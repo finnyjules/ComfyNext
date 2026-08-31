@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js'
-import type { DecalContent, DecalObject, Vec3 } from './config'
+import type { DecalBlend, DecalContent, DecalObject, Vec3 } from './config'
 import { parseGoogleFontValue, parseLibraryFontValue, fontSourceUrl } from './outlines'
 import { quickGoogleCssUrl } from '~/data/google-fonts'
 
@@ -22,9 +22,12 @@ export function eulerFromNormal(localNormal: Vec3): Vec3 {
 }
 
 /** Rebuild key. Opacity is deliberately absent — the engine writes it to the
- *  material in place so the slider never re-projects geometry. */
+ *  material in place so the slider never re-projects geometry. `blend` IS present:
+ *  it reconfigures the material's blending (and, for multiply/screen, its shader),
+ *  which buildDecalMesh applies once at build — a discrete select, not a drag, so a
+ *  rebuild per change is fine. */
 export function decalKeyFor(obj: DecalObject, targetGeoKey: unknown): string {
-  return JSON.stringify([obj.content, obj.position, obj.rotation, obj.spin, obj.size, obj.depth, targetGeoKey ?? null])
+  return JSON.stringify([obj.content, obj.position, obj.rotation, obj.spin, obj.size, obj.depth, obj.blend ?? 'normal', targetGeoKey ?? null])
 }
 
 /** Cap on distinct decal contents held in the texture cache. A studio session
@@ -237,6 +240,79 @@ async function makeTextDecalTexture(content: Extract<DecalContent, { type: 'text
   return tex
 }
 
+/** GPU-native blend recipes, keyed by mode. Every one of these is a fixed hardware blend
+ *  equation over (src, dst) — the whole family the framebuffer can do WITHOUT the shader
+ *  reading the surface underneath. `normal`/`add` respect the glyph's ALPHA on their own.
+ *  `multiply`/`screen`/`darken`/`lighten` read src COLOR (or run min/max), so a naive pass
+ *  would turn the transparent border around the glyphs into a solid box — the `identity`
+ *  field is the fix: the fragment premultiplies the (lit, tone-mapped) colour toward that
+ *  value by the pixel's alpha (`mix(identity, colour, a)`) and forces output alpha to 1, so
+ *  the border (a=0) lands exactly on the mode's no-op and only the glyph blends. Opacity
+ *  still fades (the mixed `a` = diffuseColor.a = map alpha × material.opacity). Alpha
+ *  factors/equation are chosen to leave the FRAMEBUFFER's own alpha intact (dst.a), so a
+ *  transparent-background export gets no rectangular patch where the projector box sat.
+ *
+ *  The non-linear Photoshop family (soft-light, overlay, hard-light, dodge, burn, …) is
+ *  deliberately absent: those are functions of BOTH src and dst that no blend equation can
+ *  express, so they need the shader to sample the surface beneath (a framebuffer grab) —
+ *  a separate, bigger mechanism, not this table. */
+interface BlendRecipe {
+  blending: THREE.Blending
+  equation?: THREE.BlendingEquation
+  equationAlpha?: THREE.BlendingEquation
+  src?: THREE.BlendingDstFactor; dst?: THREE.BlendingDstFactor
+  srcAlpha?: THREE.BlendingDstFactor; dstAlpha?: THREE.BlendingDstFactor
+  identity?: number // present ⇒ inject the premultiply-toward-identity patch
+}
+
+const BLEND_RECIPES: Record<DecalBlend, BlendRecipe> = {
+  normal: { blending: THREE.NormalBlending },
+  add: { blending: THREE.AdditiveBlending },
+  // dst·src, alpha dst·src.a — src.a forced to 1 keeps dst.a.
+  multiply: { blending: THREE.MultiplyBlending, identity: 1 },
+  // src + dst·(1−src) = screen; Zero/One alpha keeps dst.a.
+  screen: {
+    blending: THREE.CustomBlending, equation: THREE.AddEquation,
+    src: THREE.OneFactor, dst: THREE.OneMinusSrcColorFactor,
+    srcAlpha: THREE.ZeroFactor, dstAlpha: THREE.OneFactor, identity: 0,
+  },
+  // min(src, dst) on colour; MIN on alpha with src.a=1 → min(1,dst.a)=dst.a preserved.
+  darken: {
+    blending: THREE.CustomBlending, equation: THREE.MinEquation,
+    equationAlpha: THREE.MinEquation, identity: 1,
+  },
+  // max(src, dst) on colour; MIN on alpha (not MAX) so the border doesn't stamp dst.a→1.
+  lighten: {
+    blending: THREE.CustomBlending, equation: THREE.MaxEquation,
+    equationAlpha: THREE.MinEquation, identity: 0,
+  },
+}
+
+/** Configure a decal material's framebuffer blend from BLEND_RECIPES (see its doc). */
+function applyDecalBlend(mat: THREE.MeshStandardMaterial, blend: DecalBlend): void {
+  const r = BLEND_RECIPES[blend] ?? BLEND_RECIPES.normal
+  mat.blending = r.blending
+  if (r.blending === THREE.CustomBlending) {
+    if (r.equation !== undefined) mat.blendEquation = r.equation
+    if (r.equationAlpha !== undefined) mat.blendEquationAlpha = r.equationAlpha
+    if (r.src !== undefined) mat.blendSrc = r.src
+    if (r.dst !== undefined) mat.blendDst = r.dst
+    if (r.srcAlpha !== undefined) mat.blendSrcAlpha = r.srcAlpha
+    if (r.dstAlpha !== undefined) mat.blendDstAlpha = r.dstAlpha
+  }
+  if (r.identity === undefined) return
+  const identity = r.identity.toFixed(1)
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <colorspace_fragment>',
+      `#include <colorspace_fragment>\n\tgl_FragColor = vec4( mix( vec3( ${identity} ), gl_FragColor.rgb, gl_FragColor.a ), 1.0 );`,
+    )
+  }
+  // three keys compiled programs BEFORE running onBeforeCompile, so without this two
+  // materials whose only difference is the injected identity would share one program.
+  mat.customProgramCacheKey = () => `decal-blend-${blend}`
+}
+
 /** Build the decal mesh in TARGET-LOCAL space: DecalGeometry reads the given
  *  mesh's matrixWorld, so projecting against a proxy that shares the target's
  *  geometry but sits at identity yields local-space output. The engine adds
@@ -249,13 +325,31 @@ export function buildDecalMesh(targetMesh: THREE.Mesh, obj: DecalObject, texture
   const helper = new THREE.Object3D()
   helper.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2])
   helper.rotateZ(obj.spin)
-  const size = new THREE.Vector3(obj.size, obj.size / aspect, obj.depth)
+  // The engine adds this mesh at identity UNDER the target root, so it inherits the
+  // target's (often non-uniform) world scale — a unit BoxGeometry scaled into a flat
+  // wide card is the common case. DecalGeometry projects in the target's LOCAL geometry
+  // space, so the aspect correction below (`obj.size / aspect` on Y) is undone by that
+  // parent scale and the glyphs stretch. Compensate: divide each projector axis by the
+  // world-scale magnitude ALONG that axis, so once the parent re-applies its scale the
+  // on-surface size is aspect-correct. Exact for an axis-aligned decal; an obliquely
+  // rotated projector on a non-uniform scale degrades gracefully (the per-axis magnitude
+  // still tracks the dominant stretch). Depth stays in local space — it already wrapped
+  // correctly and normalising it could push the projection box through the far face.
+  targetMesh.updateWorldMatrix(true, false)
+  const ws = targetMesh.getWorldScale(new THREE.Vector3())
+  helper.updateMatrix()
+  const axisX = new THREE.Vector3().setFromMatrixColumn(helper.matrix, 0)
+  const axisY = new THREE.Vector3().setFromMatrixColumn(helper.matrix, 1)
+  const effX = Math.hypot(axisX.x * ws.x, axisX.y * ws.y, axisX.z * ws.z) || 1
+  const effY = Math.hypot(axisY.x * ws.x, axisY.y * ws.y, axisY.z * ws.z) || 1
+  const size = new THREE.Vector3(obj.size / effX, obj.size / aspect / effY, obj.depth)
   const geo = new DecalGeometry(proxy, new THREE.Vector3(...obj.position), helper.rotation, size)
   const mat = new THREE.MeshStandardMaterial({
     map: texture, transparent: true, opacity: obj.opacity,
     depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4,
     roughness: 0.7, metalness: 0,
   })
+  applyDecalBlend(mat, obj.blend ?? 'normal')
   const mesh = new THREE.Mesh(geo, mat)
   mesh.castShadow = false
   mesh.receiveShadow = true

@@ -276,6 +276,16 @@ export type DecalContent =
   | { type: 'image'; image: string }   // input-dir filename, same store as material.image
   | { type: 'text'; text: string; font: string; color: string } // font: google:Fam@W | local:id
 
+/** How a sticker's pixels combine with the surface beneath. `normal` is plain alpha-over;
+ *  the rest are the GPU-native (fixed hardware blend equation) family: `add` lightens
+ *  (glow), `multiply` darkens like printed ink, `screen` lightens softly, `darken`/`lighten`
+ *  keep only the darker/lighter of sticker vs surface. All leave the transparent border
+ *  around the glyphs untouched via an alpha-premultiply patch in decals.ts (see
+ *  `BLEND_RECIPES`). The non-linear Photoshop modes (soft-light/overlay/…) are NOT here —
+ *  they'd need the shader to read the surface underneath (a framebuffer grab). */
+export type DecalBlend = 'normal' | 'add' | 'multiply' | 'screen' | 'darken' | 'lighten'
+export const DECAL_BLENDS: DecalBlend[] = ['normal', 'add', 'multiply', 'screen', 'darken', 'lighten']
+
 /** A sticker/label projected onto a primitive's surface. Base fields are
  *  reinterpreted: `position` = projection point and `rotation` = projector
  *  orientation, both in the TARGET'S local space (the engine bakes the decal
@@ -290,6 +300,7 @@ export interface DecalObject extends SceneObjectBase {
   depth: number    // projection box depth — how far the sticker wraps around curvature
   spin: number     // radians around the surface normal
   opacity: number  // 0..1
+  blend: DecalBlend // how the sticker combines with the surface (see DecalBlend)
 }
 
 export type SceneObject = PrimitiveObject | GlbObject | LightObject | GroupObject | DecalObject
@@ -340,6 +351,30 @@ export interface SceneLighting {
   sunElevation: number
   sunIntensity: number
   ambient: number
+  /** Granular shaping of the `colorGels` environment. Ignored by every other kind — the
+   *  procedural scene bakes these into the reflected/refracted world, so any change rebuilds
+   *  the env (see engine.buildEnvironment). Per-gel: colour, brightness (HDR intensity),
+   *  size (panel scale), and polar placement (azimuth°/height/distance). Plus a white rim
+   *  strip, and whole-world softness (PMREM blur), background tint, and master exposure.
+   *  Field-name ↔ GelEnvOptions mapping lives in engine.gelOptionsFor. */
+  gelColorA: string
+  gelBrightnessA: number
+  gelSizeA: number
+  gelAzimuthA: number
+  gelHeightA: number
+  gelDistanceA: number
+  gelColorB: string
+  gelBrightnessB: number
+  gelSizeB: number
+  gelAzimuthB: number
+  gelHeightB: number
+  gelDistanceB: number
+  gelRim: boolean
+  gelRimColor: string
+  gelRimBrightness: number
+  gelSoftness: number
+  gelBackground: string
+  gelExposure: number
 }
 export interface SceneCamera { position: Vec3; target: Vec3; fov: number; motion?: CameraMotion }
 
@@ -582,7 +617,13 @@ export function defaultDoc(): SceneDoc {
     version: 1,
     objects: [],
     camera: { position: [4, 3, 6], target: [0, 0.5, 0], fov: 45 },
-    lighting: { preset: 'studio', environment: 'room', sunAzimuth: 35, sunElevation: 55, sunIntensity: 1.4, ambient: 0.5 },
+    lighting: {
+      preset: 'studio', environment: 'room', sunAzimuth: 35, sunElevation: 55, sunIntensity: 1.4, ambient: 0.5,
+      gelColorA: '#ff0da6', gelBrightnessA: 7, gelSizeA: 1, gelAzimuthA: -100, gelHeightA: 1.5, gelDistanceA: 4.6,
+      gelColorB: '#0dccff', gelBrightnessB: 7, gelSizeB: 1, gelAzimuthB: 100, gelHeightB: 1.5, gelDistanceB: 4.6,
+      gelRim: true, gelRimColor: '#ffffff', gelRimBrightness: 4,
+      gelSoftness: 0.04, gelBackground: '#000000', gelExposure: 1,
+    },
     background: '#1b1e24',
     showFloor: true,
     post: { ...DEFAULT_POST },
@@ -762,7 +803,7 @@ export function createGroup(existing: SceneObject[]): GroupObject {
 }
 
 export const DECAL_DEFAULTS = {
-  size: 0.6, depth: 0.25, spin: 0, opacity: 1,
+  size: 0.6, depth: 0.25, spin: 0, opacity: 1, blend: 'normal' as DecalBlend,
   text: 'LABEL', color: '#1a1a1a', font: 'google:Inter@700',
 } as const
 
@@ -779,7 +820,7 @@ export function createDecal(
     material: { ...DEFAULT_MATERIAL }, // dummy, never rendered — same as lights/groups
     parentId: targetId, targetId, content,
     size: DECAL_DEFAULTS.size, depth: DECAL_DEFAULTS.depth,
-    spin: DECAL_DEFAULTS.spin, opacity: DECAL_DEFAULTS.opacity,
+    spin: DECAL_DEFAULTS.spin, opacity: DECAL_DEFAULTS.opacity, blend: DECAL_DEFAULTS.blend,
   }
 }
 
@@ -1093,6 +1134,7 @@ export function parseDoc(json: string): SceneDoc {
             size: num(o.size, DECAL_DEFAULTS.size), depth: num(o.depth, DECAL_DEFAULTS.depth),
             spin: num(o.spin, DECAL_DEFAULTS.spin),
             opacity: Math.min(1, Math.max(0, num(o.opacity, DECAL_DEFAULTS.opacity))),
+            blend: DECAL_BLENDS.includes(o.blend) ? o.blend : DECAL_DEFAULTS.blend,
             // parentId invariant: the hierarchy edge always mirrors the projection target,
             // whatever a stored doc claims — the engine follows targetId either way.
             parentId: o.targetId,
@@ -1124,6 +1166,24 @@ export function parseDoc(json: string): SceneDoc {
       sunElevation: typeof raw.lighting?.sunElevation === 'number' ? raw.lighting.sunElevation : d.lighting.sunElevation,
       sunIntensity: typeof raw.lighting?.sunIntensity === 'number' ? raw.lighting.sunIntensity : d.lighting.sunIntensity,
       ambient: typeof raw.lighting?.ambient === 'number' ? raw.lighting.ambient : d.lighting.ambient,
+      gelColorA: str(raw.lighting?.gelColorA, d.lighting.gelColorA),
+      gelBrightnessA: num(raw.lighting?.gelBrightnessA, d.lighting.gelBrightnessA),
+      gelSizeA: num(raw.lighting?.gelSizeA, d.lighting.gelSizeA),
+      gelAzimuthA: num(raw.lighting?.gelAzimuthA, d.lighting.gelAzimuthA),
+      gelHeightA: num(raw.lighting?.gelHeightA, d.lighting.gelHeightA),
+      gelDistanceA: num(raw.lighting?.gelDistanceA, d.lighting.gelDistanceA),
+      gelColorB: str(raw.lighting?.gelColorB, d.lighting.gelColorB),
+      gelBrightnessB: num(raw.lighting?.gelBrightnessB, d.lighting.gelBrightnessB),
+      gelSizeB: num(raw.lighting?.gelSizeB, d.lighting.gelSizeB),
+      gelAzimuthB: num(raw.lighting?.gelAzimuthB, d.lighting.gelAzimuthB),
+      gelHeightB: num(raw.lighting?.gelHeightB, d.lighting.gelHeightB),
+      gelDistanceB: num(raw.lighting?.gelDistanceB, d.lighting.gelDistanceB),
+      gelRim: typeof raw.lighting?.gelRim === 'boolean' ? raw.lighting.gelRim : d.lighting.gelRim,
+      gelRimColor: str(raw.lighting?.gelRimColor, d.lighting.gelRimColor),
+      gelRimBrightness: num(raw.lighting?.gelRimBrightness, d.lighting.gelRimBrightness),
+      gelSoftness: num(raw.lighting?.gelSoftness, d.lighting.gelSoftness),
+      gelBackground: str(raw.lighting?.gelBackground, d.lighting.gelBackground),
+      gelExposure: num(raw.lighting?.gelExposure, d.lighting.gelExposure),
     },
     background: typeof raw.background === 'string' ? raw.background : d.background,
     showFloor: raw.showFloor !== false,   // default true; only an explicit false hides the floor

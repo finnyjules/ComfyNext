@@ -118,7 +118,22 @@ export class PostChain {
   private extrasResolution: THREE.Vector2
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, width: number, height: number) {
-    this.composer = new EffectComposer(renderer)
+    // MSAA render target for the composer. The engine's WebGLRenderer is created with
+    // `antialias: true`, but that only anti-aliases the DEFAULT framebuffer — the moment
+    // ANY post effect is on (bloom, grade, …) RenderPass draws the scene into one of the
+    // composer's OFF-SCREEN targets instead, and EffectComposer's default target carries no
+    // multisampling, so every geometry edge aliases hard (worst under bloom, which blooms the
+    // stair-steps). A multisampled colour target makes RenderPass resolve anti-aliased edges
+    // the same way the direct-to-canvas path does. HalfFloatType matches EffectComposer's own
+    // default so tone mapping / OutputPass behave identically; `samples` is clamped to the GL2
+    // cap. EffectComposer clones this for renderTarget2 (samples + type carry over), and
+    // `composer.setSize` preserves samples across resizes — so this is the only place it's set.
+    const dbSize = renderer.getDrawingBufferSize(new THREE.Vector2())
+    const msaaTarget = new THREE.WebGLRenderTarget(dbSize.x, dbSize.y, {
+      type: THREE.HalfFloatType,
+      samples: Math.min(4, renderer.capabilities.maxSamples),
+    })
+    this.composer = new EffectComposer(renderer, msaaTarget)
     this.composer.setSize(width, height)
     this.renderPass = new RenderPass(scene, camera)
     // @types/three's GTAOPass constructor only declares (scene, camera, width, height, parameters) —

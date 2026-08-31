@@ -102,7 +102,12 @@ export async function renderPasses(
   try {
     // Beauty — inherit the viewport's exact renderer state (tone mapping, colour
     // space). Transparent background stays transparent.
-    scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
+    // 'environment' shows the world cube as the backdrop — the live scene already
+    // holds that texture (engine sync set it), so prevBg IS it; reuse rather than
+    // rebuilding a Color from the sentinel string (which would render white).
+    scene.background = doc.background === 'transparent' ? null
+      : doc.background === 'environment' ? prevBg
+      : new THREE.Color(stripAlpha(doc.background))
     // Important 5 (final review): a shaderFill material's field texture was never refreshed
     // for this bake at all — materialFor's build-time resolveField call (t:0, fixed
     // SHADER_FIELD_PX=512) is the only thing that ever populated it, so an export always

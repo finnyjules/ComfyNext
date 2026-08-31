@@ -292,7 +292,7 @@ function modifierField(obj: SceneObject, sub: string): ParamValue {
 const LEAF_DEFAULTS: Record<SceneObject['kind'], Record<string, ParamValue>> = {
   light: { ...LIGHT_DEFAULTS },
   decal: { size: DECAL_DEFAULTS.size, depth: DECAL_DEFAULTS.depth, spin: DECAL_DEFAULTS.spin,
-    opacity: DECAL_DEFAULTS.opacity, 'content.color': DECAL_DEFAULTS.color },
+    opacity: DECAL_DEFAULTS.opacity, blend: DECAL_DEFAULTS.blend, 'content.color': DECAL_DEFAULTS.color },
   primitive: {}, glb: {}, group: {},
 }
 
@@ -545,7 +545,7 @@ const KIND_CARDS: Record<string, readonly string[]> = {
   ],
   Decal: [
     'ui.decal.text', 'object.content.color', 'ui.decal.image',
-    'object.size', 'object.spin', 'object.depth', 'object.opacity',
+    'object.size', 'object.spin', 'object.depth', 'object.opacity', 'object.blend',
     'ui.decal.reposition',
   ],
 }

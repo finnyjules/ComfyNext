@@ -13,7 +13,7 @@ import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '
 import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject, DecalObject, EnvironmentKind } from './config'
 import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
 import { buildDecalMesh, decalTextureFor, decalKeyFor, decalContentKey, releaseDecalTexture } from './decals'
-import { buildEnvironmentScene } from './environments'
+import { buildEnvironmentScene, type GelEnvOptions } from './environments'
 import { orderParentsFirst } from './hierarchy'
 import { loadGlb, clearGlbCache } from './glb'
 import { registerWebGLContext, type WebGLContextHandle } from '~/lib/webgl/contextRegistry'
@@ -33,6 +33,20 @@ export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
   const az = (azimuthDeg * Math.PI) / 180
   const el = (elevationDeg * Math.PI) / 180
   return [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)]
+}
+
+/** Map the flat `lighting.gel*` doc fields onto the environment builder's `GelEnvOptions`.
+ *  The single seam between the doc's naming and the procedural world's — kept here so the
+ *  two can't drift (config.ts's SceneLighting doc points at this function by name). */
+function gelOptionsFor(l: SceneDoc['lighting']): GelEnvOptions {
+  return {
+    colorA: l.gelColorA, brightnessA: l.gelBrightnessA, sizeA: l.gelSizeA,
+    azimuthA: l.gelAzimuthA, heightA: l.gelHeightA, distanceA: l.gelDistanceA,
+    colorB: l.gelColorB, brightnessB: l.gelBrightnessB, sizeB: l.gelSizeB,
+    azimuthB: l.gelAzimuthB, heightB: l.gelHeightB, distanceB: l.gelDistanceB,
+    rim: l.gelRim, rimColor: l.gelRimColor, rimBrightness: l.gelRimBrightness,
+    softness: l.gelSoftness, background: l.gelBackground, exposure: l.gelExposure,
+  }
 }
 
 /** Side of the small placeholder cube stood in for `text` while its font is
@@ -421,9 +435,22 @@ export class SceneEngine {
   private sun: THREE.DirectionalLight
   private ambient: THREE.AmbientLight
   private envTarget: THREE.WebGLRenderTarget | null = null
+  /** A cube capture of the SAME procedural env scene, usable directly as
+   *  `scene.background` (the PMREM CubeUV target above cannot be — three's background
+   *  renderer rejects that format). Built alongside envTarget so `doc.background ===
+   *  'environment'` can show the world behind the geometry — and, crucially, three's
+   *  transmission pass renders the background into the refraction backdrop, so a glass
+   *  material's dispersion splits THESE bright strips into rainbow instead of splitting
+   *  the flat black a solid-colour background gives it. */
+  private envBackgroundTarget: THREE.WebGLCubeRenderTarget | null = null
   /** The environment kind the current envTarget was built from — compared in
    *  syncFromDoc so the (expensive) PMREM rebuild only runs on an actual switch. */
   private envKind: EnvironmentKind = 'room'
+  /** The resolved colorGels options the current env was built from — retained so a
+   *  context-restore rebuild (buildEnvironment() with no args) reproduces the same world,
+   *  and compared via `envGelSig` so any gel edit re-bakes (only while colorGels is live). */
+  private envGel: GelEnvOptions | null = null
+  private envGelSig = ''
   private glbTokens = new Map<string, number>() // id → load generation (drop stale async loads)
   private fontTokens = new Map<string, number>() // id → font-load generation, same drop-stale contract as glbTokens
   private meshTokens = new Map<string, number>()
@@ -527,13 +554,32 @@ export class SceneEngine {
    *  is what context-restore wants). Split out of the constructor so restore can
    *  rebuild it — the render target is a GPU resource lost with the context.
    *  Disposes the prior target AND the throwaway source scene. */
-  private buildEnvironment(kind: EnvironmentKind = this.envKind): void {
+  private buildEnvironment(
+    kind: EnvironmentKind = this.envKind,
+    gel: GelEnvOptions | null = this.envGel,
+  ): void {
     this.envKind = kind
+    this.envGel = gel
+    this.envGelSig = gel ? JSON.stringify(gel) : ''
     this.envTarget?.dispose()
+    this.envBackgroundTarget?.dispose()
     const pmrem = new THREE.PMREMGenerator(this.renderer)
-    const envScene = buildEnvironmentScene(kind)
-    this.envTarget = pmrem.fromScene(envScene, 0.04)
+    const envScene = buildEnvironmentScene(kind, gel ?? undefined)
+    // Gel `softness` drives the PMREM blur (sharp mirror ↔ diffuse sheen); other kinds keep
+    // the shipped 0.04. Only the reflection map blurs — the cube backdrop below stays crisp.
+    const sigma = kind === 'colorGels' && gel ? gel.softness : 0.04
+    this.envTarget = pmrem.fromScene(envScene, sigma)
     this.scene.environment = this.envTarget.texture
+    // Cube capture of the same world for use AS the background (see envBackgroundTarget's
+    // doc). HalfFloat keeps the bars' HDR intensity so they stay bright behind glass;
+    // CubeCamera.update restores the previous render target itself, so the rAF loop is
+    // unaffected. Captured before envScene is disposed below.
+    const cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType })
+    new THREE.CubeCamera(0.1, 100, cubeRT).update(this.renderer, envScene)
+    this.envBackgroundTarget = cubeRT
+    // If the live doc is already showing the world, repoint at the fresh capture (a plain
+    // env-kind switch reaches here without syncFromDoc re-running the background branch).
+    if (this.lastDoc?.background === 'environment') this.scene.background = cubeRT.texture
     envScene.dispose()
     pmrem.dispose()
   }
@@ -666,9 +712,19 @@ export class SceneEngine {
     this.sun.intensity = doc.lighting.sunIntensity
     this.sun.castShadow = preset.shadow
     this.ambient.intensity = doc.lighting.ambient
-    if (doc.lighting.environment !== this.envKind) this.buildEnvironment(doc.lighting.environment)
+    // Rebuild the (expensive) env on a kind switch, OR — only while colorGels is live — when
+    // any gel field changes, since they're baked into the reflected/refracted world. Gel edits
+    // are inspector-only (not animatable), so this never fires per frame.
+    const gel = gelOptionsFor(doc.lighting)
+    const gelChanged = doc.lighting.environment === 'colorGels' && JSON.stringify(gel) !== this.envGelSig
+    if (doc.lighting.environment !== this.envKind || gelChanged) {
+      this.buildEnvironment(doc.lighting.environment, gel)
+    }
     this.scene.environmentIntensity = preset.envIntensity
-    this.scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
+    this.scene.background =
+      doc.background === 'transparent' ? null
+      : doc.background === 'environment' ? (this.envBackgroundTarget?.texture ?? null)
+      : new THREE.Color(stripAlpha(doc.background))
     // Floor = the reference grid + the shadow-catcher ground. Off ⇒ a clean floating
     // look in the viewport AND the beauty bake (renderPasses keeps the grid hidden and
     // renders beauty with the ground's current visibility, so this carries into export).
@@ -1197,6 +1253,7 @@ export class SceneEngine {
     this.shadowGround.geometry.dispose()
     ;(this.shadowGround.material as THREE.Material).dispose()
     this.envTarget?.dispose()
+    this.envBackgroundTarget?.dispose()
     this.postChain?.dispose()
     this.postChain = null
     // forceContextLoss() BEFORE dispose(): dispose() alone leaves the GL context

@@ -1075,7 +1075,7 @@ const DECAL_ROW: Record<string, Row> = {
   'object.opacity': { label: 'Opacity', kind: 'slider', min: 0, max: 1, step: 0.01, hint: 'How solid the sticker sits on the surface' },
 }
 
-const DECAL_TAIL = ['object.size', 'object.spin', 'object.depth', 'object.opacity', 'ui.decal.reposition'] as const
+const DECAL_TAIL = ['object.size', 'object.spin', 'object.depth', 'object.opacity', 'object.blend', 'ui.decal.reposition'] as const
 
 describe('Scene3D panel parity — Decal', () => {
   it('a text sticker draws Label/Font, its colour, the four sliders and Reposition', () => {

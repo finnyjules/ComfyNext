@@ -496,16 +496,28 @@ const outputProxy = computed<string>({
 
 // Background transparency toggle — remember the last real color so toggling back
 // restores it instead of landing on black.
-const lastBgColor = ref(doc.background === 'transparent' ? '#1b1e24' : doc.background)
+// `background` is a hex colour, or one of two sentinels: 'transparent' (no backdrop) and
+// 'environment' (show the reflected world — the backdrop that makes glass dispersion
+// visible, see applyPrismPreset). lastBgColor remembers the real colour so toggling either
+// sentinel off restores it instead of landing on black.
+const isBgSentinel = (v: string) => v === 'transparent' || v === 'environment'
+const lastBgColor = ref(isBgSentinel(doc.background) ? '#1b1e24' : doc.background)
 const bgTransparent = computed<boolean>({
   get: () => doc.background === 'transparent',
   set: (v) => {
-    if (v) { if (doc.background !== 'transparent') lastBgColor.value = doc.background; doc.background = 'transparent' }
+    if (v) { if (!isBgSentinel(doc.background)) lastBgColor.value = doc.background; doc.background = 'transparent' }
+    else { doc.background = lastBgColor.value }
+  },
+})
+const bgShowWorld = computed<boolean>({
+  get: () => doc.background === 'environment',
+  set: (v) => {
+    if (v) { if (!isBgSentinel(doc.background)) lastBgColor.value = doc.background; doc.background = 'environment' }
     else { doc.background = lastBgColor.value }
   },
 })
 const bgColorProxy = computed<string>({
-  get: () => (doc.background === 'transparent' ? lastBgColor.value : doc.background),
+  get: () => (isBgSentinel(doc.background) ? lastBgColor.value : doc.background),
   set: (v) => { doc.background = v; lastBgColor.value = v },
 })
 
@@ -564,7 +576,11 @@ function applyPrismPreset(): void {
     m.attenuationDistance = 0
   })
   doc.lighting.environment = 'darkStrips'
-  doc.background = '#000000'
+  // Show the world as the backdrop — NOT a flat black. Dispersion splits REFRACTED light,
+  // and three renders scene.background into the transmission backdrop, so the glass has to
+  // refract the bright strips to fan them into rainbow. Against solid black there is nothing
+  // to split and the dispersion slider looks dead (the reflected strips alone never disperse).
+  doc.background = 'environment'
 }
 
 // Selection field proxies for the inspector's BESPOKE blocks — the matcap grid, the
@@ -759,6 +775,53 @@ function onDecalFontPick(payload: { kind: 'google'; family: string } | { kind: '
     ? `google:${payload.family}@${existing.weight}`
     : `google:${payload.family}`
 }
+
+// Decal Weight selects — the sticker's font token embeds the weight (`google:Fam@W`),
+// but the decal panel had only a family picker, so weight was frozen at whatever the
+// token carried. These mirror the 3D-Text `fontWeight`/`libraryFontWeight` computeds
+// exactly (same catalog, same keep-the-italic rule), writing the new weight back into
+// the decal content's font token — the engine rebuilds the sticker texture because
+// `decalKeyFor` includes `content`.
+const selectedDecalGoogleFont = computed(() => {
+  const c = selectedDecal.value?.content
+  return c?.type === 'text' ? parseGoogleFontValue(c.font) : null
+})
+const decalFontWeightOptions = computed<string[]>(() => {
+  const parsed = selectedDecalGoogleFont.value
+  if (!parsed) return []
+  const entry = fontCatalog.value.find((f) => f.family === parsed.family)
+  const weights = entry?.weights.length ? entry.weights : [400]
+  return weights.map(String)
+})
+const decalFontWeight = computed<string>({
+  get: () => String(selectedDecalGoogleFont.value?.weight ?? 400),
+  set: (w) => {
+    const c = selectedDecal.value?.content
+    const parsed = selectedDecalGoogleFont.value
+    if (c?.type !== 'text' || !parsed) return
+    c.font = `google:${parsed.family}@${w}`
+  },
+})
+const selectedDecalLibraryFont = computed(() => {
+  const c = selectedDecal.value?.content
+  return c?.type === 'text' ? parseLibraryFontValue(c.font) : null
+})
+const decalLibraryWeightOptions = computed<string[]>(() => {
+  const parsed = selectedDecalLibraryFont.value
+  if (!parsed) return []
+  const fam = libraryFamily(parsed.family)
+  const weights = fam?.faces.length ? [...new Set(fam.faces.map((f) => f.weight))].sort((a, b) => a - b) : [400]
+  return weights.map(String)
+})
+const decalLibraryFontWeight = computed<string>({
+  get: () => String(selectedDecalLibraryFont.value?.weight ?? 400),
+  set: (w) => {
+    const c = selectedDecal.value?.content
+    const parsed = selectedDecalLibraryFont.value
+    if (c?.type !== 'text' || !parsed) return
+    c.font = libraryToken(parsed.family, Number(w), parsed.italic)
+  },
+})
 
 // Image-material upload: file → dataURL → ComfyUI input dir → material.image.
 // State is scoped to the object the upload was started FOR (not "whatever is
@@ -1327,6 +1390,14 @@ function setControl(key: string, value: string | number | boolean): void {
   if (key === 'lighting.preset') { doc.lighting.preset = String(value) as SceneDoc['lighting']['preset']; return }
   // The row offers the segmented control's SHORT labels, not the EnvironmentKind values.
   if (key === 'lighting.environment') { doc.lighting.environment = ENV_BY_LABEL[String(value)] ?? 'room'; return }
+  // Gel string/boolean fields must bypass the numeric coercion below: the four gel colours
+  // (hex strings) and the rim toggle (boolean). Everything else under lighting.* is numeric.
+  if (key === 'lighting.gelColorA' || key === 'lighting.gelColorB'
+    || key === 'lighting.gelRimColor' || key === 'lighting.gelBackground') {
+    ;(doc.lighting as Record<string, unknown>)[key.slice('lighting.'.length)] = String(value)
+    return
+  }
+  if (key === 'lighting.gelRim') { doc.lighting.gelRim = value === true; return }
   if (key.startsWith('lighting.')) {
     ;(doc.lighting as Record<string, unknown>)[key.slice('lighting.'.length)] = Number(value)
     return
@@ -3990,6 +4061,12 @@ async function onClose() {
                   @select="onDecalFontPick"
                 />
               </div>
+              <div v-if="selectedDecalGoogleFont">
+                <StudioSelect label="Weight" v-model="decalFontWeight" :options="decalFontWeightOptions" />
+              </div>
+              <div v-if="selectedDecalLibraryFont">
+                <StudioSelect label="Weight" v-model="decalLibraryFontWeight" :options="decalLibraryWeightOptions" />
+              </div>
             </div>
           </template>
 
@@ -4215,9 +4292,18 @@ async function onClose() {
                restores it instead of landing on black — which is why the colour is a
                stateful proxy and not a plain doc leaf, and therefore not in the schema. -->
           <template #control-ui.background.transparent>
-            <div class="flex items-center justify-between">
-              <span class="text-[11px] text-white/55">Transparent</span>
-              <StudioSwitch v-model="bgTransparent" />
+            <div class="space-y-2">
+              <!-- World backdrop: shows the reflected environment behind the geometry. This
+                   is what makes glass dispersion fan into rainbow — the strips have to be IN
+                   the refraction backdrop, not just the reflection map. -->
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Show world</span>
+                <StudioSwitch v-model="bgShowWorld" />
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Transparent</span>
+                <StudioSwitch v-model="bgTransparent" />
+              </div>
             </div>
           </template>
 

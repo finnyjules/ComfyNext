@@ -2,7 +2,7 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 import {
   MATERIAL_TYPES, MATERIAL_DEFAULTS, DEFAULT_MATERIAL, LIGHTING_PRESETS, ENVIRONMENT_KINDS, defaultDoc,
-  PRIMITIVE_KINDS, LIGHT_DEFAULTS, DECAL_DEFAULTS, lightIntensityMax,
+  PRIMITIVE_KINDS, LIGHT_DEFAULTS, DECAL_DEFAULTS, DECAL_BLENDS, lightIntensityMax,
   type SceneDoc, type SceneObject, type MaterialType,
 } from './config'
 import { PRIMITIVE_PARAMS, MODIFIER_SPECS, modifierValue, type ParamSpec } from './primParams'
@@ -488,6 +488,53 @@ export const SCENE_CONTROLS: SceneControl[] = [
     'How bright the main sunlight is'),
   slider('lighting.ambient', 'Ambient', 0, 2, 0.05, 'Lighting', D.lighting.ambient,
     'Soft fill light that lifts the shadows'),
+  // Granular shaping of the `colorGels` world — shown only when it's the live environment.
+  // ALL of these are inspector-only: editing any re-bakes the env (see engine.buildEnvironment),
+  // so none may be animatable (a per-frame PMREM rebuild), and they're not part of the agent's
+  // documented lighting surface. `GEL` carries that gate + those two flags for every row.
+  ...(() => {
+    const when = (doc: SceneDoc) => doc.lighting.environment === 'colorGels'
+    const GEL = { when, agent: false, animatable: false } as const
+    const L = D.lighting
+    return [
+      // Gel A
+      color('lighting.gelColorA', 'Gel A colour', L.gelColorA, 'Lighting', GEL),
+      slider('lighting.gelBrightnessA', 'Gel A brightness', 0, 20, 0.5, 'Lighting', L.gelBrightnessA,
+        'How bright the first panel glows', GEL),
+      slider('lighting.gelSizeA', 'Gel A size', 0.2, 3, 0.05, 'Lighting', L.gelSizeA,
+        'Panel size — small hard streak to broad soft wash', GEL),
+      slider('lighting.gelAzimuthA', 'Gel A angle', -180, 180, 1, 'Lighting', L.gelAzimuthA,
+        'Where it sits around the object (0° = front)', GEL),
+      slider('lighting.gelHeightA', 'Gel A height', -6, 8, 0.1, 'Lighting', L.gelHeightA,
+        'How high the panel sits', GEL),
+      slider('lighting.gelDistanceA', 'Gel A distance', 1, 10, 0.1, 'Lighting', L.gelDistanceA,
+        'How far the panel is from the object', GEL),
+      // Gel B
+      color('lighting.gelColorB', 'Gel B colour', L.gelColorB, 'Lighting', GEL),
+      slider('lighting.gelBrightnessB', 'Gel B brightness', 0, 20, 0.5, 'Lighting', L.gelBrightnessB,
+        'How bright the second panel glows', GEL),
+      slider('lighting.gelSizeB', 'Gel B size', 0.2, 3, 0.05, 'Lighting', L.gelSizeB,
+        'Panel size — small hard streak to broad soft wash', GEL),
+      slider('lighting.gelAzimuthB', 'Gel B angle', -180, 180, 1, 'Lighting', L.gelAzimuthB,
+        'Where it sits around the object (0° = front)', GEL),
+      slider('lighting.gelHeightB', 'Gel B height', -6, 8, 0.1, 'Lighting', L.gelHeightB,
+        'How high the panel sits', GEL),
+      slider('lighting.gelDistanceB', 'Gel B distance', 1, 10, 0.1, 'Lighting', L.gelDistanceB,
+        'How far the panel is from the object', GEL),
+      // Rim strip
+      { key: 'lighting.gelRim', label: 'Rim light', kind: 'switch', default: L.gelRim, group: 'Lighting',
+        hint: 'The bright accent strip along the top', ...GEL } as SceneControl,
+      color('lighting.gelRimColor', 'Rim colour', L.gelRimColor, 'Lighting', GEL),
+      slider('lighting.gelRimBrightness', 'Rim brightness', 0, 15, 0.5, 'Lighting', L.gelRimBrightness,
+        'How bright the top accent strip glows', GEL),
+      // Whole-world
+      slider('lighting.gelSoftness', 'Reflection softness', 0, 1, 0.01, 'Lighting', L.gelSoftness,
+        'Sharp mirror reflections to a diffuse sheen', GEL),
+      color('lighting.gelBackground', 'Backdrop tint', L.gelBackground, 'Lighting', GEL),
+      slider('lighting.gelExposure', 'Exposure', 0, 3, 0.05, 'Lighting', L.gelExposure,
+        'Master brightness over the whole gel world', GEL),
+    ]
+  })(),
 
   // --- Camera (doc-level) -----------------------------------------------------------
   slider('camera.fov', 'Field of view', 15, 100, 1, 'Camera', D.camera.fov,
@@ -592,6 +639,9 @@ export const SCENE_CONTROLS: SceneControl[] = [
     'How far the sticker wraps around curved surfaces', { when: isDecal, ...INSPECTOR_ONLY }),
   slider('object.opacity', 'Opacity', 0, 1, 0.01, 'Decal', DECAL_DEFAULTS.opacity,
     'How solid the sticker sits on the surface', { when: isDecal, ...INSPECTOR_ONLY }),
+  select('object.blend', 'Blend', [...DECAL_BLENDS], DECAL_DEFAULTS.blend, 'Decal',
+    'How the sticker mixes with the surface beneath',
+    { when: isDecal, optionLabels: ['Normal', 'Add (glow)', 'Multiply (ink)', 'Screen', 'Darken', 'Lighten'], ...INSPECTOR_ONLY }),
 ]
 
 /** Controls applicable to `doc`/`obj`, in SCENE_SECTIONS order — the single gate
