@@ -419,6 +419,49 @@ test('path tool: removeLastAnchor steps back one anchor, cancelPath fully aborts
   expect(out.afterUndo).toBe(out.baseline + 1)          // steps back ONE state (anchor 0), no ghost jump
 })
 
+test('path tool: selectTool (toolbar tool switch) cleans up a pending path AND commits — no ghost anchor on undo', async ({ page }) => {
+  await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    const baseline = D.entityCount()
+    D.setTool('path')
+    D.pathDown(1, 1); D.pathUp(1, 1)   // anchor 0 — its own committed history entry
+    D.pathDown(4, 1); D.pathUp(4, 1)   // anchor 1 — another committed history entry
+    const afterTwo = D.entityCount()
+    const idsAfterTwo = D.doc.entities.map((e: any) => e.id).sort()
+
+    // real repro: click a DIFFERENT toolbar tool button mid-draw — setTool()
+    // is the exact path selectTool() takes, wired to the toolbar's @click.
+    // Both pending anchors are unreferenced (no path ever committed) so
+    // cleanupPendingPath deletes them both — this call MUST also commit, or
+    // the deletion never lands its own history entry and a single undo()
+    // below jumps to a stale intermediate snapshot, resurrecting anchor 0
+    // alone as an orphan ghost (present in the doc, but no longer part of
+    // any pending path or committed path — selectTool already reset
+    // pendingPath to null).
+    D.setTool('point')
+    const afterSwitch = D.entityCount()
+    const pathsAfterSwitch = D.doc.entities.filter((e: any) => e.kind === 'path').length
+
+    // one undo() must land EXACTLY on the full state right before the switch
+    // (both anchors, matching what was actually on screen) — not a partial
+    // ghost state with only one of the two deleted anchors resurrected.
+    D.undo()
+    const afterUndo = D.entityCount()
+    const idsAfterUndo = D.doc.entities.map((e: any) => e.id).sort()
+
+    return { baseline, afterTwo, idsAfterTwo, afterSwitch, pathsAfterSwitch, afterUndo, idsAfterUndo }
+  })
+
+  expect(out.afterTwo).toBe(out.baseline + 2)
+  expect(out.afterSwitch).toBe(out.baseline)              // both pending anchors cleaned up on tool switch
+  expect(out.pathsAfterSwitch).toBe(0)                    // no path entity ever committed
+  expect(out.afterUndo).toBe(out.afterTwo)                // undo restores the FULL prior state...
+  expect(out.idsAfterUndo).toEqual(out.idsAfterTwo)       // ...both original anchors, not a partial ghost
+})
+
 test('select a point and nudge() moves it by a world delta; undo restores it', async ({ page }) => {
   await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
   await page.waitForFunction(() => !!(window as any).__sketchDraw)

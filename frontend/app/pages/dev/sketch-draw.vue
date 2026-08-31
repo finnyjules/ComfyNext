@@ -829,8 +829,24 @@ function cleanupPendingPath() {
   }
 }
 
+// Shared by every call site that tears down a pending path outside of
+// removeLastAnchor's own step-back bookkeeping (which commits itself).
+// cleanupPendingPath only nulls state + deletes orphaned anchors — it never
+// commits — so every caller here MUST wrap it in a before/after entity-count
+// check and commit iff something was actually deleted. Skipping that commit
+// is exactly the ghost-anchor bug: the deleted anchor keeps living in the
+// PRIOR history entry, and a later undo lands right past this state, un­doing
+// past the deletion and resurrecting the anchor even though the canvas
+// showed it gone. selectTool (toolbar buttons) used to call
+// cleanupPendingPath bare — no commit — which was this exact gap.
+function cleanupPendingAndCommit() {
+  const before = doc.value.entities.length
+  cleanupPendingPath()
+  if (doc.value.entities.length !== before) commitHistory()
+}
+
 // Escape / test hook: abandon the in-progress path draw without committing a
-// "half path". Reuses cleanupPendingPath (above) for the actual anchor
+// "half path". Reuses cleanupPendingAndCommit (above) for the actual anchor
 // cleanup — same logic selectTool already relies on when switching tools
 // mid-draw. Commits only if that cleanup actually deleted something: a plain
 // Escape with nothing pending is a true no-op (no spurious history entry),
@@ -841,12 +857,10 @@ function cleanupPendingPath() {
 // forward again) even though the canvas shows it gone right now.
 function cancelPath() {
   if (!pendingPath.value) return
-  const before = doc.value.entities.length
-  cleanupPendingPath()
+  cleanupPendingAndCommit()
   pendingPath.value = null
   pathDrag = null
   cursor.value = null
-  if (doc.value.entities.length !== before) commitHistory()
 }
 
 // Backspace/Delete while a path is pending: step back ONE anchor (undo the
@@ -883,7 +897,7 @@ function removeLastAnchor() {
 }
 
 function selectTool(t: Tool) {
-  cleanupPendingPath()
+  cleanupPendingAndCommit()
   tool.value = t
   pending.value = null
   pendingPath.value = null
