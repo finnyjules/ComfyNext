@@ -324,3 +324,36 @@ test('path: Shift snaps a near-vertical segment to exactly vertical', async ({ p
   expect(out.a1.x).toBeCloseTo(3, 6)
   expect(Math.abs(out.a1.y - out.a0.y)).toBeGreaterThan(1)
 })
+
+test('path: Shift-snapped horizontal segment captures a persistent constraint that survives dragging', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    D.pathDown(3, 3); D.pathUp(3, 3)      // prev anchor
+    // shift-place near-horizontal — snaps flat, and should now also capture
+    // a `horizontal` constraint on the two anchor points (not just the position)
+    D.placeShift(11, 3.4)
+    D.pathUp(11, 3.4)
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    const a0id = path.anchors[0], a1id = path.anchors[1]
+    const hasHorizontal = D.doc.constraints.some((c: any) =>
+      c.kind === 'horizontal' && c.refs.includes(a0id) && c.refs.includes(a1id))
+
+    // drag one endpoint off-axis; the solver should snap it back onto the horizontal
+    D.drag(a1id, 11, 9)
+
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const a0 = P(a0id), a1 = P(a1id)
+    return { hasHorizontal, a0, a1, status: D.status() }
+  })
+
+  expect(out.hasHorizontal).toBe(true)
+  expect(out.status).toMatch(/^solved/)
+  expect(Math.abs(out.a1.y - out.a0.y)).toBeLessThan(0.01)
+})

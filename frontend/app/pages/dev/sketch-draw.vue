@@ -260,6 +260,27 @@ function snapAngle(prev: Vec2, pt: Vec2): Vec2 {
 // angle-snap wins, but placePoint can still coincide with the snapped spot if
 // it happens to land on existing geometry. The path's first anchor (no prior
 // anchor yet) is never snapped — there's nothing to measure the angle from.
+// Shift placement (pathPlacementXY/snapAngle, above) snaps the anchor's
+// POSITION to 45° increments but on its own leaves no trace — the segment
+// un-squares the moment either anchor is dragged. When the snapped segment
+// lands exactly horizontal or vertical, capture that as a real
+// horizontal/vertical constraint on the two anchor points (the point-pair
+// form residuals.ts accepts alongside its legacy line-ref form) so the
+// solver keeps it axis-aligned across later drags. 45° diagonals get no
+// constraint — there's no residual for that angle, so they stay snap-only.
+function captureAxisConstraint(prevId: EntityId, newId: EntityId): void {
+  const a = doc.value.entities.find(e => e.id === prevId) as any
+  const b = doc.value.entities.find(e => e.id === newId) as any
+  if (!a || a.kind !== 'point' || !b || b.kind !== 'point') return
+  const dx = b.x - a.x, dy = b.y - a.y
+  const kind: 'horizontal' | 'vertical' | null =
+    Math.abs(dy) < 1e-6 ? 'horizontal' : Math.abs(dx) < 1e-6 ? 'vertical' : null
+  if (!kind) return
+  const already = doc.value.constraints.some(c => c.kind === kind &&
+    ((c.refs[0] === prevId && c.refs[1] === newId) || (c.refs[0] === newId && c.refs[1] === prevId)))
+  if (!already) addConstraint(doc.value, kind, [prevId, newId])
+}
+
 function pathPlacementXY(x: number, y: number, shift: boolean): Vec2 {
   const pp = pendingPath.value
   if (!shift || !pp || pp.anchors.length === 0) return { x, y }
@@ -363,6 +384,7 @@ function pathDown(x: number, y: number, shift = false) {
   const prevAnchor = pp.anchors[pp.anchors.length - 1]!
   pp.segments.push({ kind: 'line' })
   pp.anchors.push(id)
+  if (shift) captureAxisConstraint(prevAnchor, id)
   pathDrag = { anchor: id, prevAnchor, startX: x, startY: y, bowed: false }
 }
 

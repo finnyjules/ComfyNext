@@ -66,14 +66,26 @@ function residualsFor(map: EntityMap, c: SketchConstraint): number[] | null {
       return [dist(ca, cb) - (a.r + b.r)]
     }
     case 'horizontal': {
-      const l = lineOf(map, c.refs[0]!); if (!l) return null
-      const e = lineEnds(map, l); if (!e) return null
-      return [e.a.y - e.b.y]
+      // refs=[lineId] (legacy) → endpoints of that line; else refs=[pA, pB] → the two points directly
+      const l = lineOf(map, c.refs[0]!)
+      if (l) {
+        const e = lineEnds(map, l); if (!e) return null
+        return [e.a.y - e.b.y]
+      }
+      const pA = pointOf(map, c.refs[0]!); const pB = pointOf(map, c.refs[1]!)
+      if (!pA || !pB) return null
+      return [pA.y - pB.y]
     }
     case 'vertical': {
-      const l = lineOf(map, c.refs[0]!); if (!l) return null
-      const e = lineEnds(map, l); if (!e) return null
-      return [e.a.x - e.b.x]
+      // refs=[lineId] (legacy) → endpoints of that line; else refs=[pA, pB] → the two points directly
+      const l = lineOf(map, c.refs[0]!)
+      if (l) {
+        const e = lineEnds(map, l); if (!e) return null
+        return [e.a.x - e.b.x]
+      }
+      const pA = pointOf(map, c.refs[0]!); const pB = pointOf(map, c.refs[1]!)
+      if (!pA || !pB) return null
+      return [pA.x - pB.x]
     }
     case 'distance': {
       const a = pointOf(map, c.refs[0]!); const b = pointOf(map, c.refs[1]!)
