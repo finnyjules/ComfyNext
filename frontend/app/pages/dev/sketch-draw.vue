@@ -313,7 +313,12 @@ function isLineSegment(seg: { pathId: EntityId; segIndex: number }): boolean {
 // analogue of orderRefs, but simpler: there's exactly one ref shape per arity
 // (H/V take a segment's own 2-point pair directly; perpendicular/parallel/
 // equalDist take the 4-point [a1,b1,a2,b2] form two lines already use above).
+// Guard: all involved segments MUST be line segments (v1 scope — arc segments
+// are excluded from every segment-verb constraint).
 function segmentConstraintRefs(kind: ConstraintKind, segs: { pathId: EntityId; segIndex: number }[]): EntityId[] | null {
+  // Guard: reject if ANY involved segment is not a line segment
+  if (!segs.every(seg => isLineSegment(seg))) return null
+
   if (segs.length === 1 && (kind === 'horizontal' || kind === 'vertical')) {
     return segmentAnchorPair(segs[0]!.pathId, segs[0]!.segIndex)
   }

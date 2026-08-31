@@ -1161,6 +1161,51 @@ test('segment selection: clicking a segment hit-path selects it and clears entit
   await expect(page.locator('[data-seg-selected]')).toHaveCount(1)
 })
 
+test('segment verbs: reject arc segments at the mutation layer (no constraint added)', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // draw a path with a line segment and an arc segment
+    D.setTool('path')
+    D.place(2, 2); D.place(4, 4)                     // line segment (seg 0)
+    D.setNextSegment('arc'); D.place(7, 5)            // arc segment (seg 1)
+    D.finishPath(false)
+
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    const initialConstraintCount = D.constraintCount()
+
+    D.setTool('select')
+    // pick the arc segment (segIndex 1)
+    D.pickSegment(path.id, 1)
+    const selectedSegs = D.selectedSegments
+
+    // try to apply horizontal to the arc — should be rejected at the mutation layer
+    D.apply('horizontal')
+
+    const finalConstraintCount = D.constraintCount()
+
+    return {
+      selectedSegs,
+      initialConstraintCount,
+      finalConstraintCount,
+      constraintsUnchanged: initialConstraintCount === finalConstraintCount,
+      status: D.status(),
+    }
+  })
+
+  // verify: the arc segment was selected
+  expect(out.selectedSegs).toEqual([{ pathId: expect.any(String), segIndex: 1 }])
+  // verify: no constraint was added (mutation was rejected)
+  expect(out.constraintsUnchanged).toBe(true)
+  expect(out.finalConstraintCount).toEqual(out.initialConstraintCount)
+  // verify: the solver still converged (no malformed state left behind)
+  expect(out.status).toMatch(/^solved/)
+})
+
 test('Escape aborts a live pan: ends the pan without moving the viewport further', async ({ page }) => {
   await page.goto('/dev/sketch-draw')
   await page.waitForSelector('[data-ready]')
