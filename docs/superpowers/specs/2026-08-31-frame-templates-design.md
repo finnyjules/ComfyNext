@@ -2,13 +2,26 @@
 
 **Date:** 2026-08-31
 **Status:** Approved design, pre-implementation
-**Relationship:** *Elements are ours; Templates are yours.* Elements
+**Relationship:** *Elements are ours; Templates are yours* — and they share one
+shelf. Elements
 ([2026-08-18-elements-gallery-design.md](2026-08-18-elements-gallery-design.md))
-are first-party curated ready-mades with a fixed recipe. Templates are the
-**user-authored** counterpart: you build a Frame, mark some parts as swappable,
-and reuse it. Built on the same Compositor/Frame surface, and it reuses the
+are first-party curated ready-mades with a fixed recipe (the Butter-style library).
+Templates are the **user-authored** counterpart: you build a Frame, mark some parts
+as swappable, and reuse it across projects. Both appear in **one gallery, two
+sources** (see below). Built on the same Compositor/Frame surface, and it reuses the
 detach seam from the timeline clip-in-place work
 ([2026-08-27-timeline-live-studio-clip-editing-design.md](2026-08-27-timeline-live-studio-clip-editing-design.md)).
+
+## One shelf, two sources
+
+The user sees a single library with two sections: **Sailor** (curated Elements —
+the Butter-style ready-mades, first-party) and **Yours** (Templates you saved).
+Same gallery, same "pick → drop in → fill the slots" gesture, so there is one place
+to reach reusable pieces, not two. Under the hood they stay two mechanisms — an
+Element is a curated `compose()` recipe (`lib/elements/`), a Template is a saved
+Frame snapshot (`lib/frametemplate/`, this spec) — but that split is invisible to
+the user. This spec builds the **Yours** half and the shared gallery seam; Elements
+is its own spec and its own build.
 
 ## Plain summary
 
@@ -52,7 +65,7 @@ trade that lets us skip slot-migration machinery in v1.
 | Host surface | **Frame / Compositor layer stack** | The one surface where text, color, and photo slots all live as sibling layers, where "point at a part" = tap a layer, and where layers already animate (~70 per-layer motion presets). The single-moving-text case is just a one-layer Frame, so "both over time" is covered without a second substrate. Space Type *effects* (ribbon/tunnel) live elsewhere and become a later template flavor. |
 | Creating a template | **Build a Frame, then "Save as template"** | No new authoring mode. You already know how to build a Frame; the only new gesture is saving and marking slots. |
 | Marking slots | **Explicit — you tap the parts** | Declared slots are what make the rule unambiguous (copy owns slots, template owns the rest) and dodge the "which change wins" problem. Rejected: everything-swappable-by-default (reintroduces the conflict problem) and auto-detect (guesses wrong). |
-| Where a template lives | **Global personal library, across all projects** | A template is a reusable brand asset, like the brand kit — make once, grab anywhere. Needs a cross-project store (see Open questions). Rejected: project-only (can't reuse next video). |
+| Where a template lives | **Global personal library, across all projects** | A make-once-grab-anywhere shelf, sitting under "Yours" next to Sailor's curated Elements. Needs a cross-project store (see Open questions). Rejected: project-only (can't reuse next video). |
 | Updating old copies | **Ask per project; restyle-only** | On opening a project, if a placed copy's template changed and its slots still line up, offer to update *this project's* copies. Never silent, never retroactive across delivered work. Reshapes become new versions (see above). |
 | Freezing a copy | **Per-copy detach** | Reuses the detach mechanic from the timeline clip work: drop the template link, keep the layers as plain content. The "this one is final" button. |
 | Instance model | **Materialized + recipe card (mirror Elements)** | Placing writes real `LocalLayer`s into the target Frame; a small recipe card (template id + version + slot values) is stored alongside. Every existing layer consumer keeps working; a missing/removed template auto-detaches to plain layers, so artwork can never break. |
@@ -94,9 +107,8 @@ interface Template {
   layers: LocalLayer[]       // snapshot of the authored Frame's layers (the locked design)
   slots: SlotMark[]          // the parts a copy may change
   frameSize: { w: number; h: number }
-  // Colors resolve against the brand kit on place (like Elements), so a template
-  // travels between brand kits; slot 'color' values are stored as brand roles
-  // where possible, raw hex otherwise.
+  // Color slots and locked colors store plain color values (hex) in v1 — no
+  // brand-kit coupling (deferred; see Open questions).
 }
 
 interface TemplateInstance {   // stored per group in Frame node property `sailor_frametemplates`
@@ -117,8 +129,10 @@ interface TemplateInstance {   // stored per group in Frame node property `sailo
 
 - **Place** (`apply.ts`): copy `Template.layers` into the target Frame as a group
   with fresh instance keys; fill slot layers from `slotValues` (defaults on first
-  place); resolve `color` slots and locked colors against the active brand kit;
-  store the `TemplateInstance` recipe card. Materialized — the layers are real.
+  place); store the `TemplateInstance` recipe card. Materialized — the layers are
+  real. A template placed into an *empty* Frame reads as a standalone piece; placed
+  into a *populated* Frame it overlays as one more group — the group-as-unit choice
+  is what enables both.
 
 - **Update** (`apply.ts`, restyle path): for a copy whose `templateVersion <`
   library version **and whose slots still line up**, re-apply the template's
@@ -173,8 +187,9 @@ get inverse-command undo.
 ## Scope for v1
 
 **In:** save a Frame as a template · tap text/color/image slots · a global library
-(list/place/rename/delete) · place a copy and fill its slots · per-project
-restyle-update prompt · freeze a copy · agent ops.
+(list/place/rename/delete) shown in the shared gallery under **Yours** (next to
+Sailor's Elements) · place a copy and fill its slots · per-project restyle-update
+prompt · freeze a copy · agent ops.
 
 **Out (deliberately):**
 - Slot **reshape** migration (add/remove/retype a slot flowing onto old copies) —
@@ -206,15 +221,19 @@ restyle-update prompt · freeze a copy · agent ops.
 ## Open questions (for the plan / first task)
 
 1. **Where the library persists.** A global, cross-project store is new. Options:
-   the hosted user store (like brand kits, if that infra is the right home) vs. a
-   local persisted store first. Decide before the store task; it gates everything
-   else.
-2. **Whole Frame vs. a group inside a Frame** as the template unit. Leaning "a
-   group" (so a Frame can hold several templates and other content), matching
-   Elements' group-as-unit — confirm during planning.
-3. **Color slots and brand roles.** Whether a color slot stores a brand-kit role
-   (travels between kits) or a raw hex (pins the exact color). Leaning: role when
-   the color came from the kit, hex otherwise.
+   an account-level store (if that infra is the right home) vs. a local persisted
+   store first. Explicitly **not** tied to the brand kit. Decide before the store
+   task; it gates everything else.
+2. **Template unit = a group** (decided). A template is saved as a *bundle of
+   layers* (a group), not a whole Frame, so it can be dropped both into an empty
+   Frame (standalone) and onto a populated Frame (overlay onto existing content —
+   the common reuse gesture). Authoring is unaffected: "build a Frame → save as
+   template" saves its layers as the group; the user never groups by hand. Revisit
+   only if standalone-only turns out to be the sole use.
+3. **Brand-kit-aware colors — deferred.** Color slots and locked colors store plain
+   hex in v1. Whether colors should later follow a brand-kit role (travel between
+   kits) is a separate decision, made once the brand kit itself is thought through.
+   No v1 decision depends on it.
 
 ## Landing checklist
 
