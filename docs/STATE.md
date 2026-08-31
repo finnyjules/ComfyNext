@@ -96,6 +96,33 @@ Phase 2 must also fix the solver's dead in-loop early-break (burns full maxIter 
 per-pointer-move). Phases 3–4: draw-time inference chips + persistent constraint badges + selection
 verbs; agent verbs + curvature-comb overlay.
 
+### Sketch feel-backlog finished — M5 LANDED (dev-only) 2026-08-31 (`2cbec372f`..`d2ae0082c`)
+
+Everything scoped before the Shape Studio mount, in one program. **The headline: mandala-scale
+liveness.** Two solver pieces — an **analytic Jacobian** (`jacobian.ts`, 15 kinds analytic +
+mirroredFrom numeric-fallback, verified vs central-difference to 1e-4) then **copy-point
+substitution** (`substitute.ts`: rotatedFrom/mirroredFrom copy points are *determined* by ~6 base
+points, so they're removed from the free-param set, forward-substituted, and chain-ruled onto their
+sources) — took a 181-point repeat×36 mandala from **1734ms → 5.88ms per drag (≈170fps)**, symmetry
+error 0.00000, all existing solves byte-identical (zero-derived docs take the original path). That's
+the "this is fun" real-time morph from the videos. Plus six vocabulary/interaction features: **Midpoint
++ Equal** verbs (`midpoint`, `equalRadius` residuals — all four Fusion verbs now done); **click a
+constraint badge to remove it** (glyph=plain-click, value-chip=shift-click) + **Escape aborts
+marquee/pan**; **path-segment selection** (click a segment, apply Horizontal/Vertical/Perpendicular/
+Parallel/Equal to it — mutually exclusive with entity selection, arc-segment guard at the mutation
+layer); **guides-first** (a Guide toggle draws construction geometry directly; construction points
+snappable again since bezier handles are gone); **type-a-dimension while drawing** (type digits mid-
+line/arc → exact length/radius, pinned as a `distance` constraint); **sparkle-on-snap** delight. 194
+unit + 37 E2E; **vue-tsc gate clean across all sketch files every task** (it kept catching GLYPH-map
+gaps as kinds were added). **Scope calls:** curvature comb DROPPED (obsolete — bezier retired, arcs
+have constant curvature); grid + copy/paste DEFERRED as non-core. Plan:
+`superpowers/plans/2026-08-31-sketch-feel-backlog-m5.md`. **Carry (Minor):** Enter mid arc-bow with an
+empty buffer finishes straight; glyph badges (pointer-events:auto) can occlude geometry beneath; a
+follow-up perf lever for genuinely-large *non-repeat* sketches is a sparse linear solve (dense O(n³)
+remains only for truly-free large systems). **THE NEXT BIG THING IS THE SHAPE STUDIO MOUNT** — the
+whole constraint drawing tool still lives on `/dev/sketch-draw`; moving it into the real app (draw →
+array → boolean → fill) is the decision that's been deferred all along.
+
 ### Sketch standard editor interactions — M4 LANDED (dev-only) 2026-08-31 (`5c3c7b95c`..`f6712f689`)
 
 The "boring but essential" layer that makes `/dev/sketch-draw` feel like a tool, not a demo — all
