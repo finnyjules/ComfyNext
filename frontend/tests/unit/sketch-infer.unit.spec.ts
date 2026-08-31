@@ -46,12 +46,15 @@ describe('snapPoint', () => {
     expect(r).toMatchObject({ x: 50, y: 50 })
   })
 
-  it('does not snap to a construction point (a pen/smooth handle), even within tolerance', () => {
+  it('snaps to a construction point (a guide) same as any other point', () => {
+    // construction points are now only guides placed via Guide mode
+    // (sketch-draw.vue) — the old pen/smooth-handle exclusion is retired, so
+    // a guide point is a full coincident snap target.
     const d = doc()
     d.entities.push({ id: 'h', kind: 'point', x: 20, y: 20, construction: true })
     const r = snapPoint(d, 20.2, 19.9)
-    expect(r.snap?.targetId).not.toBe('h')
-    expect(r.snap).toBeNull()
+    expect(r.snap?.kind).toBe('coincident')
+    expect(r.snap?.targetId).toBe('h')
   })
 })
 

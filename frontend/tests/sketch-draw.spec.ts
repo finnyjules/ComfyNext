@@ -1239,3 +1239,59 @@ test('Escape aborts a live pan: ends the pan without moving the viewport further
   await page.mouse.up()
   await page.keyboard.up('Space')
 })
+
+test('Guide mode places construction geometry; guide points stay snap targets; guides are excluded from Copy-SVG', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const info = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+
+    // guide mode ON: the Circle tool places construction geometry directly —
+    // center (5,5), radius click at (5,8) → r=3
+    D.setGuideMode(true)
+    D.setTool('circle'); D.place(5, 5); D.place(5, 8)
+    const guideCircle = D.doc.entities.find((e: any) => e.kind === 'circle')
+
+    // guide mode OFF: draw a real path whose first anchor lands right on the
+    // guide circle's circumference — the rightmost point, (8,5) — close
+    // enough (within snapPoint's default 0.6 tolerance) to trigger a
+    // pointOnCircle snap against the guide, proving guides stay full snap
+    // targets even though they never touch Copy-SVG.
+    D.setGuideMode(false)
+    D.setTool('path')
+    D.place(7.9, 5)
+    D.place(10, 8)
+    D.finishPath(false)
+
+    const pointOnCircle = D.doc.constraints.find((c: any) => c.kind === 'pointOnCircle' && c.refs.includes(guideCircle.id))
+    const svg = D.copySvg()
+    // the guide circle's own exported arc fragment (see sketchPath.ts's
+    // circle formula: center (5,5) r=3 → left point (2,5), right point (8,5))
+    const guideArcFragment = 'M 2 5 A 3 3 0 0 1 8 5 A 3 3 0 0 1 2 5 Z'
+
+    return {
+      guideCircleConstruction: !!guideCircle?.construction,
+      guideModeAfter: D.guideMode,
+      pointOnCircleTarget: pointOnCircle ? pointOnCircle.refs[1] : null,
+      guideCircleId: guideCircle.id,
+      svgIncludesGuideArc: svg.includes(guideArcFragment),
+      svgIncludesAnyArc: svg.includes(' A '),
+      svgLength: svg.length,
+    }
+  })
+
+  // guide-mode-drawn geometry is construction
+  expect(info.guideCircleConstruction).toBe(true)
+  expect(info.guideModeAfter).toBe(false)
+  // the path anchor's pointOnCircle constraint was captured against the guide
+  expect(info.pointOnCircleTarget).toBe(info.guideCircleId)
+  // Copy-SVG excludes the guide: no arc commands survive (the guide circle
+  // was the only arc geometry on the board) and the fragment itself is absent
+  expect(info.svgIncludesAnyArc).toBe(false)
+  expect(info.svgIncludesGuideArc).toBe(false)
+  // ...while the real (non-guide) path still exports
+  expect(info.svgLength).toBeGreaterThan(0)
+})

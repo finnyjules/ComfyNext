@@ -39,9 +39,10 @@ export function snapPoint(
   for (const e of doc.entities) {
     if (exclude.has(e.id)) continue
     if (e.kind === 'point') {
-      // construction points are pen/smooth handles, not snap targets; construction
-      // LINES/CIRCLES (guides) still snap below — only points are excluded here
-      if (e.construction) continue
+      // construction points are guides (Guide-mode placement, sketch-draw.vue) —
+      // full snap targets like any other point. The old pen/smooth-handle use
+      // of construction points is retired from the draw UI, so there's no
+      // longer a reason to exclude them here.
       const d = dist(p, { x: e.x, y: e.y })
       consider({ kind: 'coincident', targetId: e.id, x: e.x, y: e.y, dist: d })
     } else if (e.kind === 'line') {

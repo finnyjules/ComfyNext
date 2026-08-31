@@ -18,6 +18,13 @@ const doc = ref<SketchDoc>({ entities: [], constraints: [] })
 const tool = ref<Tool>('select')
 const status = ref('ready')
 const ready = ref(false)
+// Guide mode: while ON, the Point/Line/Circle/Path tools place their geometry
+// as construction (dashed, full snap/constraint target, excluded from
+// Copy-SVG) — the "draw as a guide" counterpart to the existing "Make
+// construction" verb, which only toggles already-placed geometry.
+const guideMode = ref(false)
+function toggleGuideMode() { guideMode.value = !guideMode.value }
+function setGuideMode(on: boolean) { guideMode.value = on }
 
 // world→screen: viewport is VIEW state, not model — pan/zoom never touch
 // `doc` or history (see commitHistory below; undo must never undo a zoom/pan).
@@ -563,42 +570,46 @@ function runSolve(drag?: DragTarget) {
 
 // place a point, honoring a snap: reuse the snapped point (coincident) or create
 // a new point and the on-line/on-circle constraint the snap implies.
-function placePoint(x: number, y: number, exclude: EntityId[] = []): EntityId {
+// `construction` (guide mode) only affects a freshly-created point — a
+// coincident snap always reuses whatever the existing target point already is.
+function placePoint(x: number, y: number, exclude: EntityId[] = [], construction = false): EntityId {
   const snapped = snapPoint(doc.value, x, y, { exclude })
   if (snapped.snap?.kind === 'coincident') return snapped.snap.targetId
-  const id = addPoint(doc.value, snapped.x, snapped.y)
+  const id = addPoint(doc.value, snapped.x, snapped.y, { construction })
   if (snapped.snap?.kind === 'pointOnLine') addConstraint(doc.value, 'pointOnLine', [id, snapped.snap.targetId])
   else if (snapped.snap?.kind === 'pointOnCircle') addConstraint(doc.value, 'pointOnCircle', [id, snapped.snap.targetId])
   return id
 }
 
-// the current tool's action at world (x,y)
+// the current tool's action at world (x,y) — while guideMode is on, Point/
+// Line/Circle/Path all place their geometry as construction (dashed, snap/
+// constraint-target, excluded from Copy-SVG) rather than real geometry.
 function place(x: number, y: number) {
   if (tool.value === 'point') {
-    placePoint(x, y)
+    placePoint(x, y, [], guideMode.value)
     runSolve()
     commitHistory()
   } else if (tool.value === 'line') {
     if (!pending.value || pending.value.kind !== 'line') {
-      const p1 = placePoint(x, y)
+      const p1 = placePoint(x, y, [], guideMode.value)
       pending.value = { kind: 'line', p1 }
       commitHistory()
     } else {
-      const p2 = placePoint(x, y, [pending.value.p1])
-      if (p2 !== pending.value.p1) addLine(doc.value, pending.value.p1, p2)
+      const p2 = placePoint(x, y, [pending.value.p1], guideMode.value)
+      if (p2 !== pending.value.p1) addLine(doc.value, pending.value.p1, p2, { construction: guideMode.value })
       pending.value = null
       runSolve()
       commitHistory()
     }
   } else if (tool.value === 'circle') {
     if (!pending.value || pending.value.kind !== 'circle') {
-      const center = placePoint(x, y)
+      const center = placePoint(x, y, [], guideMode.value)
       const c = doc.value.entities.find(e => e.id === center) as any
       pending.value = { kind: 'circle', center, cx: c.x, cy: c.y }
       commitHistory()
     } else {
       const r = Math.max(0.2, dist({ x, y }, { x: pending.value.cx, y: pending.value.cy }))
-      const cid = addCircle(doc.value, pending.value.center, r)
+      const cid = addCircle(doc.value, pending.value.center, r, { construction: guideMode.value })
       // auto-capture tangency to existing geometry
       for (const t of inferCircleTangents(doc.value, pending.value.cx, pending.value.cy, r, { exclude: [cid] })) {
         addConstraint(doc.value, t.kind, t.kind === 'tangentLineCircle' ? [t.targetId, cid] : [cid, t.targetId])
@@ -669,7 +680,7 @@ function pathPlacementXY(x: number, y: number, shift: boolean): Vec2 {
 
 function pathClick(x: number, y: number, shift = false) {
   const p = pathPlacementXY(x, y, shift)
-  const id = placePoint(p.x, p.y)
+  const id = placePoint(p.x, p.y, [], guideMode.value)
   if (!pendingPath.value) { pendingPath.value = { anchors: [id], segments: [] }; commitHistory(); return }
   const pp = pendingPath.value
   const prev = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
@@ -751,7 +762,7 @@ let pathDrag: PathDrag = null
 
 function pathDown(x: number, y: number, shift = false) {
   const p = pathPlacementXY(x, y, shift)
-  const id = placePoint(p.x, p.y)
+  const id = placePoint(p.x, p.y, [], guideMode.value)
   if (!pendingPath.value) {
     pendingPath.value = { anchors: [id], segments: [] }
     pathDrag = null
@@ -826,7 +837,7 @@ function finishPath(close = false) {
       pp.segments.push({ kind: 'arc', center: c, sweep: 1 })
     } else pp.segments.push(closingSegment())
   }
-  addPath(doc.value, pp.anchors, pp.segments, close)
+  addPath(doc.value, pp.anchors, pp.segments, close, { construction: guideMode.value })
   runSolve()
   commitHistory()
 }
@@ -909,6 +920,25 @@ const marks = computed(() => constraintMarks(doc.value))
 // persistent "R n.n" radius chips on every finished arc segment — pure read of
 // the doc, never solves; distinct from pathBowChip's live during-drag chip
 const arcDims = computed(() => arcDimensionMarks(doc.value))
+
+// point-handle rendering: selection (orange, filled, r6) always wins; a
+// construction point (a guide — the pen/smooth-handle use of construction
+// points is retired from this UI) renders as a small grey hollow dot, distinct
+// from both the orange selection fill and the normal solid blue/fixed-grey
+// dots below.
+function pointRadius(p: { id: EntityId; construction?: boolean }): number {
+  if (selection.value.includes(p.id)) return 6
+  return p.construction ? 4 : 6
+}
+function pointFill(p: { id: EntityId; construction?: boolean; fixed?: boolean }): string {
+  if (selection.value.includes(p.id)) return '#f59e0b'
+  if (p.construction) return 'none'
+  return p.fixed ? '#9ca3af' : '#2563eb'
+}
+function pointStroke(p: { id: EntityId; construction?: boolean }): string {
+  if (selection.value.includes(p.id)) return 'none'
+  return p.construction ? '#9ca3af' : 'none'
+}
 
 // screen coords of a live (already-in-doc) point entity — used by the preview,
 // which never goes through the shadow-doc clone
@@ -1362,6 +1392,10 @@ onMounted(() => {
     entityCount: () => doc.value.entities.length,
     constraintCount: () => doc.value.constraints.length,
     setTool: (t: Tool) => selectTool(t),
+    // Task 5 test hook: guide mode — while on, Point/Line/Circle/Path place
+    // construction geometry directly (see place/pathClick/pathDown/finishPath).
+    get guideMode() { return guideMode.value },
+    setGuideMode: (on: boolean) => setGuideMode(on),
     reset,
     place: (x: number, y: number) => place(x, y),
     pathDown: (x: number, y: number) => pathDown(x, y),
@@ -1437,6 +1471,11 @@ onUnmounted(() => {
               :data-tool="t" @click="() => selectTool(t)"
               :style="{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer',
                         background: tool === t ? '#2563eb' : '#1a1a1a', color: '#fff' }">{{ t }}</button>
+      <button data-act="guide" @click="toggleGuideMode" :title="'While on, Point/Line/Circle/Path place construction (guide) geometry'"
+              :style="{ padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                        border: guideMode ? '1px dashed #60a5fa' : '1px solid #333',
+                        background: guideMode ? '#152036' : '#1a1a1a',
+                        color: guideMode ? '#93c5fd' : '#9ca3af' }">Guide: {{ guideMode ? 'on' : 'off' }}</button>
       <button data-act="reset" @click="reset" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer">reset</button>
       <span data-status style="margin-left: 8px; font-size: 12px; color: #9ca3af">{{ status }}</span>
     </div>
@@ -1494,10 +1533,11 @@ onUnmounted(() => {
       </template>
       <path v-if="previewD" :d="previewD" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="5 3"
             pointer-events="none" data-path-preview />
-      <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" r="6"
-              :fill="selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb')"
+      <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" :r="pointRadius(p)"
+              :fill="pointFill(p)" :stroke="pointStroke(p)" stroke-width="1.5"
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
-              @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)" :data-point="p.id" />
+              @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)"
+              :data-point="p.id" :data-construction="p.construction ? '' : null" />
       <g v-for="m in marks" :key="m.id" class="constraint-badge" pointer-events="auto" style="cursor: pointer"
          :data-constraint="m.id" :data-constraint-kind="m.kind"
          @pointerdown.stop @click.stop="onConstraintMarkClick(m, $event)">
