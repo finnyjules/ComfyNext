@@ -96,6 +96,29 @@ Phase 2 must also fix the solver's dead in-loop early-break (burns full maxIter 
 per-pointer-move). Phases 3–4: draw-time inference chips + persistent constraint badges + selection
 verbs; agent verbs + curvature-comb overlay.
 
+### Sketch standard editor interactions — M4 LANDED (dev-only) 2026-08-31 (`5c3c7b95c`..`f6712f689`)
+
+The "boring but essential" layer that makes `/dev/sketch-draw` feel like a tool, not a demo — all
+five batches the user asked for: **(1) undo/redo** (⌘Z/⌘⇧Z; deep-clone history via new
+`lib/sketch/clone.ts`; one entry per drag; skips no-op snapshots) + a window keydown layer; **(2)
+drawing keys** — Esc-cancel, Enter-finish, Backspace-remove-last-anchor / Delete-selection, **arrow-
+nudge** (0.25u, 2.5u w/ Shift, on the selection point-closure); **(3) pan & zoom** — reactive
+`scale/panX/panY` (replaced the fixed `S/OX/OY`), wheel-zoom-toward-cursor, Space/middle-drag pan, ⌘0
+fit; viewport is NOT undoable; **(4) editable dimension chips** — click an `R` chip → type a value →
+pins a `distance[center,startAnchor]` constraint (update-in-place, no dup); **(5) selection** —
+marquee box-select, click-empty-deselect, Shift+click add (plain click now REPLACES). Also earlier in
+this session: Shift-while-drawing snaps segments to 45° and **captures persistent horizontal/vertical**
+(residuals extended to a 2-point form); **Perpendicular/Parallel verbs** (2 lines) + **Right-angle**
+verb (a path corner); the bezier **pen tool was RETIRED** (path/arcs is the single draw gesture; lib
+bezier kept as revival kit). Process fix: a **`vue-tsc` gate** now runs each task (repo has no CI
+typecheck) — it caught a real shipped bug (badge GLYPH missing `perpendicular` → undefined glyph). 161
+unit + 20 E2E; vue-tsc clean across all sketch files. Plan:
+`superpowers/plans/2026-08-30-sketch-editor-interactions-m4.md`. **Carry (Minor):** Escape doesn't
+abort a live marquee/pan (only a path); `commitHistory` structural-diff is `JSON.stringify` (fine at
+scale). **Feel backlog remaining:** analytic Jacobian (mandala-scale liveness), delight cues
+(sparkle-on-snap), guides-first affordances, Midpoint + general-Equal verbs, path-segment selection.
+**Shape Studio mount remains the big decision.**
+
 ### Sketch tangent-at-joints — M3 LANDED (dev-only) 2026-08-30 (`630bfbc51`..`b6db2f721`)
 
 The flowing-curve magic: arcs now snap **tangent-continuous at shared joints** while drawing (the top
