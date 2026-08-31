@@ -3,13 +3,13 @@
 // Dev harness — not linked in the app. Interactive constraint drawing surface.
 definePageMeta({ layout: false })
 import { ref, computed, onMounted, onUnmounted, toRaw } from 'vue'
-import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
+import type { SketchDoc, SketchConstraint, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
 import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, isPointReferenced } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents, tangentJointArc } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist, type Vec2 } from '~/lib/sketch/geom'
-import { constraintMarks, arcDimensionMarks } from '~/lib/sketch/annotate'
+import { constraintMarks, arcDimensionMarks, type ConstraintMark, type ArcDimensionMark } from '~/lib/sketch/annotate'
 import { cloneDoc } from '~/lib/sketch/clone'
 
 type Tool = 'select' | 'point' | 'line' | 'circle' | 'path'
@@ -275,6 +275,92 @@ function del() {
   clearSel()
   runSolve()
   commitHistory()
+}
+
+// --- editable dimension chips: arc radius chips (arcDims, over every arc
+// segment's true midpoint) and constraint value chips (marks with a numeric
+// value — distance/radius) are both click-to-edit. Both funnel through
+// setArcRadius/setConstraintValue, which the __sketchDraw test hooks call
+// directly — so a click and a test call run the identical code path.
+
+// resolve an arcDims mark's "pathId:segIndex" id to the arc segment's center
+// point and start-anchor point (arcDimensionMarks keys the start anchor as
+// anchors[segIndex] — same convention followed here). Path ids never contain
+// ':' (see ids.ts), so splitting on the last colon is unambiguous even though
+// pathId itself is arbitrary text.
+function resolveArcSegment(pathId: EntityId, segIndex: number): { centerId: EntityId; startAnchorId: EntityId } | null {
+  const path = doc.value.entities.find(e => e.id === pathId) as any
+  if (!path || path.kind !== 'path') return null
+  const seg = path.segments[segIndex]
+  if (!seg || seg.kind !== 'arc') return null
+  const startAnchorId = path.anchors[segIndex]
+  if (!startAnchorId) return null
+  return { centerId: seg.center, startAnchorId }
+}
+
+// an existing distance constraint pinning exactly this [center, startAnchor]
+// pair (either ref order) — found first so a second edit updates it in place
+// instead of stacking a duplicate constraint (radius = |center − startAnchor|,
+// so this pair IS the radius pin).
+function findRadiusPin(centerId: EntityId, startAnchorId: EntityId): SketchConstraint | undefined {
+  return doc.value.constraints.find(c => c.kind === 'distance' &&
+    ((c.refs[0] === centerId && c.refs[1] === startAnchorId) || (c.refs[0] === startAnchorId && c.refs[1] === centerId)))
+}
+
+// pin an arc segment's radius to an exact value: add (or update) a distance
+// constraint between its center and start anchor. Shared by the chip click
+// handler and the __sketchDraw.setArcRadius test hook.
+function setArcRadius(pathId: EntityId, segIndex: number, value: number): void {
+  if (!Number.isFinite(value) || value <= 0) return
+  const resolved = resolveArcSegment(pathId, segIndex)
+  if (!resolved) return
+  const { centerId, startAnchorId } = resolved
+  const existing = findRadiusPin(centerId, startAnchorId)
+  if (existing) existing.value = value
+  else addConstraint(doc.value, 'distance', [centerId, startAnchorId], value)
+  runSolve()
+  commitHistory()
+}
+
+// update a distance/radius constraint's value in place. Shared by the
+// constraint-chip click handler and the __sketchDraw.setConstraintValue test
+// hook.
+function setConstraintValue(constraintId: EntityId, value: number): void {
+  if (!Number.isFinite(value) || value <= 0) return
+  const c = doc.value.constraints.find(x => x.id === constraintId)
+  if (!c || c.value == null) return
+  c.value = value
+  runSolve()
+  commitHistory()
+}
+
+function onArcDimClick(m: ArcDimensionMark): void {
+  const sep = m.id.lastIndexOf(':')
+  if (sep < 0) return
+  const pathId = m.id.slice(0, sep)
+  const segIndex = Number(m.id.slice(sep + 1))
+  const resolved = resolveArcSegment(pathId, segIndex)
+  if (!resolved) return
+  const center = doc.value.entities.find(e => e.id === resolved.centerId) as any
+  const start = doc.value.entities.find(e => e.id === resolved.startAnchorId) as any
+  if (!center || !start) return
+  const current = dist({ x: center.x, y: center.y }, { x: start.x, y: start.y })
+  const raw = window.prompt('Radius?', current.toFixed(2))
+  if (raw == null) return                  // cancelled → no change (Bug 3 pattern)
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return // invalid → no change
+  setArcRadius(pathId, segIndex, n)
+}
+
+function onConstraintMarkClick(m: ConstraintMark): void {
+  if (m.text == null) return                // only distance/radius carry a value
+  const c = doc.value.constraints.find(x => x.id === m.id)
+  if (!c || c.value == null) return
+  const raw = window.prompt((c.kind === 'radius' ? 'Radius' : 'Distance') + ' value?', c.value.toFixed(2))
+  if (raw == null) return
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return
+  setConstraintValue(m.id, n)
 }
 
 // arrow-key / test-hook nudge: move every selected point AND the point-closure
@@ -1038,6 +1124,10 @@ onMounted(() => {
     panBy: (dxPx: number, dyPx: number) => panBy(dxPx, dyPx),
     fitView: () => fitView(),
     getViewport: () => getViewport(),
+    // Task 4 test hooks — editable dimension chips: identical code path as
+    // the arc-radius-chip / constraint-value-chip click (minus the prompt).
+    setArcRadius: (pathId: EntityId, segIndex: number, value: number) => setArcRadius(pathId, segIndex, value),
+    setConstraintValue: (constraintId: EntityId, value: number) => setConstraintValue(constraintId, value),
   }
   ready.value = true
   initHistory()
@@ -1105,11 +1195,14 @@ onUnmounted(() => {
               :fill="selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb')"
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
               @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)" :data-point="p.id" />
-      <g v-for="m in marks" :key="m.id" pointer-events="none">
+      <g v-for="m in marks" :key="m.id" :pointer-events="m.text != null ? 'auto' : 'none'"
+         :style="m.text != null ? 'cursor: pointer' : undefined"
+         @pointerdown.stop @click.stop="onConstraintMarkClick(m)">
         <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" :width="m.text ? 30 : 16" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.glyph }}{{ m.text ? ' ' + m.text : '' }}</text>
       </g>
-      <g v-for="m in arcDims" :key="m.id" pointer-events="none">
+      <g v-for="m in arcDims" :key="m.id" pointer-events="auto" style="cursor: pointer"
+         @pointerdown.stop @click.stop="onArcDimClick(m)">
         <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" width="34" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.text }}</text>
       </g>
