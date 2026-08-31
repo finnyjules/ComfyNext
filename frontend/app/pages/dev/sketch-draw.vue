@@ -81,11 +81,31 @@ function onKeydown(ev: KeyboardEvent) {
   const el = document.activeElement
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
   const meta = ev.metaKey || ev.ctrlKey
-  if (!meta) return
-  const key = ev.key.toLowerCase()
-  if (key === 'z' && !ev.shiftKey) { ev.preventDefault(); undo(); return }
-  if ((key === 'z' && ev.shiftKey) || key === 'y') { ev.preventDefault(); redo(); return }
-  // (Task 2 extends this with Esc/Enter/Backspace/Delete/arrows)
+  if (meta) {
+    const key = ev.key.toLowerCase()
+    if (key === 'z' && !ev.shiftKey) { ev.preventDefault(); undo(); return }
+    if ((key === 'z' && ev.shiftKey) || key === 'y') { ev.preventDefault(); redo(); return }
+    return
+  }
+  if (ev.key === 'Escape') { cancelPath(); return }
+  if (ev.key === 'Enter') {
+    if (pendingPath.value && pendingPath.value.anchors.length >= 2) { ev.preventDefault(); finishPath(false) }
+    return
+  }
+  if (ev.key === 'Backspace' || ev.key === 'Delete') {
+    ev.preventDefault()   // don't let the browser interpret Backspace as back-nav
+    if (pendingPath.value) removeLastAnchor()
+    else if (selection.value.length) del()
+    return
+  }
+  if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+    if (!selection.value.length) return   // nothing selected: no-op, let the browser handle the key normally
+    ev.preventDefault()
+    const step = ev.shiftKey ? 2.5 : 0.25
+    const dx = ev.key === 'ArrowLeft' ? -step : ev.key === 'ArrowRight' ? step : 0
+    const dy = ev.key === 'ArrowUp' ? step : ev.key === 'ArrowDown' ? -step : 0   // screen-up = larger world y (see sy())
+    nudge(dx, dy)
+  }
 }
 
 function selKinds(): string[] {
@@ -202,6 +222,23 @@ function applyWithValue(v: { kind: ConstraintKind; label: string; value?: boolea
 function del() {
   for (const id of [...selection.value]) deleteEntity(doc.value, id)
   clearSel()
+  runSolve()
+  commitHistory()
+}
+
+// arrow-key / test-hook nudge: move every selected point AND the point-closure
+// of any selected line/circle/path (pointClosure — same expansion flip()
+// already uses) by a world-space (dx, dy), then re-solve so any live
+// constraints fight back immediately, same as a select-tool drag. No-op with
+// nothing selected — worth guarding here too since __sketchDraw.nudge() is a
+// direct test entry point, not just the keydown path.
+function nudge(dx: number, dy: number) {
+  if (!selection.value.length) return
+  const ids = pointClosure(doc.value, selection.value)
+  for (const id of ids) {
+    const p = doc.value.entities.find(e => e.id === id) as any
+    if (p && p.kind === 'point') { p.x += dx; p.y += dy }
+  }
   runSolve()
   commitHistory()
 }
@@ -792,6 +829,59 @@ function cleanupPendingPath() {
   }
 }
 
+// Escape / test hook: abandon the in-progress path draw without committing a
+// "half path". Reuses cleanupPendingPath (above) for the actual anchor
+// cleanup — same logic selectTool already relies on when switching tools
+// mid-draw. Commits only if that cleanup actually deleted something: a plain
+// Escape with nothing pending is a true no-op (no spurious history entry),
+// and — the known edge case this guards against — an Escape that DID delete
+// a pending-only anchor must land its own history entry, or else the anchor
+// stays alive in the PRIOR entry and a later undo/redo cycle can resurrect it
+// as a ghost (undo lands on the old entry that still has it, redo brings it
+// forward again) even though the canvas shows it gone right now.
+function cancelPath() {
+  if (!pendingPath.value) return
+  const before = doc.value.entities.length
+  cleanupPendingPath()
+  pendingPath.value = null
+  pathDrag = null
+  cursor.value = null
+  if (doc.value.entities.length !== before) commitHistory()
+}
+
+// Backspace/Delete while a path is pending: step back ONE anchor (undo the
+// last pathClick/pathDown placement) rather than the coarser full cancel.
+// Also drops the trailing segment leaving that anchor, and — if it was an
+// arc — the center point that segment alone owned (mirrors the segment
+// bookkeeping addPath/deleteEntity do for a committed path). Stepping back
+// from 2 anchors to 1 leaves a perfectly valid pending state — the same
+// single-anchor state a fresh path starts in — so that anchor is kept, not
+// deleted. Only when the LAST anchor itself gets popped (0 remain, nothing
+// left to keep drawing from) does this fall through to the same full-cancel
+// cleanup cancelPath uses. Either way, folded into ONE history commit (only
+// if something was actually deleted) so this can't leave the same
+// ghost-anchor gap cancelPath's own comment describes.
+function removeLastAnchor() {
+  const pp = pendingPath.value
+  if (!pp || pp.anchors.length === 0) return
+  const before = doc.value.entities.length
+  const lastAnchor = pp.anchors.pop()!
+  const lastSeg = pp.segments.length ? pp.segments.pop() : undefined
+  const candidates: EntityId[] = [lastAnchor]
+  if (lastSeg && lastSeg.kind === 'arc') candidates.push(lastSeg.center)
+  for (const id of candidates) {
+    const p = doc.value.entities.find(e => e.id === id) as any
+    if (p && p.kind === 'point' && !p.fixed && !isPointReferenced(doc.value, id)) deleteEntity(doc.value, id)
+  }
+  if (pp.anchors.length === 0) {
+    cleanupPendingPath()
+    pendingPath.value = null
+    pathDrag = null
+    cursor.value = null
+  }
+  if (doc.value.entities.length !== before) commitHistory()
+}
+
 function selectTool(t: Tool) {
   cleanupPendingPath()
   tool.value = t
@@ -851,6 +941,12 @@ onMounted(() => {
     redo: () => redo(),
     canUndo: () => canUndo(),
     canRedo: () => canRedo(),
+    // Task 2 test hooks — each mirrors the real onKeydown path exactly
+    // (Escape/Backspace/arrows) so E2E coverage is deterministic without
+    // dispatching real KeyboardEvents.
+    cancelPath: () => cancelPath(),
+    removeLastAnchor: () => removeLastAnchor(),
+    nudge: (dx: number, dy: number) => nudge(dx, dy),
   }
   ready.value = true
   initHistory()

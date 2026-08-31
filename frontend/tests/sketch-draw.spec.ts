@@ -378,3 +378,70 @@ test('undo/redo restores and reapplies drawing state', async ({ page }) => {
   expect(out.afterRedo).toBe(2)
   expect(out.afterTwoUndo).toBe(0)
 })
+
+test('path tool: removeLastAnchor steps back one anchor, cancelPath fully aborts with no ghost on undo', async ({ page }) => {
+  await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    const baseline = D.entityCount()
+    D.setTool('path')
+    D.pathDown(1, 1); D.pathUp(1, 1)   // anchor 0 — its own committed history entry
+    D.pathDown(4, 1); D.pathUp(4, 1)   // anchor 1 — another committed history entry
+    const afterTwo = D.entityCount()
+    const pendingAfterTwo = D.doc.entities.filter((e: any) => e.kind === 'point').length
+
+    D.removeLastAnchor()               // back to 1 anchor — still pending, not cancelled; commits
+    const pendingAfterBackspace = D.doc.entities.filter((e: any) => e.kind === 'point').length
+
+    D.cancelPath()                     // abort entirely — deletes anchor 0 too; must ALSO commit,
+                                        // or the next undo() below would skip straight over this
+                                        // step and resurrect the already-removed anchor 1 (the
+                                        // ghost-on-undo bug the brief calls out)
+    const afterCancel = D.entityCount()
+    const pathsAfterCancel = D.doc.entities.filter((e: any) => e.kind === 'path').length
+
+    // one undo() should land on the state right before cancelPath (anchor 0
+    // alone, baseline+1) — NOT jump past it back to baseline+2 (both anchors,
+    // including the already-removed anchor 1 reappearing as a ghost)
+    D.undo()
+    const afterUndo = D.entityCount()
+
+    return { baseline, afterTwo, pendingAfterTwo, pendingAfterBackspace, afterCancel, pathsAfterCancel, afterUndo }
+  })
+
+  expect(out.afterTwo).toBe(out.baseline + 2)          // two anchor points placed
+  expect(out.pendingAfterTwo).toBe(2)
+  expect(out.pendingAfterBackspace).toBe(1)             // removeLastAnchor dropped anchor 1
+  expect(out.pathsAfterCancel).toBe(0)                  // no path entity ever committed
+  expect(out.afterCancel).toBe(out.baseline)            // back to baseline — anchor 0 cleaned up too
+  expect(out.afterUndo).toBe(out.baseline + 1)          // steps back ONE state (anchor 0), no ghost jump
+})
+
+test('select a point and nudge() moves it by a world delta; undo restores it', async ({ page }) => {
+  await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('point'); D.place(4, 4)
+    const pt = D.doc.entities.find((e: any) => e.kind === 'point')
+    const before = { x: pt.x, y: pt.y }
+
+    D.clearSel(); D.pick(pt.id)
+    D.nudge(1, 0)
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const after = { x: P(pt.id).x, y: P(pt.id).y }
+
+    D.undo()
+    const restored = { x: P(pt.id).x, y: P(pt.id).y }
+
+    return { before, after, restored }
+  })
+
+  expect(out.after.x).toBeCloseTo(out.before.x + 1, 6)
+  expect(out.after.y).toBeCloseTo(out.before.y, 6)
+  expect(out.restored.x).toBeCloseTo(out.before.x, 6)
+  expect(out.restored.y).toBeCloseTo(out.before.y, 6)
+})
