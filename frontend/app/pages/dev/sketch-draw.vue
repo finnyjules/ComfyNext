@@ -151,6 +151,7 @@ function undo() {
   pendingPath.value = null
   pathDrag = null
   cursor.value = null
+  dimBuffer.value = ''
   status.value = 'undo'
 }
 function redo() {
@@ -163,6 +164,7 @@ function redo() {
   pendingPath.value = null
   pathDrag = null
   cursor.value = null
+  dimBuffer.value = ''
   status.value = 'redo'
 }
 function canUndo() { return histPtr.value > 0 }
@@ -180,7 +182,22 @@ function onKeydown(ev: KeyboardEvent) {
     return
   }
   if (ev.code === 'Space' || ev.key === ' ') { ev.preventDefault(); spaceHeld.value = true; return }
+
+  // type-a-dimension: a draw gesture is "active" whenever pendingPath is set
+  // — that covers both a pending line placement (rubber band to the next
+  // anchor) and a live arc bow (pathDrag.bowed), see pathDown/pathMove/pathUp.
+  // Digits + one decimal point accumulate into dimBuffer instead of doing
+  // anything else; meta-combos already returned above, so this never steals
+  // a Cmd/Ctrl+digit shortcut.
+  const gestureActive = tool.value === 'path' && !!pendingPath.value
+  if (gestureActive && /^[0-9]$/.test(ev.key)) { ev.preventDefault(); dimBuffer.value += ev.key; return }
+  if (gestureActive && ev.key === '.' && !dimBuffer.value.includes('.')) { ev.preventDefault(); dimBuffer.value += '.'; return }
+
   if (ev.key === 'Escape') {
+    // clearing a live dimension buffer takes priority over everything else —
+    // a first Escape just clears the typed value, a second (now-empty-buffer)
+    // Escape falls through to the normal marquee/pan/path-cancel handling.
+    if (dimBuffer.value) { dimBuffer.value = ''; return }
     // a live marquee drag or pan takes priority over path-cancel — abort
     // just that gesture (clear its state, no selection change, no doc
     // mutation) rather than falling through to cancelPath's path cleanup.
@@ -190,10 +207,16 @@ function onKeydown(ev: KeyboardEvent) {
     return
   }
   if (ev.key === 'Enter') {
+    if (gestureActive && dimBuffer.value) { ev.preventDefault(); commitDimension(); return }
     if (pendingPath.value && pendingPath.value.anchors.length >= 2) { ev.preventDefault(); finishPath(false) }
     return
   }
   if (ev.key === 'Backspace' || ev.key === 'Delete') {
+    if (ev.key === 'Backspace' && gestureActive && dimBuffer.value) {
+      ev.preventDefault()
+      dimBuffer.value = dimBuffer.value.slice(0, -1)
+      return
+    }
     ev.preventDefault()   // don't let the browser interpret Backspace as back-nav
     if (pendingPath.value) removeLastAnchor()
     else if (selection.value.length) del()
@@ -631,6 +654,14 @@ const pendingPath = ref<PendingPath>(null)
 // toggle is gone; the real gesture is now click-and-drag-to-bow (pathDown/Move/Up)
 const nextSegment = ref<'line' | 'arc'>('line')
 
+// type-a-dimension (Fusion-style): while a path draw gesture is live —
+// pendingPath.value set, either mid rubber-band (next line anchor) or mid
+// arc bow (pathDrag.bowed) — digit/decimal keys routed in onKeydown
+// accumulate here instead of driving the pointer. commitDimension() (below,
+// also a __sketchDraw test hook) applies it: RADIUS for a bowing arc, LENGTH
+// for a pending line anchor. See applyArcDimension/applyLineDimension.
+const dimBuffer = ref<string>('')
+
 // Shift-constrain (Illustrator/Figma-style): rotate `pt` about `prev` to the
 // nearest 45° increment, preserving the distance between them. Pure — no doc
 // reads/writes. Used for path line-segment placement only (see
@@ -790,33 +821,99 @@ function pathMove(x: number, y: number, shift = false) {
   if (dist({ x, y }, { x: pathDrag.startX, y: pathDrag.startY }) > 0.15) pathDrag.bowed = true
 }
 
+// Commits the currently-bowing segment (pathDrag.bowed) into an arc through
+// `pointer` — the "place the arc as usual" step shared by a normal pathUp
+// release and a typed-radius commit (applyArcDimension below), so the two
+// can't drift apart. Returns the new center point id, or null if bowArc
+// couldn't fit (near-collinear / enormous radius) or nothing is bowing —
+// callers treat null as "segment stayed a plain line, nothing to pin".
+function commitBowedSegment(pointer: Vec2): EntityId | null {
+  if (!pathDrag || !pathDrag.bowed) return null
+  const { anchor, prevAnchor } = pathDrag
+  const pp = pendingPath.value
+  if (!pp) return null
+  const segIndex = pp.segments.length - 1
+  const seg = pp.segments[segIndex]
+  const p0 = doc.value.entities.find(e => e.id === prevAnchor) as any
+  const p1 = doc.value.entities.find(e => e.id === anchor) as any
+  if (!seg || seg.kind !== 'line' || !p0 || !p1) return null
+  const joint = jointInfoForSegment(pp, segIndex)
+  const arc = bowArc({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, pointer, joint?.tangentDir ?? null)
+  if (!arc) return null
+  const c = addPoint(doc.value, arc.center.x, arc.center.y)
+  pp.segments[segIndex] = { kind: 'arc', center: c, sweep: arc.sweep }
+  // tangent-continuous with the previous segment: wire the joint constraint
+  // so the solver keeps the flow smooth after later drags (see brief §joint)
+  if (arc.snappedTangent && joint) {
+    if (joint.prevKind === 'arc') addConstraint(doc.value, 'collinear', [joint.Cprev, prevAnchor, c])
+    else addConstraint(doc.value, 'perpendicular', [joint.La, joint.Lb, prevAnchor, c])
+  }
+  return c
+}
+
 function pathUp(x: number, y: number) {
   if (!pathDrag) return
-  const { anchor, prevAnchor, bowed } = pathDrag
+  commitBowedSegment({ x, y })
   pathDrag = null
-  const pp = pendingPath.value
-  if (bowed && pp) {
-    const segIndex = pp.segments.length - 1
-    const seg = pp.segments[segIndex]
-    const p0 = doc.value.entities.find(e => e.id === prevAnchor) as any
-    const p1 = doc.value.entities.find(e => e.id === anchor) as any
-    if (seg && seg.kind === 'line' && p0 && p1) {
-      const joint = jointInfoForSegment(pp, segIndex)
-      const arc = bowArc({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, { x, y }, joint?.tangentDir ?? null)
-      if (arc) {
-        const c = addPoint(doc.value, arc.center.x, arc.center.y)
-        pp.segments[segIndex] = { kind: 'arc', center: c, sweep: arc.sweep }
-        // tangent-continuous with the previous segment: wire the joint constraint
-        // so the solver keeps the flow smooth after later drags (see brief §joint)
-        if (arc.snappedTangent && joint) {
-          if (joint.prevKind === 'arc') addConstraint(doc.value, 'collinear', [joint.Cprev, prevAnchor, c])
-          else addConstraint(doc.value, 'perpendicular', [joint.La, joint.Lb, prevAnchor, c])
-        }
-      }
-    }
-  }
   runSolve()
   commitHistory()   // one entry for the whole down→(bow)→up gesture
+}
+
+// --- type-a-dimension apply: RADIUS for a bowing arc, LENGTH for a pending
+// line anchor. Both reuse findRadiusPin (above, despite the arc-flavored
+// name — it just looks up an existing distance constraint between two point
+// ids) to update an existing pin in place rather than stacking a duplicate,
+// same as the M4 editable-chip path.
+
+// arc branch: place the arc exactly as pathUp would (commitBowedSegment,
+// through the live cursor position), then pin distance[center, startAnchor]
+// (prevAnchor — the arc segment's start, same pair resolveArcSegment/
+// setArcRadius use) to the typed radius and solve.
+function applyArcDimension(value: number): void {
+  if (!pathDrag || !pathDrag.bowed || !cursor.value) return
+  const prevAnchor = pathDrag.prevAnchor
+  const c = commitBowedSegment(cursor.value)
+  pathDrag = null
+  if (!c) return   // bowArc couldn't fit — segment stayed a line, nothing to pin
+  const existing = findRadiusPin(c, prevAnchor)
+  if (existing) existing.value = value
+  else addConstraint(doc.value, 'distance', [c, prevAnchor], value)
+  runSolve()
+  commitHistory()
+}
+
+// line branch: place a new anchor `value` world-units from the previous
+// anchor along the current cursor direction, add the line segment, then pin
+// distance[prevAnchor, newAnchor] to the typed length and solve.
+function applyLineDimension(value: number): void {
+  const pp = pendingPath.value
+  if (!pp || !cursor.value) return
+  const prevId = pp.anchors[pp.anchors.length - 1]!
+  const prev = doc.value.entities.find(e => e.id === prevId) as any
+  if (!prev || prev.kind !== 'point') return
+  const dx = cursor.value.x - prev.x, dy = cursor.value.y - prev.y
+  const d = Math.hypot(dx, dy)
+  const dir = d > 1e-9 ? { x: dx / d, y: dy / d } : { x: 1, y: 0 }   // cursor sitting on the anchor: fall back to +x
+  const id = placePoint(prev.x + dir.x * value, prev.y + dir.y * value, [prevId], guideMode.value)
+  pp.segments.push({ kind: 'line' })
+  pp.anchors.push(id)
+  const existing = findRadiusPin(prevId, id)
+  if (existing) existing.value = value
+  else addConstraint(doc.value, 'distance', [prevId, id], value)
+  runSolve()
+  commitHistory()
+}
+
+// Enter (onKeydown) and the __sketchDraw.commitDimension test hook both land
+// here: dispatch to the arc or line branch by which gesture is actually
+// live, then clear the buffer either way.
+function commitDimension(): void {
+  const raw = dimBuffer.value
+  dimBuffer.value = ''
+  const value = Number(raw)
+  if (!raw || !Number.isFinite(value) || value <= 0) return
+  if (pathDrag && pathDrag.bowed) applyArcDimension(value)
+  else if (pendingPath.value) applyLineDimension(value)
 }
 
 // closing segment between last and first anchors — the path tool always closes with a line.
@@ -827,6 +924,7 @@ function closingSegment(): SegmentSpec {
 function finishPath(close = false) {
   const pp = pendingPath.value
   pendingPath.value = null
+  dimBuffer.value = ''
   if (!pp || pp.anchors.length < 2) return
   if (close) {
     // closing segment of the current kind between last and first anchors
@@ -1032,9 +1130,28 @@ const pathBowChip = computed(() => {
   const arc = bowArc({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value, joint?.tangentDir ?? null)
   if (!arc) return null
   return {
-    x: sx(arc.mid.x), y: sy(arc.mid.y), text: `R ${arc.r.toFixed(1)}`,
+    x: sx(arc.mid.x), y: sy(arc.mid.y),
+    // type-a-dimension: while dimBuffer has a typed value, show it (with a
+    // trailing caret so it reads like a live input) instead of the measured
+    // radius — same chip, same position, just a different label.
+    text: dimBuffer.value ? dimBuffer.value + '|' : `R ${arc.r.toFixed(1)}`,
     snappedTangent: arc.snappedTangent, jointX: sx(p0.x), jointY: sy(p0.y),
   }
+})
+
+// type-a-dimension: the line-length counterpart to pathBowChip, above.
+// Unlike the arc bow there's no pre-existing live length readout for a
+// straight rubber-band segment, so this chip only appears once dimBuffer has
+// something in it — nothing renders while the buffer is empty.
+const lineDimChip = computed(() => {
+  if (tool.value !== 'path' || !dimBuffer.value) return null
+  if (pathDrag && pathDrag.bowed) return null   // the arc bow owns the chip via pathBowChip instead
+  const pp = pendingPath.value
+  if (!pp || !cursor.value) return null
+  const last = screenPt(pp.anchors[pp.anchors.length - 1]!)
+  if (!last) return null
+  const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
+  return { x: (last.x + ptr.x) / 2, y: (last.y + ptr.y) / 2, text: dimBuffer.value + '|' }
 })
 
 // pointer handling
@@ -1320,6 +1437,7 @@ function cancelPath() {
   pendingPath.value = null
   pathDrag = null
   cursor.value = null
+  dimBuffer.value = ''
 }
 
 // Backspace/Delete while a path is pending: step back ONE anchor (undo the
@@ -1362,6 +1480,7 @@ function selectTool(t: Tool) {
   pendingPath.value = null
   pathDrag = null
   cursor.value = null
+  dimBuffer.value = ''
 }
 
 function reset() {
@@ -1373,6 +1492,7 @@ function reset() {
   pendingPath.value = null
   pathDrag = null
   cursor.value = null
+  dimBuffer.value = ''
   status.value = 'ready'
   initHistory()
 }
@@ -1449,6 +1569,12 @@ onMounted(() => {
     // Task 3 test hook: mirrors a constraint-badge click's removal path
     // exactly (removeConstraint + solve + commit) — see removeConstraintById.
     removeConstraintById: (id: EntityId) => removeConstraintById(id),
+    // Task 6 test hooks — type-a-dimension: typeDimension sets the buffer
+    // directly (bypassing onKeydown's per-key routing), commitDimension
+    // applies it via the exact same code path Enter uses.
+    get dimBuffer() { return dimBuffer.value },
+    typeDimension: (str: string) => { dimBuffer.value = str },
+    commitDimension: () => commitDimension(),
   }
   ready.value = true
   initHistory()
@@ -1557,6 +1683,10 @@ onUnmounted(() => {
       <g v-if="pathBowChip && pathBowChip.snappedTangent" pointer-events="none">
         <rect :x="pathBowChip.jointX + 6" :y="pathBowChip.jointY - 16" width="16" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="pathBowChip.jointX + 9" :y="pathBowChip.jointY - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">T</text>
+      </g>
+      <g v-if="lineDimChip" pointer-events="none">
+        <rect :x="lineDimChip.x - 18" :y="lineDimChip.y - 20" width="40" height="14" rx="3" fill="#111827" opacity="0.85" />
+        <text :x="lineDimChip.x - 15" :y="lineDimChip.y - 9" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ lineDimChip.text }}</text>
       </g>
       <rect v-if="marqueeRect" :x="marqueeRect.x" :y="marqueeRect.y" :width="marqueeRect.w" :height="marqueeRect.h"
             fill="rgba(37,99,235,0.08)" stroke="#2563eb" stroke-width="1" stroke-dasharray="4 3" pointer-events="none" data-marquee />

@@ -1295,3 +1295,91 @@ test('Guide mode places construction geometry; guide points stay snap targets; g
   // ...while the real (non-guide) path still exports
   expect(info.svgLength).toBeGreaterThan(0)
 })
+
+test('type-a-dimension: LINE — typed value sets the exact segment length, pinned by a distance constraint', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const info = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    D.pathDown(2, 2); D.pathUp(2, 2)   // first anchor — a plain click, no bow
+    const startId = D.doc.entities.find((e: any) => e.kind === 'point').id
+    D.pathMove(2, 10)                 // live cursor sets the next segment's direction (straight up)
+
+    D.typeDimension('5')
+    const bufferWhileTyping = D.dimBuffer
+    D.commitDimension()
+    const bufferAfter = D.dimBuffer
+    D.finishPath(false)
+
+    const d = D.doc
+    const pts = d.entities.filter((e: any) => e.kind === 'point')
+    // identify the two anchors by id (captured before the solve moves anything)
+    // rather than by position — commitDimension's solve is free to redistribute
+    // the pinned distance across BOTH endpoints, so a post-solve position match
+    // on the start anchor would be flaky.
+    const start = pts.find((p: any) => p.id === startId)
+    const distCon = d.constraints.find((c: any) => c.kind === 'distance' && c.refs.includes(startId))
+    const endId = distCon ? distCon.refs.find((id: string) => id !== startId) : null
+    const end = pts.find((p: any) => p.id === endId)
+    const length = start && end ? Math.hypot(end.x - start.x, end.y - start.y) : null
+
+    return {
+      bufferWhileTyping, bufferAfter, pointCount: pts.length,
+      hasPin: !!distCon, pinnedValue: distCon?.value, length, status: D.status(),
+    }
+  })
+
+  expect(info.bufferWhileTyping).toBe('5')   // chip shows the typed value while composing
+  expect(info.bufferAfter).toBe('')          // commit clears the buffer
+  expect(info.pointCount).toBe(2)            // just the two anchors — no extra geometry
+  expect(info.hasPin).toBe(true)             // a distance constraint pins the two anchors
+  expect(info.pinnedValue).toBeCloseTo(5, 5)
+  expect(info.length).toBeCloseTo(5, 2)      // the placed segment's ACTUAL length matches
+  expect(info.status).toMatch(/^solved/)
+})
+
+test('type-a-dimension: ARC — typed value sets the exact radius, pinned by distance[center, startAnchor]', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const info = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    D.pathDown(0, 0)     // first anchor
+    D.pathDown(4, 0)     // second anchor — starts a line segment + the drag gesture
+    D.pathMove(2, 2)     // past the bow threshold from (4,0) → pathDrag.bowed becomes true
+    const startId = D.doc.entities.find((e: any) => Math.abs(e.x - 0) < 1e-6 && Math.abs(e.y - 0) < 1e-6 && e.kind === 'point').id
+
+    D.typeDimension('3')
+    const bufferWhileTyping = D.dimBuffer
+    D.commitDimension()
+    const bufferAfter = D.dimBuffer
+
+    const d = D.doc
+    const pts = d.entities.filter((e: any) => e.kind === 'point')
+    const start = pts.find((p: any) => p.id === startId)
+    const distCon = d.constraints.find((c: any) => c.kind === 'distance' && c.refs.includes(startId))
+    const centerId = distCon ? distCon.refs.find((id: string) => id !== startId) : null
+    const center = pts.find((p: any) => p.id === centerId)
+    const radius = center && start ? Math.hypot(center.x - start.x, center.y - start.y) : null
+
+    return {
+      bufferWhileTyping, bufferAfter, pointCount: pts.length,
+      hasPin: !!distCon, pinnedValue: distCon?.value, radius, status: D.status(),
+    }
+  })
+
+  expect(info.bufferWhileTyping).toBe('3')
+  expect(info.bufferAfter).toBe('')
+  expect(info.pointCount).toBe(3)            // start anchor, end anchor, arc center
+  expect(info.hasPin).toBe(true)             // distance[center, startAnchor] pins the radius
+  expect(info.pinnedValue).toBeCloseTo(3, 5)
+  expect(info.radius).toBeCloseTo(3, 2)      // ACTUAL dist(center, startAnchor) matches — the codebase's own radius definition (see sketchPath.ts pathD)
+  expect(info.status).toMatch(/^solved/)
+})
