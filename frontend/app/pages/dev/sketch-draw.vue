@@ -103,6 +103,13 @@ const history = ref<SketchDoc[]>([])
 const histPtr = ref(-1)
 function initHistory() { history.value = [cloneDoc(doc.value)]; histPtr.value = 0 }
 function commitHistory() {
+  // no-op guard: a settle that left `doc` structurally identical to the
+  // current top-of-history entry (dragging a fixed point, Delete with an
+  // empty selection, re-pinning a chip to its existing value, …) must not
+  // push a duplicate snapshot — that would leave a dead undo step that
+  // visibly "does nothing" the first time the user hits ⌘Z.
+  const top = history.value[histPtr.value]
+  if (top && JSON.stringify(top) === JSON.stringify(doc.value)) return
   // drop any redo tail, push a fresh snapshot
   history.value = history.value.slice(0, histPtr.value + 1)
   history.value.push(cloneDoc(doc.value))
@@ -114,6 +121,10 @@ function undo() {
   histPtr.value--
   doc.value = cloneDoc(history.value[histPtr.value]!)
   clearSel()
+  pending.value = null
+  pendingPath.value = null
+  pathDrag = null
+  cursor.value = null
   status.value = 'undo'
 }
 function redo() {
@@ -121,6 +132,10 @@ function redo() {
   histPtr.value++
   doc.value = cloneDoc(history.value[histPtr.value]!)
   clearSel()
+  pending.value = null
+  pendingPath.value = null
+  pathDrag = null
+  cursor.value = null
   status.value = 'redo'
 }
 function canUndo() { return histPtr.value > 0 }

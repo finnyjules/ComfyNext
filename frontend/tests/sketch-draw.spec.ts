@@ -462,6 +462,90 @@ test('path tool: selectTool (toolbar tool switch) cleans up a pending path AND c
   expect(out.idsAfterUndo).toEqual(out.idsAfterTwo)       // ...both original anchors, not a partial ghost
 })
 
+// M4 review Fix 1: undo()/redo() used to leave `pendingPath` (and pathDrag)
+// intact after rolling `doc` back — every anchor placement commits history,
+// so a mid-draw ⌘Z rewinds the doc to before the pending anchors while
+// `pendingPath.anchors` still names those now-absent ids. The NEXT anchor
+// placement then continues the stale pendingPath (it's still non-null), and
+// finishPath builds a path entity whose `anchors` array names a point id
+// that no longer exists in the doc — a dangling reference. Without the fix
+// (undo/redo now null pendingPath/pending/pathDrag/cursor, same as
+// selectTool/cancelPath), this exact sequence produces a 'path' entity with
+// 4 anchors, one of them dangling; with the fix, undo discards the pending
+// draw entirely, so the single anchor placed afterward is too few to finish
+// a path and finishPath(false) is a no-op.
+test('path tool: undo mid-draw clears the pending path — no dangling-anchor corruption on finish', async ({ page }) => {
+  await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    // place 3 anchors of ONE still-open path — none of these commits a
+    // 'path' entity; they're pending anchors accumulating in pendingPath
+    D.pathDown(1, 1); D.pathUp(1, 1)   // anchor 0
+    D.pathDown(4, 1); D.pathUp(4, 1)   // anchor 1
+    D.pathDown(4, 4); D.pathUp(4, 4)   // anchor 2
+    const afterThree = D.entityCount()
+
+    D.undo()                            // rewind mid-draw, past anchor 2's placement
+    const afterUndo = D.entityCount()
+
+    // "place a 4th anchor": with pendingPath cleared by the fix, this starts
+    // a BRAND NEW path with just this one anchor — too few to finish. Under
+    // the bug, it instead continues the stale 3-anchor pendingPath (whose
+    // last anchor no longer exists post-undo), reaching 4 anchors — enough
+    // for finishPath to build a corrupt path entity.
+    D.pathDown(7, 7); D.pathUp(7, 7)
+    const afterFourth = D.entityCount()
+
+    D.finishPath(false)
+    const status = D.status()
+    const paths = D.doc.entities.filter((e: any) => e.kind === 'path')
+    const pointIds = new Set(D.doc.entities.filter((e: any) => e.kind === 'point').map((e: any) => e.id))
+    const danglingAnchors = paths.flatMap((p: any) => p.anchors).filter((id: string) => !pointIds.has(id))
+
+    return { afterThree, afterUndo, afterFourth, status, pathCount: paths.length, danglingAnchors }
+  })
+
+  expect(out.afterThree).toBeGreaterThan(out.afterUndo)   // undo actually rewound the doc
+  // the fix: undo cleared pendingPath, so the next single anchor placement
+  // starts a fresh path (1 anchor) — too few for finishPath to build
+  // anything at all, let alone a corrupt one
+  expect(out.pathCount).toBe(0)
+  expect(out.danglingAnchors).toEqual([])                 // no path anchor ever names a missing point
+  expect(out.status).not.toMatch(/^NOT converged/)        // no corrupt path ever reached the solver
+})
+
+// M4 review Fix 2: commitHistory() used to push a snapshot on every settle,
+// even when the action was a genuine no-op (Delete with an empty selection,
+// dragging a fixed point, etc.) — a dead undo step that visibly "does
+// nothing" the first time ⌘Z is pressed. Now it compares against the current
+// top-of-history entry and skips the push when nothing changed.
+test('commitHistory: a no-op action (Delete with empty selection) does not push a dead undo step', async ({ page }) => {
+  await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('point'); D.place(2, 2)
+    const afterPlace = D.entityCount()
+
+    D.clearSel()
+    D.del()                             // selection is empty — must be a true no-op
+    const afterNoopDelete = D.entityCount()
+
+    D.undo()                            // a single undo must land straight on the empty doc —
+    const afterOneUndo = D.entityCount() // NOT get stuck on a duplicate "afterNoopDelete" entry
+
+    return { afterPlace, afterNoopDelete, afterOneUndo }
+  })
+
+  expect(out.afterPlace).toBe(1)
+  expect(out.afterNoopDelete).toBe(1)   // nothing selected — nothing deleted
+  expect(out.afterOneUndo).toBe(0)      // one undo fully reverts the point placement
+})
+
 test('select a point and nudge() moves it by a world delta; undo restores it', async ({ page }) => {
   await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
   await page.waitForFunction(() => !!(window as any).__sketchDraw)
