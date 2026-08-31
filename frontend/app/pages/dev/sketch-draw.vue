@@ -75,12 +75,26 @@ function availableConstraints(): { kind: ConstraintKind; label: string; value?: 
   if (ids.length === 1 && count('circle') === 1) {
     out.push({ kind: 'radius', label: 'Radius…', value: true })
   }
+  if (ids.length === 2 && count('line') === 2) {
+    out.push({ kind: 'perpendicular', label: 'Perpendicular' }, { kind: 'parallel', label: 'Parallel' })
+  }
   return out
 }
 
 // refs order per kind (matches residuals.ts contract)
 function orderRefs(kind: ConstraintKind, ids: EntityId[]): EntityId[] {
   const ent = (id: EntityId) => doc.value.entities.find(e => e.id === id)!
+  if (kind === 'perpendicular' || kind === 'parallel') {
+    // both refs are two LINE entity ids (from the two-lines-selected gate in
+    // availableConstraints) — the residual wants 4 POINT refs: each line's
+    // anchors, [L1.p1, L1.p2, L2.p1, L2.p2]. Fall back to the raw ids
+    // (shouldn't happen given the gate) if either isn't actually a line.
+    if (ids.length === 2) {
+      const l1 = ent(ids[0]!), l2 = ent(ids[1]!)
+      if (l1.kind === 'line' && l2.kind === 'line') return [l1.p1, l1.p2, l2.p1, l2.p2]
+    }
+    return ids.slice()
+  }
   if (kind === 'tangentLineCircle' || kind === 'pointOnLine') {
     // [line|point-then-line]: for tangentLineCircle → [line, circle]; for pointOnLine → [point, line]
     if (kind === 'tangentLineCircle') return ids.slice().sort(a => (ent(a).kind === 'line' ? -1 : 1))

@@ -202,3 +202,33 @@ test('tangent joint: arc snaps tangent to the previous line and stays smooth', a
   expect(out.dotAfter).toBeLessThan(0.05)        // still tangent after dragging the line
   expect(out.d).toContain(' A ')
 })
+
+test('select two lines at an angle and apply perpendicular via the API', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // two lines at an arbitrary (non-perpendicular, non-parallel) angle
+    D.setTool('line'); D.place(1, 1); D.place(8, 2)     // line A, shallow slope
+    D.setTool('line'); D.place(2, 6); D.place(6, 9)      // line B, steep slope
+
+    const lines = D.doc.entities.filter((e: any) => e.kind === 'line')
+    D.clearSel(); D.pick(lines[0].id); D.pick(lines[1].id)
+    const verbs = D.availableConstraints().map((v: any) => v.kind)
+
+    D.apply('perpendicular')
+
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const [l1, l2] = lines.map((l: any) => ({ p1: P(l.p1), p2: P(l.p2) }))
+    const dot = (l1.p2.x - l1.p1.x) * (l2.p2.x - l2.p1.x) + (l1.p2.y - l1.p1.y) * (l2.p2.y - l2.p1.y)
+    return { verbs, cons: D.constraintCount(), status: D.status(), dot }
+  })
+
+  expect(out.verbs).toContain('perpendicular')
+  expect(out.verbs).toContain('parallel')
+  expect(out.status).toMatch(/^solved/)
+  expect(Math.abs(out.dot)).toBeLessThan(0.01)   // direction vectors now orthogonal
+})
