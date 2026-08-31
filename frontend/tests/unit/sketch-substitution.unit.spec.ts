@@ -141,3 +141,55 @@ describe('copy-point substitution: parity with the constraint semantics', () => 
     expect(Math.hypot(...constraintResiduals(d))).toBeLessThan(1e-5)
   })
 })
+
+describe('copy-point substitution: chain-rule is load-bearing', () => {
+  // The tests above are all BASE-determined: the base point is dragged (or
+  // pinned) directly, and the copy is only ever checked AFTER the fact. They'd
+  // still pass with a broken derivedGradients() chain-rule block, because the
+  // solver's convergence gate is the TRUE residual (constraintResiduals over
+  // the live, forward-substituted doc) — a wrong Jacobian only risks slower or
+  // failed convergence, never a wrong-but-"converged" answer, since a bogus
+  // descent direction just gets rejected by the LM accept/reject step.
+  //
+  // This test instead puts the ONLY hard constraint on the COPY and leaves the
+  // base fully free, so the solver has no way to place the base correctly
+  // except by chain-ruling that constraint's Jacobian back through R(θ)/(I−R(θ))
+  // onto the base's x/y columns. If that block were wrong, the Gauss-Newton
+  // step direction would not point the base toward the analytic solution and
+  // (for this small, well-conditioned, EXACTLY-determined 2-eq/2-unknown linear
+  // system) the solve reliably fails to converge — see the corrupt-and-confirm
+  // check in the PR description; this is intentionally NOT re-asserted here
+  // (there is no public seam to inject a broken derivedGradients from a spec).
+  it('a hard constraint on the COPY drives the free BASE to the analytically-known position', () => {
+    const d: SketchDoc = { entities: [], constraints: [] }
+    const center = addPoint(d, 0, 0, { fixed: true })
+    const base = addPoint(d, 1, 1) // free; deliberately far from the solution
+    const copy = addPoint(d, 0, 0) // derived once solved — position is irrelevant here
+    addConstraint(d, 'rotatedFrom', [copy, base, center], 90)
+
+    // Pin the copy to a fixed target T=(0,4). Since copy = rot90(base) about
+    // the origin = (−base.y, base.x), coincident[copy, T] is only satisfiable
+    // by base = (4, 0):
+    //   −base.y = 0  ⇒ base.y = 0
+    //    base.x = 4  ⇒ base.x = 4
+    // copy's defining rotatedFrom rule is EXCLUDED from the active residual set
+    // (satisfied by forward substitution), so the ONLY hard residual the
+    // solver optimizes is coincident[copy, T] — and copy is not a free slot at
+    // all, so hitting that residual is impossible without the chain rule
+    // routing it onto base's px/py columns.
+    const target = addPoint(d, 0, 4, { fixed: true })
+    addConstraint(d, 'coincident', [copy, target])
+
+    const res = solve(d, { maxIter: 80 })
+    expect(res.converged).toBe(true)
+
+    const bp = getPoint(d, base)!
+    expect(bp.x).toBeCloseTo(4, 3)
+    expect(bp.y).toBeCloseTo(0, 3)
+
+    // and, independently, the copy itself really landed on the target
+    const cp = getPoint(d, copy)!
+    expect(cp.x).toBeCloseTo(0, 3)
+    expect(cp.y).toBeCloseTo(4, 3)
+  })
+})

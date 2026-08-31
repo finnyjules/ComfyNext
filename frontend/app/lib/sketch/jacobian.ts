@@ -242,6 +242,7 @@ function rowsFor(map: EntityMap, c: SketchConstraint): JacEntry[][] | null {
       for (const [pt, comp] of coords) {
         const orig = pt[comp]
         pt[comp] = orig + h
+        // Safe: `base` above already proved L >= 1e-12, and an h=1e-6 perturbation can't cross that threshold.
         const plus = reflectAcrossLine(og.x, og.y, e.a.x, e.a.y, e.b.x, e.b.y)!
         pt[comp] = orig - h
         const minus = reflectAcrossLine(og.x, og.y, e.a.x, e.a.y, e.b.x, e.b.y)!
