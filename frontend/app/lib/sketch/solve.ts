@@ -1,6 +1,7 @@
 import type { SketchDoc, EntityId, PointEntity, CircleEntity } from './model'
 import { constraintResiduals } from './residuals'
 import { solveLinear } from './linalg'
+import { buildJacobian } from './jacobian'
 
 export interface DragTarget { point: EntityId; x: number; y: number }
 export interface SolveOptions { maxIter?: number; tol?: number; drag?: DragTarget }
@@ -109,16 +110,20 @@ export function solve(doc: SketchDoc, opts: SolveOptions = {}): SolveResult {
     const hardNorm = norm(r.slice(0, r0.hardLen))
     if (hardNorm < tol) break
 
-    // numerical Jacobian J (m x n) via forward differences
+    // analytic Jacobian J (m x n): closed-form partials for the hard
+    // constraints (see jacobian.ts) plus the regularization rows
+    // (∂reg_j/∂q_j = W_REG, diagonal) — same structure the old
+    // finite-difference Jacobian produced, just computed without probing.
+    // doc's entities already hold q (residualAt(q) above wrote them via
+    // writeSlots before evaluating constraintResiduals), so buildJacobian
+    // reads the correct state directly.
     const m = r.length
-    const h = 1e-6
-    const J: number[][] = Array.from({ length: m }, () => new Array(n).fill(0))
+    const J: number[][] = buildJacobian(doc, slots) // fresh array each call — safe to extend in place
     for (let j = 0; j < n; j++) {
-      const qj = q.slice(); qj[j]! += h
-      const rj = residualAt(qj).combined
-      for (let i = 0; i < m; i++) J[i]![j] = (rj[i]! - r[i]!) / h
+      const row = new Array(n).fill(0)
+      row[j] = W_REG
+      J.push(row)
     }
-    writeSlots(slots, q) // restore q after probing
 
     // Gauss-Newton normal equations with LM damping: (JᵀJ + λI) δ = −Jᵀr
     const JtJ: number[][] = Array.from({ length: n }, () => new Array(n).fill(0))
