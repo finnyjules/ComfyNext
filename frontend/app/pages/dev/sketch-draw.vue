@@ -33,8 +33,10 @@ type Pending =
 const pending = ref<Pending>(null)
 
 // live path pointer position, world coords — drives the in-progress draw
-// preview (previewD below); null when not hovering with the path tool
-const cursor = ref<{ x: number; y: number } | null>(null)
+// preview (previewD below); null when not hovering with the path tool.
+// `shift` carries the pointer event's shiftKey through to the preview so the
+// rubber-band segment can show the 45°-snapped position live (see previewD).
+const cursor = ref<{ x: number; y: number; shift: boolean } | null>(null)
 
 const selection = ref<EntityId[]>([])
 function pick(id: EntityId) {
@@ -240,8 +242,35 @@ const pendingPath = ref<PendingPath>(null)
 // toggle is gone; the real gesture is now click-and-drag-to-bow (pathDown/Move/Up)
 const nextSegment = ref<'line' | 'arc'>('line')
 
-function pathClick(x: number, y: number) {
-  const id = placePoint(x, y)
+// Shift-constrain (Illustrator/Figma-style): rotate `pt` about `prev` to the
+// nearest 45° increment, preserving the distance between them. Pure — no doc
+// reads/writes. Used for path line-segment placement only (see
+// pathPlacementXY and previewD's rubber-band branch); arc-bow drags ignore it.
+function snapAngle(prev: Vec2, pt: Vec2): Vec2 {
+  const d = dist(prev, pt)
+  if (d < 1e-9) return pt
+  const ang = Math.atan2(pt.y - prev.y, pt.x - prev.x)
+  const snapped = Math.round(ang / (Math.PI / 4)) * (Math.PI / 4)
+  return { x: prev.x + d * Math.cos(snapped), y: prev.y + d * Math.sin(snapped) }
+}
+
+// World placement for a path-tool click/pointerdown: with Shift held and a
+// previous anchor to measure against, angle-snap the raw pointer position
+// (see snapAngle) before it reaches placePoint's own near-geometry snap —
+// angle-snap wins, but placePoint can still coincide with the snapped spot if
+// it happens to land on existing geometry. The path's first anchor (no prior
+// anchor yet) is never snapped — there's nothing to measure the angle from.
+function pathPlacementXY(x: number, y: number, shift: boolean): Vec2 {
+  const pp = pendingPath.value
+  if (!shift || !pp || pp.anchors.length === 0) return { x, y }
+  const prev = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
+  if (!prev || prev.kind !== 'point') return { x, y }
+  return snapAngle({ x: prev.x, y: prev.y }, { x, y })
+}
+
+function pathClick(x: number, y: number, shift = false) {
+  const p = pathPlacementXY(x, y, shift)
+  const id = placePoint(p.x, p.y)
   if (!pendingPath.value) { pendingPath.value = { anchors: [id], segments: [] }; return }
   const pp = pendingPath.value
   const prev = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
@@ -320,8 +349,9 @@ function jointInfoForSegment(pp: { anchors: EntityId[]; segments: SegmentSpec[] 
 type PathDrag = { anchor: EntityId; prevAnchor: EntityId; startX: number; startY: number; bowed: boolean } | null
 let pathDrag: PathDrag = null
 
-function pathDown(x: number, y: number) {
-  const id = placePoint(x, y)
+function pathDown(x: number, y: number, shift = false) {
+  const p = pathPlacementXY(x, y, shift)
+  const id = placePoint(p.x, p.y)
   if (!pendingPath.value) {
     pendingPath.value = { anchors: [id], segments: [] }
     pathDrag = null
@@ -336,10 +366,10 @@ function pathDown(x: number, y: number) {
   pathDrag = { anchor: id, prevAnchor, startX: x, startY: y, bowed: false }
 }
 
-function pathMove(x: number, y: number) {
+function pathMove(x: number, y: number, shift = false) {
   // reactive — drives previewD/pathBowChip live, whether this came from a
   // real pointermove or a direct __sketchDraw.pathMove() call (tests)
-  cursor.value = { x, y }
+  cursor.value = { x, y, shift }
   if (!pathDrag) return
   if (dist({ x, y }, { x: pathDrag.startX, y: pathDrag.startY }) > 0.15) pathDrag.bowed = true
 }
@@ -527,8 +557,16 @@ const previewD = computed(() => {
   }
   if (!bowing && cursor.value) {
     const last = screenPt(lastAnchorId)
+    const lastWorld = doc.value.entities.find(e => e.id === lastAnchorId) as any
     if (last) {
-      const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
+      // Shift held → show the 45°-snapped cursor position, not the raw one,
+      // so the rubber-band preview matches where pathDown/pathClick will
+      // actually place the anchor (scope: line-segment placement, not
+      // mid-bow — `bowing` above already excludes the arc-drag branch).
+      const cursorWorld = cursor.value.shift && lastWorld && lastWorld.kind === 'point'
+        ? snapAngle({ x: lastWorld.x, y: lastWorld.y }, cursor.value)
+        : cursor.value
+      const ptr = { x: sx(cursorWorld.x), y: sy(cursorWorld.y) }
       d += ` M ${last.x} ${last.y} L ${ptr.x} ${ptr.y}`
     }
   }
@@ -605,7 +643,7 @@ function entityPathScreen(id: EntityId): string {
 function onPointerDownSvg(ev: PointerEvent) {
   if (tool.value === 'select') return
   const { x, y } = svgXY(ev)
-  if (tool.value === 'path') { pathDown(x, y); return }
+  if (tool.value === 'path') { pathDown(x, y, ev.shiftKey); return }
   place(x, y)
 }
 function onPointerMove(ev: PointerEvent) {
@@ -613,7 +651,7 @@ function onPointerMove(ev: PointerEvent) {
     // always track too — drives the rubber-band hover preview even when not
     // mid-drag, and the live bow while pathDrag is active
     const { x, y } = svgXY(ev)
-    pathMove(x, y)
+    pathMove(x, y, ev.shiftKey)
     return
   }
   if (!dragId || ev.buttons === 0) return
@@ -696,6 +734,12 @@ onMounted(() => {
     pathDown: (x: number, y: number) => pathDown(x, y),
     pathMove: (x: number, y: number) => pathMove(x, y),
     pathUp: (x: number, y: number) => pathUp(x, y),
+    // test-only hook: same code path as a real shift-click pointerdown on the
+    // path tool (pathDown with shift=true) — real pointer events carry
+    // shiftKey directly, but the __sketchDraw API otherwise has no way to
+    // express a modifier key, so this exists purely for deterministic E2E
+    // coverage of the 45° angle snap (see tests/sketch-draw.spec.ts).
+    placeShift: (x: number, y: number) => pathDown(x, y, true),
     drag: (id: EntityId, x: number, y: number) => runSolve({ point: id, x, y }),
     pick: (id: EntityId) => pick(id),
     clearSel: () => clearSel(),

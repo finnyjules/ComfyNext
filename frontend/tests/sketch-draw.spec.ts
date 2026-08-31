@@ -272,3 +272,55 @@ test('select a bent path\'s corner and apply Right angle via the API', async ({ 
   expect(out.status).toMatch(/^solved/)
   expect(Math.abs(out.dot)).toBeLessThan(0.01)   // the two segment directions are now orthogonal
 })
+
+test('path: Shift constrains a placed segment to the nearest 45° increment', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    D.pathDown(2, 2); D.pathUp(2, 2)      // first anchor, plain click
+    // shift-place near-horizontal — should snap the segment flat to y=2
+    D.placeShift(9, 2.4)
+    D.pathUp(9, 2.4)
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const a0 = P(path.anchors[0]), a1 = P(path.anchors[1])
+    return { a0, a1, segKinds: path.segments.map((s: any) => s.kind) }
+  })
+
+  expect(out.segKinds).toEqual(['line'])
+  // axis-aligned: dy is (near-)zero, dx is not — the raw click's dy (0.4) is gone
+  expect(Math.abs(out.a1.y - out.a0.y)).toBeLessThan(1e-6)
+  expect(out.a1.y).toBeCloseTo(2, 6)
+  expect(Math.abs(out.a1.x - out.a0.x)).toBeGreaterThan(1)
+})
+
+test('path: Shift snaps a near-vertical segment to exactly vertical', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    D.pathDown(3, 1); D.pathUp(3, 1)      // first anchor
+    // shift-place near-vertical (small x drift) — should snap flat to x=3
+    D.placeShift(3.3, 8)
+    D.pathUp(3.3, 8)
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const a0 = P(path.anchors[0]), a1 = P(path.anchors[1])
+    return { a0, a1 }
+  })
+
+  expect(Math.abs(out.a1.x - out.a0.x)).toBeLessThan(1e-6)
+  expect(out.a1.x).toBeCloseTo(3, 6)
+  expect(Math.abs(out.a1.y - out.a0.y)).toBeGreaterThan(1)
+})
