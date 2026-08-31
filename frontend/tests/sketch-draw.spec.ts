@@ -1502,3 +1502,67 @@ test('selectTool: switching from select to a draw tool clears a stale segment se
   expect(out.segsBeforeSwitch.length).toBe(2)
   expect(out.segsAfterSwitch).toEqual([])
 })
+
+// badge declutter (M-declutter): STRUCTURAL/auto constraint kinds
+// (rotatedFrom from Repeat, equalDist auto-added for the arc segment) must
+// never render a badge — they're the bulk of the clutter on a many-petal
+// drawing (a 24-petal mandala buries itself under hundreds of ↻/E badges) —
+// while a genuine user-facing badge (Horizontal, applied to the unit's line
+// segment here) still shows. The Labels toggle then hides EVERY chip layer
+// (constraint badges + arc radius chips) at once, and restores them.
+test('badge declutter: structural constraint kinds hidden; Labels toggle hides/restores all chips', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // fixed center to repeat about
+    D.setTool('point'); D.place(8, 6)
+    const ctr = D.doc.entities.find((e: any) => e.kind === 'point').id
+    D.doc.entities.find((e: any) => e.id === ctr).fixed = true
+    // unit: line + arc via the path tool — the arc segment auto-adds an
+    // equalDist constraint on commit (see edit.ts addPath)
+    D.setTool('path')
+    D.place(8, 1); D.place(8, 3)                // line segment
+    D.setNextSegment('arc'); D.place(10.5, 4.5) // arc segment
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    // give the unit's line segment a real, user-facing Horizontal badge
+    D.pickSegment(path.id, 0)
+    D.apply('horizontal')
+    // repeat 4x about the center — each copy gets its own rotatedFrom
+    // (structural) constraints, plus the copied Horizontal constraint
+    D.repeat([path.id], ctr, 4)
+  })
+
+  // timing-lenient: query after a tick so the repeat's render has settled
+  await page.waitForTimeout(50)
+
+  // --- Labels ON (default) ---
+  const kindsOn = await page.$$eval('[data-constraint-kind]', els => els.map(e => e.getAttribute('data-constraint-kind')))
+  expect(kindsOn.length).toBeGreaterThan(0)
+  expect(kindsOn).not.toContain('rotatedFrom')   // structural — hidden
+  expect(kindsOn).not.toContain('equalDist')     // structural — hidden
+  expect(kindsOn).toContain('horizontal')        // user-facing — still shown, on every copy
+
+  const textsOn = await page.$$eval('svg text', els => els.map(e => e.textContent || ''))
+  expect(textsOn.some(t => t.includes('↻'))).toBe(false)   // rotatedFrom's glyph never rendered
+
+  // --- Labels OFF: no badge/chip renders at all ---
+  await page.evaluate(() => (window as any).__sketchDraw.setShowLabels(false))
+  await page.waitForTimeout(50)
+  const badgesOff = await page.$$eval('svg g[data-constraint]', els => els.length)
+  expect(badgesOff).toBe(0)
+  const anyTextOff = await page.$$eval('svg text', els => els.length)
+  expect(anyTextOff).toBe(0)   // no marks, no arc-radius chips — nothing at all
+
+  // --- Labels back ON: badges return ---
+  await page.evaluate(() => (window as any).__sketchDraw.setShowLabels(true))
+  await page.waitForTimeout(50)
+  const kindsRestored = await page.$$eval('[data-constraint-kind]', els => els.map(e => e.getAttribute('data-constraint-kind')))
+  expect(kindsRestored).toContain('horizontal')
+  expect(kindsRestored).not.toContain('rotatedFrom')
+  expect(kindsRestored).not.toContain('equalDist')
+})

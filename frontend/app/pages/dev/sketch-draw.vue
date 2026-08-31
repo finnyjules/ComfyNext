@@ -26,6 +26,16 @@ const guideMode = ref(false)
 function toggleGuideMode() { guideMode.value = !guideMode.value }
 function setGuideMode(on: boolean) { guideMode.value = on }
 
+// Labels toggle: while ON (default), every persistent annotation layer
+// renders — constraint badges (visibleMarks) and arc radius chips (arcDims).
+// While OFF, none of them do — a clean view of the raw drawing for a large
+// composition (e.g. a many-petal mandala) where the badges pile up and bury
+// the geometry. VIEW state only, like guideMode's viewport siblings — never
+// touches `doc` or history (see commitHistory's own contract).
+const showLabels = ref(true)
+function toggleShowLabels() { showLabels.value = !showLabels.value }
+function setShowLabels(on: boolean) { showLabels.value = on }
+
 // world→screen: viewport is VIEW state, not model — pan/zoom never touch
 // `doc` or history (see commitHistory below; undo must never undo a zoom/pan).
 // Defaults match the old fixed constants: 34px/unit, origin lower-left of a
@@ -1074,6 +1084,18 @@ const constructionScreen = computed(() => {
 })
 const pts = computed(() => doc.value.entities.filter(e => e.kind === 'point') as any[])
 const marks = computed(() => constraintMarks(doc.value))
+// STRUCTURAL/auto constraint kinds — internal copy-rule bookkeeping (Repeat's
+// rotatedFrom, Mirror's mirroredFrom) and arc-integrity plumbing (equalDist,
+// which also backs the user-facing "Equal" verb on two lines — see
+// availableConstraints — so it can't be dropped from the model, only hidden
+// from this badge layer) that nobody clicks to remove by hand. These are the
+// bulk of badge clutter on a many-petal Repeat/Mirror drawing (a 24-petal
+// mandala buries itself under hundreds of ↻/E badges); filtering them out of
+// the render is display-only — removeConstraintById still allows removing
+// them by kind (see its own comment), just not via a badge that no longer
+// exists for them.
+const STRUCTURAL_MARK_KINDS: ConstraintKind[] = ['rotatedFrom', 'mirroredFrom', 'equalDist']
+const visibleMarks = computed(() => marks.value.filter(m => !STRUCTURAL_MARK_KINDS.includes(m.kind)))
 // persistent "R n.n" radius chips on every finished arc segment — pure read of
 // the doc, never solves; distinct from pathBowChip's live during-drag chip
 const arcDims = computed(() => arcDimensionMarks(doc.value))
@@ -1585,6 +1607,10 @@ onMounted(() => {
     // construction geometry directly (see place/pathClick/pathDown/finishPath).
     get guideMode() { return guideMode.value },
     setGuideMode: (on: boolean) => setGuideMode(on),
+    // Labels toggle test hook — mirrors the toolbar button's own setter
+    // exactly (see showLabels/setShowLabels above); VIEW state, no history.
+    get showLabels() { return showLabels.value },
+    setShowLabels: (on: boolean) => setShowLabels(on),
     reset,
     place: (x: number, y: number) => place(x, y),
     pathDown: (x: number, y: number) => pathDown(x, y),
@@ -1677,6 +1703,11 @@ onUnmounted(() => {
                         border: guideMode ? '1px dashed #60a5fa' : '1px solid #333',
                         background: guideMode ? '#152036' : '#1a1a1a',
                         color: guideMode ? '#93c5fd' : '#9ca3af' }">Guide: {{ guideMode ? 'on' : 'off' }}</button>
+      <button data-act="labels" @click="toggleShowLabels" :title="'Toggle constraint badges + dimension chips (declutter a large drawing)'"
+              :style="{ padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                        border: showLabels ? '1px dashed #60a5fa' : '1px solid #333',
+                        background: showLabels ? '#152036' : '#1a1a1a',
+                        color: showLabels ? '#93c5fd' : '#9ca3af' }">Labels: {{ showLabels ? 'on' : 'off' }}</button>
       <button data-act="reset" @click="reset" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer">reset</button>
       <span data-status style="margin-left: 8px; font-size: 12px; color: #9ca3af">{{ status }}</span>
     </div>
@@ -1739,18 +1770,20 @@ onUnmounted(() => {
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
               @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)"
               :data-point="p.id" :data-construction="p.construction ? '' : null" />
-      <g v-for="m in marks" :key="m.id" class="constraint-badge" pointer-events="auto" style="cursor: pointer"
-         :data-constraint="m.id" :data-constraint-kind="m.kind"
-         @pointerdown.stop @click.stop="onConstraintMarkClick(m, $event)">
-        <title>{{ m.text != null ? 'click to edit · shift+click to remove' : 'click to remove' }}</title>
-        <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" :width="m.text ? 30 : 16" height="14" rx="3" fill="#111827" opacity="0.85" />
-        <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.glyph }}{{ m.text ? ' ' + m.text : '' }}</text>
-      </g>
-      <g v-for="m in arcDims" :key="m.id" pointer-events="auto" style="cursor: pointer"
-         @pointerdown.stop @click.stop="onArcDimClick(m)">
-        <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" width="34" height="14" rx="3" fill="#111827" opacity="0.85" />
-        <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.text }}</text>
-      </g>
+      <template v-if="showLabels">
+        <g v-for="m in visibleMarks" :key="m.id" class="constraint-badge" pointer-events="auto" style="cursor: pointer"
+           :data-constraint="m.id" :data-constraint-kind="m.kind"
+           @pointerdown.stop @click.stop="onConstraintMarkClick(m, $event)">
+          <title>{{ m.text != null ? 'click to edit · shift+click to remove' : 'click to remove' }}</title>
+          <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" :width="m.text ? 30 : 16" height="14" rx="3" fill="#111827" opacity="0.85" />
+          <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.glyph }}{{ m.text ? ' ' + m.text : '' }}</text>
+        </g>
+        <g v-for="m in arcDims" :key="m.id" pointer-events="auto" style="cursor: pointer"
+           @pointerdown.stop @click.stop="onArcDimClick(m)">
+          <rect :x="sx(m.x) + 6" :y="sy(m.y) - 16" width="34" height="14" rx="3" fill="#111827" opacity="0.85" />
+          <text :x="sx(m.x) + 9" :y="sy(m.y) - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ m.text }}</text>
+        </g>
+      </template>
       <g v-if="pathBowChip" pointer-events="none">
         <rect :x="pathBowChip.x - 18" :y="pathBowChip.y - 20" width="40" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="pathBowChip.x - 15" :y="pathBowChip.y - 9" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">{{ pathBowChip.text }}</text>
