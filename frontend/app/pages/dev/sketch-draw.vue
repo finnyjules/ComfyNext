@@ -2,7 +2,7 @@
 <script setup lang="ts">
 // Dev harness — not linked in the app. Interactive constraint drawing surface.
 definePageMeta({ layout: false })
-import { ref, computed, onMounted, toRaw } from 'vue'
+import { ref, computed, onMounted, onUnmounted, toRaw } from 'vue'
 import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
 import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, isPointReferenced } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents, tangentJointArc } from '~/lib/sketch/infer'
@@ -10,6 +10,7 @@ import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist, type Vec2 } from '~/lib/sketch/geom'
 import { constraintMarks, arcDimensionMarks } from '~/lib/sketch/annotate'
+import { cloneDoc } from '~/lib/sketch/clone'
 
 type Tool = 'select' | 'point' | 'line' | 'circle' | 'path'
 
@@ -45,6 +46,47 @@ function pick(id: EntityId) {
   else selection.value.push(id)
 }
 function clearSel() { selection.value = [] }
+
+// --- undo/redo history: plain snapshots of `doc`, taken after every
+// mutating action settles. `histPtr` points at the entry matching the
+// current `doc.value`; undo/redo just move it and restore that snapshot.
+const history = ref<SketchDoc[]>([])
+const histPtr = ref(-1)
+function initHistory() { history.value = [cloneDoc(doc.value)]; histPtr.value = 0 }
+function commitHistory() {
+  // drop any redo tail, push a fresh snapshot
+  history.value = history.value.slice(0, histPtr.value + 1)
+  history.value.push(cloneDoc(doc.value))
+  histPtr.value = history.value.length - 1
+  if (history.value.length > 200) { history.value.shift(); histPtr.value-- }
+}
+function undo() {
+  if (histPtr.value <= 0) return
+  histPtr.value--
+  doc.value = cloneDoc(history.value[histPtr.value]!)
+  clearSel()
+  status.value = 'undo'
+}
+function redo() {
+  if (histPtr.value >= history.value.length - 1) return
+  histPtr.value++
+  doc.value = cloneDoc(history.value[histPtr.value]!)
+  clearSel()
+  status.value = 'redo'
+}
+function canUndo() { return histPtr.value > 0 }
+function canRedo() { return histPtr.value < history.value.length - 1 }
+
+function onKeydown(ev: KeyboardEvent) {
+  const el = document.activeElement
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
+  const meta = ev.metaKey || ev.ctrlKey
+  if (!meta) return
+  const key = ev.key.toLowerCase()
+  if (key === 'z' && !ev.shiftKey) { ev.preventDefault(); undo(); return }
+  if ((key === 'z' && ev.shiftKey) || key === 'y') { ev.preventDefault(); redo(); return }
+  // (Task 2 extends this with Esc/Enter/Backspace/Delete/arrows)
+}
 
 function selKinds(): string[] {
   return selection.value.map(id => doc.value.entities.find(e => e.id === id)?.kind ?? '?')
@@ -145,6 +187,7 @@ function apply(kind: ConstraintKind, value?: number) {
   addConstraint(doc.value, kind, refs, value)
   clearSel()
   runSolve()
+  commitHistory()
 }
 
 function applyWithValue(v: { kind: ConstraintKind; label: string; value?: boolean }) {
@@ -160,6 +203,7 @@ function del() {
   for (const id of [...selection.value]) deleteEntity(doc.value, id)
   clearSel()
   runSolve()
+  commitHistory()
 }
 
 // Solve on a plain (non-reactive) snapshot — every inner-loop read/write in the
@@ -204,21 +248,25 @@ function place(x: number, y: number) {
   if (tool.value === 'point') {
     placePoint(x, y)
     runSolve()
+    commitHistory()
   } else if (tool.value === 'line') {
     if (!pending.value || pending.value.kind !== 'line') {
       const p1 = placePoint(x, y)
       pending.value = { kind: 'line', p1 }
+      commitHistory()
     } else {
       const p2 = placePoint(x, y, [pending.value.p1])
       if (p2 !== pending.value.p1) addLine(doc.value, pending.value.p1, p2)
       pending.value = null
       runSolve()
+      commitHistory()
     }
   } else if (tool.value === 'circle') {
     if (!pending.value || pending.value.kind !== 'circle') {
       const center = placePoint(x, y)
       const c = doc.value.entities.find(e => e.id === center) as any
       pending.value = { kind: 'circle', center, cx: c.x, cy: c.y }
+      commitHistory()
     } else {
       const r = Math.max(0.2, dist({ x, y }, { x: pending.value.cx, y: pending.value.cy }))
       const cid = addCircle(doc.value, pending.value.center, r)
@@ -228,6 +276,7 @@ function place(x: number, y: number) {
       }
       pending.value = null
       runSolve()
+      commitHistory()
     }
   } else if (tool.value === 'path') {
     pathClick(x, y)
@@ -292,10 +341,10 @@ function pathPlacementXY(x: number, y: number, shift: boolean): Vec2 {
 function pathClick(x: number, y: number, shift = false) {
   const p = pathPlacementXY(x, y, shift)
   const id = placePoint(p.x, p.y)
-  if (!pendingPath.value) { pendingPath.value = { anchors: [id], segments: [] }; return }
+  if (!pendingPath.value) { pendingPath.value = { anchors: [id], segments: [] }; commitHistory(); return }
   const pp = pendingPath.value
   const prev = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
-  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); return }  // clicked first anchor → close
+  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); return }  // clicked first anchor → close (finishPath commits)
   if (id === pp.anchors[pp.anchors.length - 1]) return                               // ignore double-click same point
   if (nextSegment.value === 'arc') {
     const cur = doc.value.entities.find(e => e.id === id) as any
@@ -308,6 +357,7 @@ function pathClick(x: number, y: number, shift = false) {
     pp.segments.push({ kind: 'line' })
   }
   pp.anchors.push(id)
+  commitHistory()
 }
 
 // Free (or tangent-joint-locked) arc through/near (J, end, pointer) in world
@@ -376,15 +426,19 @@ function pathDown(x: number, y: number, shift = false) {
   if (!pendingPath.value) {
     pendingPath.value = { anchors: [id], segments: [] }
     pathDrag = null
+    commitHistory()   // first anchor of a fresh path — a complete, standalone placement
     return
   }
   const pp = pendingPath.value
-  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); pathDrag = null; return }  // clicked first anchor → close
+  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); pathDrag = null; return }  // clicked first anchor → close (finishPath commits)
   if (id === pp.anchors[pp.anchors.length - 1]) { pathDrag = null; return }                            // ignore double-click same point
   const prevAnchor = pp.anchors[pp.anchors.length - 1]!
   pp.segments.push({ kind: 'line' })
   pp.anchors.push(id)
   if (shift) captureAxisConstraint(prevAnchor, id)
+  // don't commit here — this anchor+segment (and any shift-captured axis
+  // constraint) settle as ONE history entry together with whatever pathUp
+  // does next (a plain click, or bowing the segment into an arc)
   pathDrag = { anchor: id, prevAnchor, startX: x, startY: y, bowed: false }
 }
 
@@ -422,6 +476,7 @@ function pathUp(x: number, y: number) {
     }
   }
   runSolve()
+  commitHistory()   // one entry for the whole down→(bow)→up gesture
 }
 
 // closing segment between last and first anchors — the path tool always closes with a line.
@@ -444,6 +499,7 @@ function finishPath(close = false) {
   }
   addPath(doc.value, pp.anchors, pp.segments, close)
   runSolve()
+  commitHistory()
 }
 
 function doRepeat(count: number) {
@@ -451,7 +507,7 @@ function doRepeat(count: number) {
   const entSel = selection.value.filter(id => !ptSel.includes(id))
   if (ptSel.length !== 1 || entSel.length === 0 || !Number.isFinite(count) || count < 2) return
   repeatEntities(doc.value, entSel, ptSel[0]!, Math.round(count))
-  clearSel(); runSolve()
+  clearSel(); runSolve(); commitHistory()
 }
 function repeatPrompt() {
   const raw = window.prompt('Repeat count?', '6')
@@ -463,7 +519,7 @@ function doMirror() {
   const entSel = selection.value.filter(id => !lineSel.includes(id))
   if (lineSel.length !== 1 || entSel.length === 0) return
   mirrorEntities(doc.value, entSel, lineSel[0]!)
-  clearSel(); runSolve()
+  clearSel(); runSolve(); commitHistory()
 }
 function flip(axis: 'h' | 'v') {
   const ptIds = pointClosure(doc.value, selection.value)
@@ -474,13 +530,21 @@ function flip(axis: 'h' | 'v') {
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
   for (const p of pts) { if (axis === 'h') p.x = 2 * cx - p.x; else p.y = 2 * cy - p.y }
   runSolve()
+  commitHistory()
 }
 function makeConstruction() {
   for (const id of selection.value) {
     const e = doc.value.entities.find(x => x.id === id) as any
     if (e && e.kind !== 'point') e.construction = !e.construction
   }
-  clearSel(); runSolve()
+  clearSel(); runSolve(); commitHistory()
+}
+function fixSelected() {
+  for (const id of selection.value) {
+    const e = doc.value.entities.find(x => x.id === id) as any
+    if (e && e.kind === 'point') e.fixed = true
+  }
+  clearSel(); runSolve(); commitHistory()
 }
 function copySvg(): string {
   const d = sketchPathData(doc.value)
@@ -695,7 +759,13 @@ function onPointerUp(ev: PointerEvent) {
     pathUp(x, y)
     return
   }
+  // settle a select-tool point drag as ONE history entry — release can land
+  // off the point circle (onPointerUpPoint never fires then), so this is the
+  // single reliable place to commit; `moved` isn't reset by onPointerUpPoint,
+  // so this still fires correctly when release does land back on the point.
+  if (tool.value === 'select' && moved) commitHistory()
   dragId = null; dragHandleIds = []; dragLast = null
+  moved = false
 }
 function onPointerLeaveSvg(ev: PointerEvent) {
   onPointerUp(ev)
@@ -739,6 +809,7 @@ function reset() {
   pathDrag = null
   cursor.value = null
   status.value = 'ready'
+  initHistory()
 }
 
 onMounted(() => {
@@ -762,7 +833,7 @@ onMounted(() => {
     // express a modifier key, so this exists purely for deterministic E2E
     // coverage of the 45° angle snap (see tests/sketch-draw.spec.ts).
     placeShift: (x: number, y: number) => pathDown(x, y, true),
-    drag: (id: EntityId, x: number, y: number) => runSolve({ point: id, x, y }),
+    drag: (id: EntityId, x: number, y: number) => { runSolve({ point: id, x, y }); commitHistory() },
     pick: (id: EntityId) => pick(id),
     clearSel: () => clearSel(),
     apply: (kind: ConstraintKind, value?: number) => apply(kind, value),
@@ -770,15 +841,22 @@ onMounted(() => {
     availableConstraints: () => availableConstraints(),
     setNextSegment: (k: 'line' | 'arc') => { nextSegment.value = k },
     finishPath: (close = false) => finishPath(close),
-    repeat: (ids: EntityId[], centerId: EntityId, count: number) => { repeatEntities(doc.value, ids, centerId, count); runSolve() },
-    mirror: (ids: EntityId[], axisId: EntityId) => { mirrorEntities(doc.value, ids, axisId); runSolve() },
+    repeat: (ids: EntityId[], centerId: EntityId, count: number) => { repeatEntities(doc.value, ids, centerId, count); runSolve(); commitHistory() },
+    mirror: (ids: EntityId[], axisId: EntityId) => { mirrorEntities(doc.value, ids, axisId); runSolve(); commitHistory() },
     flipH: () => flip('h'),
     flipV: () => flip('v'),
     makeConstruction: () => makeConstruction(),
     copySvg: () => copySvg(),
+    undo: () => undo(),
+    redo: () => redo(),
+    canUndo: () => canUndo(),
+    canRedo: () => canRedo(),
   }
   ready.value = true
+  initHistory()
+  window.addEventListener('keydown', onKeydown)
 })
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -804,7 +882,7 @@ onMounted(() => {
       <button v-for="v in availableConstraints()" :key="v.kind" :data-verb="v.kind"
               @click="() => applyWithValue(v)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">{{ v.label }}</button>
-      <button v-if="selection.length" data-verb="fix" @click="() => { for (const id of selection) { const e = doc.entities.find(x => x.id === id); if (e && e.kind === 'point') (e as any).fixed = true } clearSel(); runSolve() }"
+      <button v-if="selection.length" data-verb="fix" @click="fixSelected"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Fix</button>
       <button v-if="selection.length" data-verb="repeat" @click="repeatPrompt"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">Repeat…</button>

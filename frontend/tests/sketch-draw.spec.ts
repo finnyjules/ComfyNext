@@ -357,3 +357,24 @@ test('path: Shift-snapped horizontal segment captures a persistent constraint th
   expect(out.status).toMatch(/^solved/)
   expect(Math.abs(out.a1.y - out.a0.y)).toBeLessThan(0.01)
 })
+
+test('undo/redo restores and reapplies drawing state', async ({ page }) => {
+  await page.goto('/dev/sketch-draw'); await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('point'); D.place(2, 2); D.place(5, 5)   // two points
+    const after2 = D.entityCount()
+    D.undo()                                            // remove 2nd point
+    const afterUndo = D.entityCount()
+    D.redo()                                            // bring it back
+    const afterRedo = D.entityCount()
+    D.undo(); D.undo()                                  // back to empty (both points gone)
+    return { after2, afterUndo, afterRedo, afterTwoUndo: D.entityCount() }
+  })
+  expect(out.after2).toBe(2)
+  expect(out.afterUndo).toBe(1)
+  expect(out.afterRedo).toBe(2)
+  expect(out.afterTwoUndo).toBe(0)
+})
