@@ -232,3 +232,43 @@ test('select two lines at an angle and apply perpendicular via the API', async (
   expect(out.status).toMatch(/^solved/)
   expect(Math.abs(out.dot)).toBeLessThan(0.01)   // direction vectors now orthogonal
 })
+
+test('select a bent path\'s corner and apply Right angle via the API', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // a bent path — 3 anchors, 2 line segments, an arbitrary non-90 corner
+    // angle. pathDown/pathUp with no move in between keeps both segments
+    // straight lines (no bow past the drag threshold).
+    D.setTool('path')
+    D.pathDown(1, 1); D.pathUp(1, 1)      // a0
+    D.pathDown(5, 1); D.pathUp(5, 1)      // a1 — corner
+    D.pathDown(7, 5); D.pathUp(7, 5)      // a2
+    D.finishPath(false)
+
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    const corner = path.anchors[1]
+
+    D.clearSel(); D.pick(corner)
+    const verbs = D.availableConstraints()
+    const hasRightAngle = verbs.some((v: any) => v.kind === 'perpendicular' && v.label === 'Right angle')
+
+    D.apply('perpendicular')
+
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const a0 = P(path.anchors[0]), a1 = P(path.anchors[1]), a2 = P(path.anchors[2])
+    const u = { x: a1.x - a0.x, y: a1.y - a0.y }
+    const v = { x: a2.x - a1.x, y: a2.y - a1.y }
+    const dot = u.x * v.x + u.y * v.y
+    return { hasRightAngle, segKinds: path.segments.map((s: any) => s.kind), status: D.status(), dot }
+  })
+
+  expect(out.segKinds).toEqual(['line', 'line'])
+  expect(out.hasRightAngle).toBe(true)
+  expect(out.status).toMatch(/^solved/)
+  expect(Math.abs(out.dot)).toBeLessThan(0.01)   // the two segment directions are now orthogonal
+})

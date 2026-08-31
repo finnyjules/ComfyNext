@@ -48,6 +48,30 @@ function selKinds(): string[] {
   return selection.value.map(id => doc.value.entities.find(e => e.id === id)?.kind ?? '?')
 }
 
+// interior line-line corner of a path at anchor `pointId`: the previous and
+// next anchors along the path, when both segments meeting at it are straight
+// lines (an arc has no fixed direction at the joint, so any corner touching
+// one is excluded). Open path: only a true interior anchor qualifies (not the
+// first/last, which have just one adjacent segment). Closed path: any anchor
+// qualifies, wrapping around. Returns the first path entity where this holds,
+// or null if `pointId` isn't such a corner on any path.
+function pathCornerInfo(pointId: EntityId): { prev: EntityId; corner: EntityId; next: EntityId } | null {
+  for (const e of doc.value.entities) {
+    if (e.kind !== 'path') continue
+    const n = e.anchors.length
+    for (let i = 0; i < n; i++) {
+      if (e.anchors[i] !== pointId) continue
+      if (!e.closed && (i === 0 || i === n - 1)) continue
+      const prevSeg = e.segments[(i - 1 + n) % n]
+      const nextSeg = e.segments[i]
+      if (!prevSeg || !nextSeg) continue
+      if (prevSeg.kind !== 'line' || nextSeg.kind !== 'line') continue
+      return { prev: e.anchors[(i - 1 + n) % n]!, corner: pointId, next: e.anchors[(i + 1) % n]! }
+    }
+  }
+  return null
+}
+
 // which verbs apply to the current selection (order = display order)
 function availableConstraints(): { kind: ConstraintKind; label: string; value?: boolean }[] {
   const ids = selection.value
@@ -78,6 +102,9 @@ function availableConstraints(): { kind: ConstraintKind; label: string; value?: 
   if (ids.length === 2 && count('line') === 2) {
     out.push({ kind: 'perpendicular', label: 'Perpendicular' }, { kind: 'parallel', label: 'Parallel' })
   }
+  if (ids.length === 1 && count('point') === 1 && pathCornerInfo(ids[0]!)) {
+    out.push({ kind: 'perpendicular', label: 'Right angle' })
+  }
   return out
 }
 
@@ -92,6 +119,13 @@ function orderRefs(kind: ConstraintKind, ids: EntityId[]): EntityId[] {
     if (ids.length === 2) {
       const l1 = ent(ids[0]!), l2 = ent(ids[1]!)
       if (l1.kind === 'line' && l2.kind === 'line') return [l1.p1, l1.p2, l2.p1, l2.p2]
+    }
+    // single selected point that's a line-line path corner (the "Right angle"
+    // gate above) — refs are [prev, corner, corner, next] so the shared
+    // residual reads it as two segment directions meeting at `corner`.
+    if (kind === 'perpendicular' && ids.length === 1) {
+      const corner = pathCornerInfo(ids[0]!)
+      if (corner) return [corner.prev, corner.corner, corner.corner, corner.next]
     }
     return ids.slice()
   }
