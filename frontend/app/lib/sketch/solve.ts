@@ -1,7 +1,8 @@
 import type { SketchDoc, EntityId, PointEntity, CircleEntity } from './model'
 import { constraintResiduals } from './residuals'
 import { solveLinear } from './linalg'
-import { buildJacobian } from './jacobian'
+import { buildJacobian, buildJacobianSubstituted } from './jacobian'
+import { analyzeDerived, forwardSubstitute, buildEntityMap } from './substitute'
 
 export interface DragTarget { point: EntityId; x: number; y: number }
 export interface SolveOptions { maxIter?: number; tol?: number; drag?: DragTarget }
@@ -14,13 +15,15 @@ type Slot =
 
 const W_REG = 1e-4
 
-// Which scalars are free to move. Fixed points and the dragged point are held.
-// Captures the entity OBJECT reference per slot so later reads/writes skip the O(E) find.
-function buildSlots(doc: SketchDoc, held: Set<EntityId>): Slot[] {
+// Which scalars are free to move. Fixed points, the dragged point, and DERIVED
+// (copy) points are held. Captures the entity OBJECT reference per slot so
+// later reads/writes skip the O(E) find. `derivedIds` is empty for non-repeat
+// docs, making this identical to the pre-substitution slot set.
+function buildSlots(doc: SketchDoc, held: Set<EntityId>, derivedIds: Set<EntityId>): Slot[] {
   const slots: Slot[] = []
   for (const e of doc.entities) {
     if (e.kind === 'point') {
-      if (e.fixed || held.has(e.id)) continue
+      if (e.fixed || held.has(e.id) || derivedIds.has(e.id)) continue
       slots.push({ kind: 'px', id: e.id, e }, { kind: 'py', id: e.id, e })
     } else if (e.kind === 'circle') {
       slots.push({ kind: 'r', id: e.id, e })
@@ -72,17 +75,33 @@ export function solve(doc: SketchDoc, opts: SolveOptions = {}): SolveResult {
     if (p && p.kind === 'point') { p.x = opts.drag.x; p.y = opts.drag.y }
   }
 
-  const slots = buildSlots(doc, held)
+  // Copy-point substitution: pull rotate/mirror copies out of the free set.
+  // For non-repeat docs `rules` is empty and everything below degenerates to
+  // the original solver path (no derived slots, no excluded constraints, the
+  // forward-substitution and column-chaining are no-ops).
+  const { rules, order, excluded } = analyzeDerived(doc, held)
+  const derivedIds = new Set(rules.keys())
+  const emap = buildEntityMap(doc)
+  // The residual set the solver actually optimizes: all constraints EXCEPT the
+  // defining rules of derived points (those are satisfied exactly by forward
+  // substitution). Same array reference when nothing is excluded → identical.
+  const activeConstraints = excluded.size ? doc.constraints.filter(c => !excluded.has(c.id)) : doc.constraints
+  const activeDoc: SketchDoc = { entities: doc.entities, constraints: activeConstraints }
+
+  const slots = buildSlots(doc, held, derivedIds)
   const q0 = readSlots(slots)     // reference for regularization (warm start)
   let q = q0.slice()
   const n = slots.length
 
   // full residual vector at parameter q: hard constraints + regularization.
-  // Returns the hard-residual length alongside the combined vector so callers
-  // can slice out the hard-only part instead of re-evaluating constraintResiduals.
+  // Writes the free params, forward-substitutes derived points to their exact
+  // rule positions, then scores the FILTERED constraint set. Returns the
+  // hard-residual length alongside the combined vector so callers can slice out
+  // the hard-only part instead of re-evaluating constraintResiduals.
   const residualAt = (qv: number[]): { combined: number[]; hardLen: number } => {
     writeSlots(slots, qv)
-    const hard = constraintResiduals(doc)
+    if (order.length) forwardSubstitute(emap, order, rules)
+    const hard = constraintResiduals(activeDoc)
     const reg = qv.map((v, i) => W_REG * (v - q0[i]!))
     return { combined: [...hard, ...reg], hardLen: hard.length }
   }
@@ -92,7 +111,8 @@ export function solve(doc: SketchDoc, opts: SolveOptions = {}): SolveResult {
   let rNorm = norm(residualAt(q).combined)
 
   if (n === 0) {
-    const hn = norm(constraintResiduals(doc))
+    if (order.length) forwardSubstitute(emap, order, rules)
+    const hn = norm(constraintResiduals(activeDoc))
     const converged = hn < 1e-3
     if (!converged) restore(doc, snap)
     return { converged, iterations: 0, residualNorm: hn }
@@ -118,7 +138,11 @@ export function solve(doc: SketchDoc, opts: SolveOptions = {}): SolveResult {
     // writeSlots before evaluating constraintResiduals), so buildJacobian
     // reads the correct state directly.
     const m = r.length
-    const J: number[][] = buildJacobian(doc, slots) // fresh array each call — safe to extend in place
+    // Substituted analytic Jacobian over the free (base) slots. With no derived
+    // points this is identical to buildJacobian(doc, slots) over doc.constraints.
+    const J: number[][] = derivedIds.size
+      ? buildJacobianSubstituted(doc, slots, activeConstraints, rules)
+      : buildJacobian(doc, slots) // fresh array each call — safe to extend in place
     for (let j = 0; j < n; j++) {
       const row = new Array(n).fill(0)
       row[j] = W_REG

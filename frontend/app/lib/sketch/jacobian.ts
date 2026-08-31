@@ -19,6 +19,8 @@
 // also refuse to score).
 
 import type { SketchDoc, SketchConstraint, SketchEntity, PointEntity, LineEntity, CircleEntity, EntityId } from './model'
+import type { DerivedRule } from './substitute'
+import { derivedGradients } from './substitute'
 
 type EntityMap = Map<EntityId, SketchEntity>
 
@@ -331,6 +333,65 @@ export function buildJacobian(doc: SketchDoc, slots: SlotRef[]): number[][] {
         const idx = colIndex.get(slotKey(entry.param.id, entry.param.comp))
         if (idx != null) rv[idx] += entry.d
       }
+      out.push(rv)
+    }
+  }
+  return out
+}
+
+// Substituted Jacobian: same as buildJacobian, but (a) iterates a FILTERED
+// constraint list (the defining rules of derived points are excluded — they
+// hold exactly by construction) and (b) chain-rules any partial against a
+// DERIVED point back onto that point's source parameters. A JacEntry whose
+// `id` is a derived point D is replaced by entries against D's sources,
+// multiplied by ∂D/∂source (from substitute.ts:derivedGradients) — recursively,
+// so a source that is itself derived is expanded in turn (dependency order in
+// the derived map guarantees termination). Rows follow the filtered
+// constraint order exactly (chaining only remaps columns, never rows), so the
+// row layout still matches constraintResiduals over the same filtered set.
+//
+// With an empty `derived` map this is identical to buildJacobian over
+// `constraints`.
+export function buildJacobianSubstituted(
+  doc: SketchDoc,
+  slots: SlotRef[],
+  constraints: SketchConstraint[],
+  derived: Map<EntityId, DerivedRule>,
+): number[][] {
+  const map: EntityMap = new Map()
+  for (const e of doc.entities) map.set(e.id, e)
+
+  const colIndex = new Map<string, number>()
+  slots.forEach((s, i) => colIndex.set(slotKey(s.id, s.kind), i))
+  const n = slots.length
+
+  // Cache each derived point's gradient blocks for this build (mirror blocks
+  // depend on current geometry, so they're recomputed per build, once per id).
+  const gradCache = new Map<EntityId, { gx: { id: EntityId; comp: ParamComp; d: number }[]; gy: { id: EntityId; comp: ParamComp; d: number }[] }>()
+  const gradOf = (id: EntityId) => {
+    let g = gradCache.get(id)
+    if (!g) { g = derivedGradients(derived.get(id)!, map); gradCache.set(id, g) }
+    return g
+  }
+
+  const addEntry = (rv: number[], id: EntityId, comp: ParamComp, d: number): void => {
+    if (comp !== 'r' && derived.has(id)) {
+      const g = gradOf(id)
+      const cs = comp === 'px' ? g.gx : g.gy
+      for (const ct of cs) addEntry(rv, ct.id, ct.comp, d * ct.d)
+      return
+    }
+    const idx = colIndex.get(slotKey(id, comp))
+    if (idx != null) rv[idx] = (rv[idx] ?? 0) + d
+  }
+
+  const out: number[][] = []
+  for (const c of constraints) {
+    const rows = rowsFor(map, c)
+    if (!rows) continue
+    for (const row of rows) {
+      const rv = new Array(n).fill(0)
+      for (const entry of row) addEntry(rv, entry.param.id, entry.param.comp, entry.d)
       out.push(rv)
     }
   }

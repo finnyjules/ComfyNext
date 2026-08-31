@@ -212,3 +212,63 @@ describe('solve perf (mandala scale)', () => {
     expect(mean).toBeLessThan(1000)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Copy-point substitution lever (substitute.ts + jacobian.ts:buildJacobianSubstituted).
+// A 181-point mandala (repeat×36) whose ~175 copy points are DERIVED from a
+// 5-point base unit. Substitution collapses the free-parameter set from ~360
+// to ~10, so the O(n³) dense solve that dominated wall time (measured ~680ms
+// full-free in-CI on this exact doc) becomes a few-parameter solve.
+// ---------------------------------------------------------------------------
+
+// 5-point unit + 4 internal distances (base unit is non-rigid → base points
+// genuinely solve), rotated ×36 around a fixed center → 1 + 5×36 = 181 points,
+// 175 of them derived copies of the 5 base points.
+function buildBigMandalaDoc(): { doc: SketchDoc; dragId: string } {
+  const doc: SketchDoc = { entities: [], constraints: [] }
+  const rc = addPoint(doc, 0, 0, { fixed: true })
+  const a = addPoint(doc, 3, 0)
+  const b = addPoint(doc, 5, 1)
+  const c = addPoint(doc, 4, 3)
+  const d = addPoint(doc, 6, 2)
+  const e = addPoint(doc, 2, 2)
+  addConstraint(doc, 'distance', [a, b], Math.hypot(2, 1))
+  addConstraint(doc, 'distance', [b, c], Math.hypot(1, 2))
+  addConstraint(doc, 'distance', [c, d], Math.hypot(2, 1))
+  addConstraint(doc, 'distance', [d, e], Math.hypot(4, 0))
+  const copies = repeatEntities(doc, [a, b, c, d, e], rc, 36)
+  expect(copies).toHaveLength(35)
+  return { doc, dragId: a }
+}
+
+describe('solve perf (mandala-scale substitution)', () => {
+  it('builds the 181-point repeat×36 doc', () => {
+    const { doc } = buildBigMandalaDoc()
+    expect(doc.entities.filter(e => e.kind === 'point').length).toBe(181)
+  })
+
+  it('drag-solves a 181-point mandala in a few ms (mean < 50ms) via copy-point substitution', () => {
+    const { doc, dragId } = buildBigMandalaDoc()
+    solve(doc, { maxIter: 120, drag: { point: dragId, x: 3, y: 0 } }) // warm-up
+
+    const N = 8
+    const times: number[] = []
+    const results: boolean[] = []
+    for (let i = 0; i < N; i++) {
+      const angle = (i / N) * Math.PI * 2
+      const t0 = performance.now()
+      const res = solve(doc, { maxIter: 120, drag: { point: dragId, x: 3 + 0.4 * Math.cos(angle), y: 0.4 * Math.sin(angle) } })
+      times.push(performance.now() - t0)
+      results.push(res.converged)
+    }
+
+    expect(results.every(Boolean)).toBe(true)
+    const mean = times.reduce((s, t) => s + t, 0) / times.length
+    // eslint-disable-next-line no-console
+    console.log(`[mandala×36 perf] substituted drag-solve mean=${mean.toFixed(2)}ms (181 pts, ~10 free params)`)
+    // Free DOF collapses to the ~10 base params, so the dense O(n³) solve is
+    // trivial — measured ~1-2ms. 50ms is a generous, non-flaky guard against a
+    // regression that re-inflates the free-parameter set (full-free is ~680ms).
+    expect(mean).toBeLessThan(50)
+  })
+})
