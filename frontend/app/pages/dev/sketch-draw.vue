@@ -414,14 +414,15 @@ function orderRefs(kind: ConstraintKind, ids: EntityId[]): EntityId[] {
 function apply(kind: ConstraintKind, value?: number) {
   if (selectedSegments.value.length) {
     const refs = segmentConstraintRefs(kind, selectedSegments.value)
-    if (refs) addConstraint(doc.value, kind, refs, value)
+    if (refs) { const id = addConstraint(doc.value, kind, refs, value); sparkleAtConstraint(id) }
     clearSegSel()
     runSolve()
     commitHistory()
     return
   }
   const refs = orderRefs(kind, selection.value)
-  addConstraint(doc.value, kind, refs, value)
+  const id = addConstraint(doc.value, kind, refs, value)
+  sparkleAtConstraint(id)
   clearSel()
   runSolve()
   commitHistory()
@@ -591,16 +592,73 @@ function runSolve(drag?: DragTarget) {
   return res
 }
 
+// --- sparkle-on-snap delight: a short-lived celebratory flourish spawned at
+// the world point where a constraint is CAPTURED while drawing (tangent-joint
+// commit, snap-on-placement, Shift H/V capture, apply-verb — see call sites
+// below). Purely visual: no doc mutation, no solve, no history entry. Page-
+// only — performance.now/requestAnimationFrame are fine on this page (see
+// CLAUDE.md's "page, not lib/sketch" carve-out) but never belong in lib/sketch.
+const SPARKLE_LIFETIME_MS = 380
+let sparkleSeq = 0
+const sparkles = ref<{ id: number; x: number; y: number; born: number }[]>([])
+// advanced by the rAF loop below — read by sparkleRender so every frame's
+// render reflects the sparkles' current age, not just the frames where one is
+// added or pruned.
+const sparkleClock = ref(0)
+let sparkleRaf = 0
+function sparkleTick() {
+  sparkleClock.value = performance.now()
+  sparkles.value = sparkles.value.filter(s => sparkleClock.value - s.born < SPARKLE_LIFETIME_MS)
+  // keep ticking only while something is live — no idle rAF once the last one prunes
+  sparkleRaf = sparkles.value.length ? requestAnimationFrame(sparkleTick) : 0
+}
+function sparkle(x: number, y: number): void {
+  sparkles.value.push({ id: sparkleSeq++, x, y, born: performance.now() })
+  if (!sparkleRaf) sparkleRaf = requestAnimationFrame(sparkleTick)
+}
+function sparkleCount(): number { return sparkles.value.length }
+
+// sparkle at the just-added constraint's own badge anchor — reuses
+// constraintMarks' anchor resolution (annotate.ts) so the apply-verb sparkle
+// lands exactly where that constraint's badge will render, not a hand-rolled
+// duplicate of that logic.
+function sparkleAtConstraint(constraintId: EntityId): void {
+  const mark = constraintMarks(doc.value).find(m => m.id === constraintId)
+  if (mark) sparkle(mark.x, mark.y)
+}
+
+// screen-space render data for every live sparkle: a small burst of short
+// rays radiating from the point, ease-out pop (quick to full extent, within
+// the first half of its life) + linear fade to 0 opacity by SPARKLE_LIFETIME_MS.
+const SPARKLE_RAYS = 6
+const sparkleRender = computed(() => sparkles.value.map(s => {
+  const t = clamp((sparkleClock.value - s.born) / SPARKLE_LIFETIME_MS, 0, 1)
+  const pop = 1 - Math.pow(1 - Math.min(t * 2, 1), 3)
+  const opacity = 1 - t
+  const cx = sx(s.x), cy = sy(s.y)
+  const inner = 3 + 4 * pop
+  const outer = inner + 4 * pop
+  const rays = Array.from({ length: SPARKLE_RAYS }, (_, k) => {
+    const ang = (k / SPARKLE_RAYS) * Math.PI * 2
+    return { x1: cx + Math.cos(ang) * inner, y1: cy + Math.sin(ang) * inner,
+             x2: cx + Math.cos(ang) * outer, y2: cy + Math.sin(ang) * outer }
+  })
+  return { id: s.id, opacity, rays }
+}))
+
 // place a point, honoring a snap: reuse the snapped point (coincident) or create
 // a new point and the on-line/on-circle constraint the snap implies.
 // `construction` (guide mode) only affects a freshly-created point — a
 // coincident snap always reuses whatever the existing target point already is.
+// Every snap kind that actually captures a constraint (coincident reuse, or a
+// fresh pointOnLine/pointOnCircle) sparkles at the snapped location — see
+// sparkle() above.
 function placePoint(x: number, y: number, exclude: EntityId[] = [], construction = false): EntityId {
   const snapped = snapPoint(doc.value, x, y, { exclude })
-  if (snapped.snap?.kind === 'coincident') return snapped.snap.targetId
+  if (snapped.snap?.kind === 'coincident') { sparkle(snapped.x, snapped.y); return snapped.snap.targetId }
   const id = addPoint(doc.value, snapped.x, snapped.y, { construction })
-  if (snapped.snap?.kind === 'pointOnLine') addConstraint(doc.value, 'pointOnLine', [id, snapped.snap.targetId])
-  else if (snapped.snap?.kind === 'pointOnCircle') addConstraint(doc.value, 'pointOnCircle', [id, snapped.snap.targetId])
+  if (snapped.snap?.kind === 'pointOnLine') { addConstraint(doc.value, 'pointOnLine', [id, snapped.snap.targetId]); sparkle(snapped.x, snapped.y) }
+  else if (snapped.snap?.kind === 'pointOnCircle') { addConstraint(doc.value, 'pointOnCircle', [id, snapped.snap.targetId]); sparkle(snapped.x, snapped.y) }
   return id
 }
 
@@ -698,7 +756,7 @@ function captureAxisConstraint(prevId: EntityId, newId: EntityId): void {
   if (!kind) return
   const already = doc.value.constraints.some(c => c.kind === kind &&
     ((c.refs[0] === prevId && c.refs[1] === newId) || (c.refs[0] === newId && c.refs[1] === prevId)))
-  if (!already) addConstraint(doc.value, kind, [prevId, newId])
+  if (!already) { addConstraint(doc.value, kind, [prevId, newId]); sparkle(b.x, b.y) }
 }
 
 function pathPlacementXY(x: number, y: number, shift: boolean): Vec2 {
@@ -847,6 +905,7 @@ function commitBowedSegment(pointer: Vec2): EntityId | null {
   if (arc.snappedTangent && joint) {
     if (joint.prevKind === 'arc') addConstraint(doc.value, 'collinear', [joint.Cprev, prevAnchor, c])
     else addConstraint(doc.value, 'perpendicular', [joint.La, joint.Lb, prevAnchor, c])
+    sparkle(p0.x, p0.y)   // joint anchor J
   }
   return c
 }
@@ -1575,6 +1634,11 @@ onMounted(() => {
     get dimBuffer() { return dimBuffer.value },
     typeDimension: (str: string) => { dimBuffer.value = str },
     commitDimension: () => commitDimension(),
+    // Task 7 test hooks — sparkle-on-snap delight (pure visual; see sparkle()
+    // above). sparkle() spawns one directly (same code the capture sites
+    // call), sparkleCount() reads the live/pruned count.
+    sparkle: (x: number, y: number) => sparkle(x, y),
+    sparkleCount: () => sparkleCount(),
   }
   ready.value = true
   initHistory()
@@ -1586,6 +1650,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keyup', onKeyup)
   window.removeEventListener('blur', onBlur)
+  if (sparkleRaf) cancelAnimationFrame(sparkleRaf)
 })
 </script>
 
@@ -1690,6 +1755,10 @@ onUnmounted(() => {
       </g>
       <rect v-if="marqueeRect" :x="marqueeRect.x" :y="marqueeRect.y" :width="marqueeRect.w" :height="marqueeRect.h"
             fill="rgba(37,99,235,0.08)" stroke="#2563eb" stroke-width="1" stroke-dasharray="4 3" pointer-events="none" data-marquee />
+      <g v-for="p in sparkleRender" :key="'sparkle-' + p.id" pointer-events="none" data-sparkle :style="{ opacity: p.opacity }">
+        <line v-for="(r, i) in p.rays" :key="i" :x1="r.x1" :y1="r.y1" :x2="r.x2" :y2="r.y2"
+              stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" />
+      </g>
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">
       Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Path click to chain anchors, drag before releasing to bow a segment into an arc, click the first anchor to close. Select drags points; the drawing re-solves.

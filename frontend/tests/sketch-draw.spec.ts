@@ -1383,3 +1383,50 @@ test('type-a-dimension: ARC — typed value sets the exact radius, pinned by dis
   expect(info.radius).toBeCloseTo(3, 2)      // ACTUAL dist(center, startAnchor) matches — the codebase's own radius definition (see sketchPath.ts pathD)
   expect(info.status).toMatch(/^solved/)
 })
+
+test('sparkle: spawns via the API and is active immediately, prunes to 0 after its lifetime', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const immediate = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.sparkle(5, 5)
+    return D.sparkleCount()
+  })
+  expect(immediate).toBeGreaterThanOrEqual(1)
+
+  // timing-lenient: don't assert exact frame counts, just that the rAF prune
+  // loop has retired it well past its ~380ms lifetime.
+  await page.waitForTimeout(500)
+  const after = await page.evaluate(() => (window as any).__sketchDraw.sparkleCount())
+  expect(after).toBe(0)
+})
+
+test('sparkle: a tangent-joint capture (bowing an arc onto a line) spawns one', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const hasSparkle = await page.evaluate(async () => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    // same line→arc tangent-joint draw as the "tangent joint" test above —
+    // a horizontal line a→J, then an arc bowed near-tangent off J.
+    D.pathDown(1, 3); D.pathUp(1, 3)
+    D.pathDown(6, 3); D.pathUp(6, 3)              // J = (6,3), segment 0 = line
+    D.pathDown(6, 7)                               // Pnew above
+    D.pathMove(8.2, 5)                             // near-tangent bulge
+    D.pathUp(8.2, 5)                               // tangent-joint commit — should sparkle at J
+    // poll for a short window rather than asserting exact frame timing
+    const deadline = performance.now() + 300
+    while (performance.now() < deadline) {
+      if (D.sparkleCount() > 0) return true
+      await new Promise(r => setTimeout(r, 10))
+    }
+    return D.sparkleCount() > 0
+  })
+  expect(hasSparkle).toBe(true)
+})
