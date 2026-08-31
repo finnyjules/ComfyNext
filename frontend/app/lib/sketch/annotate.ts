@@ -9,6 +9,7 @@ const GLYPH: Record<ConstraintKind, string> = {
   tangentLineCircle: 'T', tangentCircleCircle: 'T', coincident: '=', concentric: '◎',
   horizontal: 'H', vertical: 'V', pointOnLine: '—', pointOnCircle: 'o', distance: '↔', radius: 'R',
   equalDist: 'E', rotatedFrom: '↻', mirroredFrom: '⇄', collinear: 'S',
+  perpendicular: '⊥', parallel: '∥',
 }
 
 // a representative world point to anchor the badge near, for the first resolvable ref

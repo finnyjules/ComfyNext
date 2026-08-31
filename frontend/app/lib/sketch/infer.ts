@@ -57,7 +57,7 @@ export function snapPoint(
       consider({ kind: 'pointOnCircle', targetId: e.id, x: on.x, y: on.y, dist: Math.abs(l - e.r) })
     }
   }
-  if (best) return { x: best.x, y: best.y, snap: best }
+  if (best) { const b: PointSnap = best; return { x: b.x, y: b.y, snap: b } }
   return { x, y, snap: null }
 }
 
