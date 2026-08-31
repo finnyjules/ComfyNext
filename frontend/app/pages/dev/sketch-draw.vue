@@ -163,6 +163,11 @@ function onKeyup(ev: KeyboardEvent) {
   if (ev.code === 'Space' || ev.key === ' ') spaceHeld.value = false
 }
 
+function onBlur() {
+  spaceHeld.value = false
+  panning.value = false
+}
+
 function selKinds(): string[] {
   return selection.value.map(id => doc.value.entities.find(e => e.id === id)?.kind ?? '?')
 }
@@ -1231,10 +1236,12 @@ onMounted(() => {
   initHistory()
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('keyup', onKeyup)
+  window.addEventListener('blur', onBlur)
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keyup', onKeyup)
+  window.removeEventListener('blur', onBlur)
 })
 </script>
 
