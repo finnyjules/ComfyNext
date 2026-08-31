@@ -837,3 +837,65 @@ test('select tool: marquee box-select, click-empty-deselect, plain-click-replace
   })
   expect(emptyMarquee).toEqual([])
 })
+
+test('select a point + a line and apply Midpoint via the API; holds under dragging a line endpoint', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('point'); D.place(4, 8)                 // the point to pin to the midpoint
+    D.setTool('line'); D.place(0, 0); D.place(10, 2)   // the line/segment
+
+    const pt = D.doc.entities.find((e: any) => e.kind === 'point')
+    const line = D.doc.entities.find((e: any) => e.kind === 'line')
+    D.clearSel(); D.pick(pt.id); D.pick(line.id, true)
+    const verbs = D.availableConstraints().map((v: any) => v.kind)
+
+    D.apply('midpoint')
+
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const a = P(line.p1), b = P(line.p2), p = P(pt.id)
+    const err0 = Math.hypot(p.x - (a.x + b.x) / 2, p.y - (a.y + b.y) / 2)
+
+    // drag one endpoint of the line — the midpoint constraint must hold
+    D.drag(line.p2, 12, 8)
+    const a2 = P(line.p1), b2 = P(line.p2), p2 = P(pt.id)
+    const err1 = Math.hypot(p2.x - (a2.x + b2.x) / 2, p2.y - (a2.y + b2.y) / 2)
+
+    return { verbs, err0, err1, status: D.status() }
+  })
+
+  expect(out.verbs).toContain('midpoint')
+  expect(out.status).toMatch(/^solved/)
+  expect(out.err0).toBeLessThan(0.01)   // within 1e-2 right after applying
+  expect(out.err1).toBeLessThan(0.01)   // still holds after the drag
+})
+
+test('draw two circles of different radius, select both, apply Equal via the API', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('circle'); D.place(3, 5); D.place(3, 8)      // circle A, center (3,5), r=3
+    D.setTool('circle'); D.place(12, 5); D.place(12, 6.5)  // circle B, center (12,5), r=1.5
+
+    const circles = D.doc.entities.filter((e: any) => e.kind === 'circle')
+    D.clearSel(); D.pick(circles[0].id); D.pick(circles[1].id, true)
+    const verbs = D.availableConstraints().map((v: any) => v.kind)
+
+    D.apply('equalRadius')
+
+    const cs = D.doc.entities.filter((e: any) => e.kind === 'circle')
+    return { verbs, radii: cs.map((c: any) => c.r), status: D.status() }
+  })
+
+  expect(out.verbs).toContain('equalRadius')
+  expect(out.status).toMatch(/^solved/)
+  expect(Math.abs(out.radii[0] - out.radii[1])).toBeLessThan(0.01)
+})

@@ -27,7 +27,7 @@ export type ConstraintKind =
   | 'tangentLineCircle' | 'tangentCircleCircle' | 'concentric'
   | 'horizontal' | 'vertical' | 'distance' | 'radius'
   | 'equalDist' | 'rotatedFrom' | 'mirroredFrom' | 'collinear'
-  | 'perpendicular' | 'parallel'
+  | 'perpendicular' | 'parallel' | 'midpoint' | 'equalRadius'
 
 export interface SketchConstraint {
   id: EntityId

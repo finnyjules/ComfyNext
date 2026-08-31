@@ -8,7 +8,8 @@
 //
 // ANALYTIC (closed-form): coincident, concentric, pointOnLine, pointOnCircle,
 //   tangentLineCircle, tangentCircleCircle, horizontal, vertical, distance,
-//   radius, equalDist, rotatedFrom, collinear, perpendicular, parallel.
+//   radius, equalDist, rotatedFrom, collinear, perpendicular, parallel,
+//   midpoint, equalRadius.
 // NUMERIC FALLBACK (local central-difference over ≤6 coords — orig.x/y and
 //   the axis line's two endpoints; the `copy` point's own partials are the
 //   trivial identity and ARE analytic): mirroredFrom.
@@ -294,6 +295,19 @@ function rowsFor(map: EntityMap, c: SketchConstraint): JacEntry[][] | null {
         px(p.id, uy), py(p.id, -ux),
         px(q.id, -uy), py(q.id, ux),
       ]]
+    }
+    case 'midpoint': {
+      const p = pointOf(map, c.refs[0]!); const a = pointOf(map, c.refs[1]!); const b = pointOf(map, c.refs[2]!)
+      if (!p || !a || !b) return null
+      return [
+        [px(p.id, 1), px(a.id, -0.5), px(b.id, -0.5)],
+        [py(p.id, 1), py(a.id, -0.5), py(b.id, -0.5)],
+      ]
+    }
+    case 'equalRadius': {
+      const a = circleOf(map, c.refs[0]!); const b = circleOf(map, c.refs[1]!)
+      if (!a || !b) return null
+      return [[pr(a.id, 1), pr(b.id, -1)]]
     }
     default:
       return null

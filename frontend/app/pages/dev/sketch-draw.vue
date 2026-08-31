@@ -221,13 +221,13 @@ function availableConstraints(): { kind: ConstraintKind; label: string; value?: 
     out.push({ kind: 'coincident', label: 'Coincident' }, { kind: 'distance', label: 'Distance…', value: true })
   }
   if (ids.length === 2 && count('circle') === 2) {
-    out.push({ kind: 'concentric', label: 'Concentric' }, { kind: 'tangentCircleCircle', label: 'Tangent' })
+    out.push({ kind: 'concentric', label: 'Concentric' }, { kind: 'tangentCircleCircle', label: 'Tangent' }, { kind: 'equalRadius', label: 'Equal' })
   }
   if (ids.length === 2 && count('line') === 1 && count('circle') === 1) {
     out.push({ kind: 'tangentLineCircle', label: 'Tangent' })
   }
   if (ids.length === 2 && count('point') === 1 && count('line') === 1) {
-    out.push({ kind: 'pointOnLine', label: 'Point on line' })
+    out.push({ kind: 'pointOnLine', label: 'Point on line' }, { kind: 'midpoint', label: 'Midpoint' })
   }
   if (ids.length === 2 && count('point') === 1 && count('circle') === 1) {
     out.push({ kind: 'pointOnCircle', label: 'Point on circle' })
@@ -239,7 +239,7 @@ function availableConstraints(): { kind: ConstraintKind; label: string; value?: 
     out.push({ kind: 'radius', label: 'Radius…', value: true })
   }
   if (ids.length === 2 && count('line') === 2) {
-    out.push({ kind: 'perpendicular', label: 'Perpendicular' }, { kind: 'parallel', label: 'Parallel' })
+    out.push({ kind: 'perpendicular', label: 'Perpendicular' }, { kind: 'parallel', label: 'Parallel' }, { kind: 'equalDist', label: 'Equal' })
   }
   if (ids.length === 1 && count('point') === 1 && pathCornerInfo(ids[0]!)) {
     out.push({ kind: 'perpendicular', label: 'Right angle' })
@@ -274,6 +274,26 @@ function orderRefs(kind: ConstraintKind, ids: EntityId[]): EntityId[] {
     return ids.slice().sort(a => (ent(a).kind === 'point' ? -1 : 1))
   }
   if (kind === 'pointOnCircle') return ids.slice().sort(a => (ent(a).kind === 'point' ? -1 : 1))
+  if (kind === 'midpoint') {
+    // 1 point + 1 line selected (the Midpoint gate above) — residual wants
+    // [P, lineA, lineB]: the point, then the line's own two anchor ids.
+    if (ids.length === 2) {
+      const pt = ids.find(id => ent(id).kind === 'point')
+      const ln = ids.find(id => ent(id).kind === 'line')
+      if (pt && ln) {
+        const l = ent(ln) as any
+        return [pt, l.p1, l.p2]
+      }
+    }
+    return ids.slice()
+  }
+  if (kind === 'equalDist' && ids.length === 2) {
+    // two LINE entity ids (from the two-lines-selected gate) — the residual
+    // wants 4 POINT refs: each line's anchors, [L1.p1, L1.p2, L2.p1, L2.p2].
+    const l1 = ent(ids[0]!), l2 = ent(ids[1]!)
+    if (l1.kind === 'line' && l2.kind === 'line') return [l1.p1, l1.p2, l2.p1, l2.p2]
+    return ids.slice()
+  }
   return ids.slice()
 }
 

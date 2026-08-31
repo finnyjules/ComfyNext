@@ -7,7 +7,7 @@ const CONSTRAINT_KINDS: ConstraintKind[] = [
   'coincident', 'pointOnLine', 'pointOnCircle', 'tangentLineCircle', 'tangentCircleCircle',
   'concentric', 'horizontal', 'vertical', 'distance', 'radius',
   'equalDist', 'rotatedFrom', 'mirroredFrom', 'collinear',
-  'perpendicular', 'parallel',
+  'perpendicular', 'parallel', 'midpoint', 'equalRadius',
 ]
 const NEEDS_VALUE = new Set<ConstraintKind>(['distance', 'radius', 'rotatedFrom'])
 

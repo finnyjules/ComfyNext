@@ -111,6 +111,9 @@ function buildAllKindsDoc(): SketchDoc {
       { id: 'parB', kind: 'point', x: 4, y: 1 },
       { id: 'parP', kind: 'point', x: -2, y: 5 },
       { id: 'parQ', kind: 'point', x: 3, y: 8 },
+      { id: 'midP', kind: 'point', x: 3, y: 3 },
+      { id: 'midA', kind: 'point', x: 0, y: 0 },
+      { id: 'midB', kind: 'point', x: 10, y: 4 },
     ],
     constraints: [
       { id: 'k-coincident', kind: 'coincident', refs: ['coi1', 'coi2'] },
@@ -129,6 +132,8 @@ function buildAllKindsDoc(): SketchDoc {
       { id: 'k-collinear', kind: 'collinear', refs: ['colA', 'colB', 'colP'] },
       { id: 'k-perpendicular', kind: 'perpendicular', refs: ['perpA', 'perpB', 'perpP', 'perpQ'] },
       { id: 'k-parallel', kind: 'parallel', refs: ['parA', 'parB', 'parP', 'parQ'] },
+      { id: 'k-midpoint', kind: 'midpoint', refs: ['midP', 'midA', 'midB'] },
+      { id: 'k-equalRadius', kind: 'equalRadius', refs: ['C1', 'C2'] },
     ],
   }
   return doc
@@ -238,6 +243,33 @@ describe('per-kind micro tests (trickier derivatives)', () => {
         { id: 'p', kind: 'point', x: -3, y: 7 },
       ],
       constraints: [{ id: 'k', kind: 'collinear', refs: ['a', 'b', 'p'] }],
+    }
+    const slots = allSlots(doc)
+    expectClose(buildJacobian(doc, slots), numericalJacobian(doc, slots))
+  })
+
+  it('midpoint: matches numerical partials', () => {
+    const doc: SketchDoc = {
+      entities: [
+        { id: 'p', kind: 'point', x: 2, y: -1 },
+        { id: 'a', kind: 'point', x: 0, y: 0 },
+        { id: 'b', kind: 'point', x: 10, y: 6 },
+      ],
+      constraints: [{ id: 'k', kind: 'midpoint', refs: ['p', 'a', 'b'] }],
+    }
+    const slots = allSlots(doc)
+    expectClose(buildJacobian(doc, slots), numericalJacobian(doc, slots))
+  })
+
+  it('equalRadius: matches numerical partials', () => {
+    const doc: SketchDoc = {
+      entities: [
+        { id: 'ca', kind: 'point', x: 0, y: 0 },
+        { id: 'A', kind: 'circle', center: 'ca', r: 3 },
+        { id: 'cb', kind: 'point', x: 8, y: 2 },
+        { id: 'B', kind: 'circle', center: 'cb', r: 5 },
+      ],
+      constraints: [{ id: 'k', kind: 'equalRadius', refs: ['A', 'B'] }],
     }
     const slots = allSlots(doc)
     expectClose(buildJacobian(doc, slots), numericalJacobian(doc, slots))

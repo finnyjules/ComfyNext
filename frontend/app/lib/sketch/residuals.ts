@@ -147,6 +147,18 @@ function residualsFor(map: EntityMap, c: SketchConstraint): number[] | null {
       if (Math.hypot(ux, uy) < 1e-9 || Math.hypot(vx, vy) < 1e-9) return null
       return [ux * vy - uy * vx]
     }
+    case 'midpoint': {
+      // refs=[P, A, B] — P pinned to the middle of segment A–B
+      const p = pointOf(map, c.refs[0]!); const a = pointOf(map, c.refs[1]!); const b = pointOf(map, c.refs[2]!)
+      if (!p || !a || !b) return null
+      return [p.x - (a.x + b.x) / 2, p.y - (a.y + b.y) / 2]
+    }
+    case 'equalRadius': {
+      // refs=[cA, cB] — two circle entity ids directly
+      const a = circleOf(map, c.refs[0]!); const b = circleOf(map, c.refs[1]!)
+      if (!a || !b) return null
+      return [a.r - b.r]
+    }
     default:
       return null
   }
