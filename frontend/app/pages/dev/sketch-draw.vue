@@ -19,12 +19,57 @@ const tool = ref<Tool>('select')
 const status = ref('ready')
 const ready = ref(false)
 
-// world→screen: 34px/unit, origin lower-left of a 680x460 board
-const S = 34, OX = 40, OY = 400
-const sx = (x: number) => OX + x * S
-const sy = (y: number) => OY - y * S
-const wx = (px: number) => (px - OX) / S
-const wy = (py: number) => (OY - py) / S
+// world→screen: viewport is VIEW state, not model — pan/zoom never touch
+// `doc` or history (see commitHistory below; undo must never undo a zoom/pan).
+// Defaults match the old fixed constants: 34px/unit, origin lower-left of a
+// 680x460 board.
+const scale = ref(34)
+const panX = ref(40)
+const panY = ref(400)
+const sx = (x: number) => panX.value + x * scale.value
+const sy = (y: number) => panY.value - y * scale.value
+const wx = (px: number) => (px - panX.value) / scale.value
+const wy = (py: number) => (panY.value - py) / scale.value
+
+function clamp(v: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, v)) }
+
+// zoom toward the cursor: keep the world point currently under (cx, cy) —
+// screen-space pixels relative to the svg's own rect — fixed on screen after
+// the scale change. Compute the world point BEFORE changing scale, then
+// re-derive pan from `sx(w.x) === cx, sy(w.y) === cy` at the new scale.
+function zoomAt(cx: number, cy: number, factor: number) {
+  const w = { x: wx(cx), y: wy(cy) }
+  scale.value = clamp(scale.value * factor, 4, 400)
+  panX.value = cx - w.x * scale.value
+  panY.value = cy + w.y * scale.value
+}
+function panBy(dxPx: number, dyPx: number) {
+  panX.value += dxPx
+  panY.value += dyPx
+}
+function fitView() {
+  scale.value = 34
+  panX.value = 40
+  panY.value = 400
+}
+function getViewport() { return { scale: scale.value, panX: panX.value, panY: panY.value } }
+
+// spacebar-held pan (tracked via onKeydown/onKeyup) and the live drag itself
+// — screen-pixel delta from the pointerdown origin, never touches `doc`.
+const spaceHeld = ref(false)
+const panning = ref(false)
+let panStartClientX = 0, panStartClientY = 0
+let panStartPanX = 0, panStartPanY = 0
+function panTrigger(ev: PointerEvent) { return spaceHeld.value || ev.button === 1 }
+function startPan(ev: PointerEvent) {
+  panning.value = true
+  panStartClientX = ev.clientX
+  panStartClientY = ev.clientY
+  panStartPanX = panX.value
+  panStartPanY = panY.value
+  ev.preventDefault()
+}
+const svgCursor = computed(() => panning.value ? 'grabbing' : spaceHeld.value ? 'grab' : 'crosshair')
 
 // in-progress multi-click draws
 type Pending =
@@ -85,8 +130,10 @@ function onKeydown(ev: KeyboardEvent) {
     const key = ev.key.toLowerCase()
     if (key === 'z' && !ev.shiftKey) { ev.preventDefault(); undo(); return }
     if ((key === 'z' && ev.shiftKey) || key === 'y') { ev.preventDefault(); redo(); return }
+    if (key === '0') { ev.preventDefault(); fitView(); return }
     return
   }
+  if (ev.code === 'Space' || ev.key === ' ') { ev.preventDefault(); spaceHeld.value = true; return }
   if (ev.key === 'Escape') { cancelPath(); return }
   if (ev.key === 'Enter') {
     if (pendingPath.value && pendingPath.value.anchors.length >= 2) { ev.preventDefault(); finishPath(false) }
@@ -106,6 +153,10 @@ function onKeydown(ev: KeyboardEvent) {
     const dy = ev.key === 'ArrowUp' ? step : ev.key === 'ArrowDown' ? -step : 0   // screen-up = larger world y (see sy())
     nudge(dx, dy)
   }
+}
+
+function onKeyup(ev: KeyboardEvent) {
+  if (ev.code === 'Space' || ev.key === ' ') spaceHeld.value = false
 }
 
 function selKinds(): string[] {
@@ -589,13 +640,13 @@ function copySvg(): string {
   return d
 }
 
-// rendering: remap to screen via a shadow doc (points scaled, radii * S)
+// rendering: remap to screen via a shadow doc (points scaled, radii * scale)
 // the y-flip mirrors arc winding, so arc segments carried into the shadow doc
 // have their sweep flipped to keep the rendered curve on the correct side
 function toShadowEntities(d: SketchDoc) {
   return d.entities.map(e => e.kind === 'point'
     ? { ...e, x: sx(e.x), y: sy(e.y) }
-    : e.kind === 'circle' ? { ...e, r: e.r * S }
+    : e.kind === 'circle' ? { ...e, r: e.r * scale.value }
     : e.kind === 'path' ? { ...e, segments: e.segments.map(s => s.kind === 'arc' ? { ...s, sweep: (1 - s.sweep) as 0 | 1 } : s) }
     : { ...e })
 }
@@ -654,7 +705,7 @@ const previewD = computed(() => {
       const joint = jointInfoForSegment(pp, i)
       const arc = (p0 && p1 && cursor.value) ? bowArc({ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }, cursor.value, joint?.tangentDir ?? null) : null
       if (arc) {
-        const rScreen = arc.r * S
+        const rScreen = arc.r * scale.value
         const sweepScreen = (1 - arc.sweep) as 0 | 1
         d += ` A ${rScreen} ${rScreen} 0 ${arc.large} ${sweepScreen} ${to.x} ${to.y}`
       } else {
@@ -747,7 +798,19 @@ function svgXY(ev: PointerEvent) {
   const r = (ev.currentTarget as SVGSVGElement).getBoundingClientRect()
   return { x: wx(ev.clientX - r.left), y: wy(ev.clientY - r.top) }
 }
+function onWheel(ev: WheelEvent) {
+  ev.preventDefault()
+  const r = (ev.currentTarget as SVGSVGElement).getBoundingClientRect()
+  const cx = ev.clientX - r.left, cy = ev.clientY - r.top
+  const f = ev.deltaY < 0 ? 1.1 : 1 / 1.1
+  zoomAt(cx, cy, f)
+}
+function onEntityPointerDown(id: EntityId, ev: PointerEvent) {
+  if (panTrigger(ev)) { startPan(ev); ev.stopPropagation(); return }
+  if (tool.value === 'select') { pick(id); ev.stopPropagation() }
+}
 function onPointerDownPoint(id: EntityId, ev: PointerEvent) {
+  if (panTrigger(ev)) { startPan(ev); ev.stopPropagation(); return }
   if (tool.value !== 'select') return
   dragId = id; moved = false
   const p = doc.value.entities.find(e => e.id === id) as any
@@ -764,12 +827,18 @@ function entityPathScreen(id: EntityId): string {
   return entityPath(shadowDoc.value, id)
 }
 function onPointerDownSvg(ev: PointerEvent) {
+  if (panTrigger(ev)) { startPan(ev); return }
   if (tool.value === 'select') return
   const { x, y } = svgXY(ev)
   if (tool.value === 'path') { pathDown(x, y, ev.shiftKey); return }
   place(x, y)
 }
 function onPointerMove(ev: PointerEvent) {
+  if (panning.value) {
+    panX.value = panStartPanX + (ev.clientX - panStartClientX)
+    panY.value = panStartPanY + (ev.clientY - panStartClientY)
+    return
+  }
   if (tool.value === 'path') {
     // always track too — drives the rubber-band hover preview even when not
     // mid-drag, and the live bow while pathDrag is active
@@ -791,6 +860,7 @@ function onPointerMove(ev: PointerEvent) {
   runSolve({ point: dragId, x, y })
 }
 function onPointerUp(ev: PointerEvent) {
+  if (panning.value) { panning.value = false; return }
   if (tool.value === 'path' && pathDrag) {
     const { x, y } = svgXY(ev)
     pathUp(x, y)
@@ -961,12 +1031,23 @@ onMounted(() => {
     cancelPath: () => cancelPath(),
     removeLastAnchor: () => removeLastAnchor(),
     nudge: (dx: number, dy: number) => nudge(dx, dy),
+    // Task 3 test hooks — viewport (pan/zoom) is VIEW state, never touches
+    // `doc` or history, so these bypass commitHistory entirely (see zoomAt/
+    // panBy/fitView above).
+    zoomAt: (px: number, py: number, factor: number) => zoomAt(px, py, factor),
+    panBy: (dxPx: number, dyPx: number) => panBy(dxPx, dyPx),
+    fitView: () => fitView(),
+    getViewport: () => getViewport(),
   }
   ready.value = true
   initHistory()
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
 })
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keyup', onKeyup)
+})
 </script>
 
 <template>
@@ -1009,13 +1090,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <button v-if="selection.length" data-act="delete" @click="del"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #7f1d1d; background: #1a1a1a; color: #fca5a5; cursor: pointer; font-size: 12px">Delete</button>
     </div>
-    <svg width="680" height="460" style="background: #fafafa; border-radius: 8px; touch-action: none; cursor: crosshair"
-         @pointerdown="onPointerDownSvg" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointerleave="onPointerLeaveSvg">
+    <svg width="680" height="460" :style="{ background: '#fafafa', borderRadius: '8px', touchAction: 'none', cursor: svgCursor }"
+         @pointerdown="onPointerDownSvg" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointerleave="onPointerLeaveSvg" @wheel="onWheel">
       <path :d="pathScreen" fill="none" stroke="#3730a3" stroke-width="1.5" />
       <path :d="constructionScreen" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4 3" />
       <template v-for="e in doc.entities" :key="'hit-' + e.id">
         <path v-if="e.kind !== 'point'" :d="entityPathScreen(e.id)" fill="none" stroke="transparent" stroke-width="12"
-              :style="{ cursor: 'pointer' }" @pointerdown="(ev) => { if (tool==='select') { pick(e.id); ev.stopPropagation() } }" :data-ent="e.id" />
+              :style="{ cursor: 'pointer' }" @pointerdown="(ev) => onEntityPointerDown(e.id, ev)" :data-ent="e.id" />
         <path v-if="e.kind !== 'point' && selection.includes(e.id)" :d="entityPathScreen(e.id)" fill="none" stroke="#f59e0b" stroke-width="2.5" pointer-events="none" />
       </template>
       <path v-if="previewD" :d="previewD" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="5 3"

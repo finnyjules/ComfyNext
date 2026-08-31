@@ -488,3 +488,98 @@ test('select a point and nudge() moves it by a world delta; undo restores it', a
   expect(out.restored.x).toBeCloseTo(out.before.x, 6)
   expect(out.restored.y).toBeCloseTo(out.before.y, 6)
 })
+
+test('pan & zoom: viewport is view state — wheel zooms toward the cursor, panBy pans, fitView resets, undo never touches it', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  // Vue's DOM update from a doc/viewport mutation is async (flushed on
+  // nextTick, a microtask) — each step below is its own page.evaluate
+  // round-trip so that microtask queue drains before the next read, rather
+  // than reading the DOM synchronously mid-script inside one giant evaluate.
+  const screenPos = (id: string) => page.evaluate((pointId) => {
+    const circle = document.querySelector(`circle[data-point="${pointId}"]`) as SVGCircleElement
+    return { x: Number(circle.getAttribute('cx')), y: Number(circle.getAttribute('cy')) }
+  }, id)
+
+  const initial = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    return D.getViewport()
+  })
+  expect(initial).toEqual({ scale: 34, panX: 40, panY: 400 })
+
+  // place a point at world (5,5) and read its screen position straight off
+  // the rendered circle (the sx/sy the template actually used) — no local
+  // reimplementation of the mapping.
+  const ptId = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.setTool('point'); D.place(5, 5)
+    D.setTool('select')
+    return D.doc.entities.find((e: any) => e.kind === 'point').id
+  })
+  const before = await screenPos(ptId)
+
+  // zoom by 2x centered exactly on the point's current screen position — the
+  // world point under the zoom center must stay under the same pixel.
+  const afterZoom = await page.evaluate(({ x, y }) => {
+    const D = (window as any).__sketchDraw
+    D.zoomAt(x, y, 2)
+    return D.getViewport()
+  }, before)
+  expect(afterZoom.scale).toBeCloseTo(68, 5)
+  const afterZoomPos = await screenPos(ptId)
+  // the zoom center (the point's own screen pos) stays put within a couple px
+  expect(Math.abs(afterZoomPos.x - before.x)).toBeLessThan(2)
+  expect(Math.abs(afterZoomPos.y - before.y)).toBeLessThan(2)
+
+  // pan by (50, 0) — panX shifts +50, and the point's screen x shifts +50
+  const afterPan = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.panBy(50, 0)
+    return D.getViewport()
+  })
+  expect(afterPan.panX).toBeCloseTo(afterZoom.panX + 50, 5)
+  expect(afterPan.panY).toBeCloseTo(afterZoom.panY, 5)
+  const afterPanPos = await screenPos(ptId)
+  expect(afterPanPos.x).toBeCloseTo(afterZoomPos.x + 50, 1)
+  expect(afterPanPos.y).toBeCloseTo(afterZoomPos.y, 1)
+
+  // place a second point at a known world coord post-zoom/pan — drawing must
+  // still land at the mapping's own sx/sy, not the stale defaults.
+  const { pt2Id, expectedScreen } = await page.evaluate((firstPtId) => {
+    const D = (window as any).__sketchDraw
+    D.setTool('point'); D.place(2, 3)
+    D.setTool('select')
+    const pt2Id = D.doc.entities.filter((e: any) => e.kind === 'point').find((e: any) => e.id !== firstPtId).id
+    const vp = D.getViewport()
+    return { pt2Id, expectedScreen: { x: vp.panX + 2 * vp.scale, y: vp.panY - 3 * vp.scale } }
+  }, ptId)
+  const newPointPos = await screenPos(pt2Id)
+  // drawing still correct post-zoom/pan: the new point lands exactly where
+  // the current sx/sy mapping says it should
+  expect(newPointPos.x).toBeCloseTo(expectedScreen.x, 1)
+  expect(newPointPos.y).toBeCloseTo(expectedScreen.y, 1)
+
+  // fit/reset back to defaults
+  const afterFit = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.fitView()
+    return D.getViewport()
+  })
+  expect(afterFit).toEqual({ scale: 34, panX: 40, panY: 400 })
+
+  // undo must NEVER touch the viewport — zoom/pan is view state, not model.
+  // Re-zoom, then undo() (there IS history from the two placed points), and
+  // confirm the viewport is unchanged.
+  const { beforeUndo, afterUndo } = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.zoomAt(300, 200, 1.5)
+    const beforeUndo = D.getViewport()
+    D.undo()
+    const afterUndo = D.getViewport()
+    return { beforeUndo, afterUndo }
+  })
+  expect(afterUndo).toEqual(beforeUndo)   // undo did NOT touch the viewport
+})
