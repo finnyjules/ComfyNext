@@ -1430,3 +1430,75 @@ test('sparkle: a tangent-joint capture (bowing an arc onto a line) spawns one', 
   })
   expect(hasSparkle).toBe(true)
 })
+
+// M5 final integration review Fix 2: selectTool() used to leave a stale
+// entity selection alive when switching from 'select' to a draw tool — the
+// verb bar, arrow-nudge, and Backspace-delete all read `selection`, so e.g.
+// switching to the path tool with two lines still selected left
+// 'Perpendicular' available and applicable mid-draw. selectTool() now clears
+// both selection channels on any switch AWAY from 'select', but leaves them
+// alone when switching INTO 'select' (a live selection right after entering
+// select mode is expected, exercised by the tests above that pick
+// immediately after `D.setTool('select')`).
+test('selectTool: switching from select to a draw tool clears a stale entity selection', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('line'); D.place(1, 1); D.place(5, 1)     // line A
+    D.setTool('line'); D.place(1, 4); D.place(5, 6)      // line B
+    D.setTool('select')
+    const lines = D.doc.entities.filter((e: any) => e.kind === 'line')
+    D.pick(lines[0].id); D.pick(lines[1].id, true)
+    const selBeforeSwitch = D.selection
+    const verbsBeforeSwitch = D.availableConstraints().map((v: any) => v.kind)
+
+    D.setTool('point')                                    // switch to a draw tool
+    const selAfterSwitch = D.selection
+    const verbsAfterSwitch = D.availableConstraints().map((v: any) => v.kind)
+
+    return { selBeforeSwitch, verbsBeforeSwitch, selAfterSwitch, verbsAfterSwitch }
+  })
+
+  expect(out.selBeforeSwitch.length).toBe(2)
+  expect(out.verbsBeforeSwitch).toContain('perpendicular')   // stale-selection verb was available pre-fix
+  expect(out.selAfterSwitch).toEqual([])                     // selection cleared on tool switch
+  expect(out.verbsAfterSwitch).toEqual([])                   // no verbs apply to an empty selection
+})
+
+// same fix, segment-selection channel: switching away from 'select' with a
+// live segment pick (mutually exclusive with entity `selection`, see
+// pickSegment()) must clear `selectedSegments` too, or the same stale-verb
+// problem shows up for segment-selected constraints instead.
+test('selectTool: switching from select to a draw tool clears a stale segment selection', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    D.pathDown(1, 1); D.pathUp(1, 1)      // a0
+    D.pathDown(5, 1); D.pathUp(5, 1)      // a1 — corner
+    D.pathDown(7, 5); D.pathUp(7, 5)      // a2
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+
+    D.setTool('select')
+    D.pickSegment(path.id, 0)
+    D.pickSegment(path.id, 1, true)
+    const segsBeforeSwitch = D.selectedSegments
+
+    D.setTool('circle')                                    // switch to a draw tool
+    const segsAfterSwitch = D.selectedSegments
+
+    return { segsBeforeSwitch, segsAfterSwitch }
+  })
+
+  expect(out.segsBeforeSwitch.length).toBe(2)
+  expect(out.segsAfterSwitch).toEqual([])
+})

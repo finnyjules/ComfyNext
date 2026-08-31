@@ -212,7 +212,7 @@ function onKeydown(ev: KeyboardEvent) {
     return
   }
   if (ev.key === 'Backspace' || ev.key === 'Delete') {
-    if (ev.key === 'Backspace' && gestureActive && dimBuffer.value) {
+    if (gestureActive && dimBuffer.value) {
       ev.preventDefault()
       dimBuffer.value = dimBuffer.value.slice(0, -1)
       return
@@ -1534,6 +1534,16 @@ function removeLastAnchor() {
 
 function selectTool(t: Tool) {
   cleanupPendingAndCommit()
+  // switching to a draw tool must not carry a stale entity/segment
+  // selection along with it — the verb bar, arrow-nudge, and Backspace-
+  // delete all act on `selection`/`selectedSegments`, and a leftover pick
+  // from the select tool would silently apply to whatever gets drawn next.
+  // Switching TO 'select' is left alone: entering select mode is exactly
+  // when a live selection is expected.
+  if (t !== 'select') {
+    clearSel()
+    clearSegSel()
+  }
   tool.value = t
   pending.value = null
   pendingPath.value = null
