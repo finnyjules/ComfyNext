@@ -87,14 +87,32 @@ const cursor = ref<{ x: number; y: number; shift: boolean } | null>(null)
 const selection = ref<EntityId[]>([])
 // additive=false (plain click): selection becomes exactly [id]. additive=true
 // (shift-click / shift-marquee): toggle `id` within the current selection,
-// same as the old always-toggle behavior.
+// same as the old always-toggle behavior. Entity selection and segment
+// selection (below) are mutually exclusive — picking an entity always clears
+// any live segment selection first.
 function pick(id: EntityId, additive = false) {
+  clearSegSel()
   if (!additive) { selection.value = [id]; return }
   const i = selection.value.indexOf(id)
   if (i >= 0) selection.value.splice(i, 1)
   else selection.value.push(id)
 }
 function clearSel() { selection.value = [] }
+
+// --- segment selection: individual { pathId, segIndex } picks, distinct from
+// (and mutually exclusive with) whole-entity `selection` above. additive=false
+// replaces; additive=true toggles the segment within the current set, mirroring
+// pick()'s own contract. Selecting a segment always clears any live entity
+// selection first — see pick()'s own clearSegSel() call for the reverse.
+const selectedSegments = ref<{ pathId: EntityId; segIndex: number }[]>([])
+function pickSegment(pathId: EntityId, segIndex: number, additive = false) {
+  clearSel()
+  if (!additive) { selectedSegments.value = [{ pathId, segIndex }]; return }
+  const i = selectedSegments.value.findIndex(s => s.pathId === pathId && s.segIndex === segIndex)
+  if (i >= 0) selectedSegments.value.splice(i, 1)
+  else selectedSegments.value.push({ pathId, segIndex })
+}
+function clearSegSel() { selectedSegments.value = [] }
 
 // --- undo/redo history: plain snapshots of `doc`, taken after every
 // mutating action settles. `histPtr` points at the entry matching the
@@ -121,6 +139,7 @@ function undo() {
   histPtr.value--
   doc.value = cloneDoc(history.value[histPtr.value]!)
   clearSel()
+  clearSegSel()
   pending.value = null
   pendingPath.value = null
   pathDrag = null
@@ -132,6 +151,7 @@ function redo() {
   histPtr.value++
   doc.value = cloneDoc(history.value[histPtr.value]!)
   clearSel()
+  clearSegSel()
   pending.value = null
   pendingPath.value = null
   pathDrag = null
@@ -252,7 +272,58 @@ function availableConstraints(): { kind: ConstraintKind; label: string; value?: 
   if (ids.length === 1 && count('point') === 1 && pathCornerInfo(ids[0]!)) {
     out.push({ kind: 'perpendicular', label: 'Right angle' })
   }
+  // segment verbs — only offered while entity selection is empty (mutually
+  // exclusive with the gates above by construction, but gated explicitly too)
+  // and only for LINE segments (v1 scope — see segmentAnchorPair/isLineSegment).
+  if (!ids.length && selectedSegments.value.length === 1) {
+    const s = selectedSegments.value[0]!
+    if (isLineSegment(s)) out.push({ kind: 'horizontal', label: 'Horizontal' }, { kind: 'vertical', label: 'Vertical' })
+  }
+  if (!ids.length && selectedSegments.value.length === 2) {
+    const [s1, s2] = selectedSegments.value as [{ pathId: EntityId; segIndex: number }, { pathId: EntityId; segIndex: number }]
+    if (isLineSegment(s1) && isLineSegment(s2)) {
+      out.push({ kind: 'perpendicular', label: 'Perpendicular' }, { kind: 'parallel', label: 'Parallel' }, { kind: 'equalDist', label: 'Equal' })
+    }
+  }
   return out
+}
+
+// a segment's own two anchor ids, [anchors[i], anchors[(i+1)%n]] — the same
+// pair the residual reads for a line (see horizontal/vertical/perpendicular/
+// parallel/equalDist in residuals.ts). null if the path or index no longer
+// resolves (e.g. a stale selectedSegments entry after an undo/delete).
+function segmentAnchorPair(pathId: EntityId, segIndex: number): [EntityId, EntityId] | null {
+  const path = doc.value.entities.find(e => e.id === pathId) as any
+  if (!path || path.kind !== 'path') return null
+  const n = path.anchors.length
+  const a = path.anchors[segIndex]
+  const b = path.anchors[(segIndex + 1) % n]
+  if (!a || !b) return null
+  return [a, b]
+}
+// v1 scope: segment verbs (H/V/perpendicular/parallel/equal) only apply to
+// straight LINE segments — an arc has no single direction to pin flat or
+// compare, so it's excluded from every segment-verb gate rather than papering
+// over it with the chord direction.
+function isLineSegment(seg: { pathId: EntityId; segIndex: number }): boolean {
+  const path = doc.value.entities.find(e => e.id === seg.pathId) as any
+  return !!path && path.kind === 'path' && path.segments[seg.segIndex]?.kind === 'line'
+}
+// map 1 or 2 selected segments to the constraint's point refs — the segment
+// analogue of orderRefs, but simpler: there's exactly one ref shape per arity
+// (H/V take a segment's own 2-point pair directly; perpendicular/parallel/
+// equalDist take the 4-point [a1,b1,a2,b2] form two lines already use above).
+function segmentConstraintRefs(kind: ConstraintKind, segs: { pathId: EntityId; segIndex: number }[]): EntityId[] | null {
+  if (segs.length === 1 && (kind === 'horizontal' || kind === 'vertical')) {
+    return segmentAnchorPair(segs[0]!.pathId, segs[0]!.segIndex)
+  }
+  if (segs.length === 2 && (kind === 'perpendicular' || kind === 'parallel' || kind === 'equalDist')) {
+    const p1 = segmentAnchorPair(segs[0]!.pathId, segs[0]!.segIndex)
+    const p2 = segmentAnchorPair(segs[1]!.pathId, segs[1]!.segIndex)
+    if (!p1 || !p2) return null
+    return [p1[0], p1[1], p2[0], p2[1]]
+  }
+  return null
 }
 
 // refs order per kind (matches residuals.ts contract)
@@ -306,6 +377,14 @@ function orderRefs(kind: ConstraintKind, ids: EntityId[]): EntityId[] {
 }
 
 function apply(kind: ConstraintKind, value?: number) {
+  if (selectedSegments.value.length) {
+    const refs = segmentConstraintRefs(kind, selectedSegments.value)
+    if (refs) addConstraint(doc.value, kind, refs, value)
+    clearSegSel()
+    runSolve()
+    commitHistory()
+    return
+  }
   const refs = orderRefs(kind, selection.value)
   addConstraint(doc.value, kind, refs, value)
   clearSel()
@@ -955,6 +1034,7 @@ const MARQUEE_THRESHOLD_PX = 3
 // additive=false replaces it. Exposed directly as __sketchDraw.marqueeSelect
 // so E2E can drive the exact same path a real drag resolves to.
 function marqueeSelect(x0: number, y0: number, x1: number, y1: number, additive = false) {
+  clearSegSel()
   const loX = Math.min(x0, x1), hiX = Math.max(x0, x1)
   const loY = Math.min(y0, y1), hiY = Math.max(y0, y1)
   const hits: EntityId[] = []
@@ -1038,6 +1118,32 @@ function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
 function entityPathScreen(id: EntityId): string {
   return entityPath(shadowDoc.value, id)
 }
+// screen-space path-data for ONE segment of a path entity — reuses entityPath's
+// own line/arc emission (sweep-flip, large-arc-flag math already correct for
+// screen space, same as entityPathScreen above) by building a throwaway
+// 2-anchor sub-path — this segment's own from/to anchor ids plus its single
+// SegmentSpec — inside the SAME shadow (already-screen-coords) doc, rather
+// than duplicating that math here. Never touches the real doc; the sub-path
+// entity only ever exists inside this one call's local `subDoc`.
+function segmentPathScreen(pathId: EntityId, segIndex: number): string {
+  const shadow = shadowDoc.value
+  const path = shadow.entities.find(e => e.id === pathId) as any
+  if (!path || path.kind !== 'path') return ''
+  const n = path.anchors.length
+  const seg = path.segments[segIndex]
+  const fromId = path.anchors[segIndex]
+  const toId = path.anchors[(segIndex + 1) % n]
+  if (!seg || !fromId || !toId) return ''
+  const subDoc: SketchDoc = {
+    entities: [...shadow.entities, { id: '__seg_hit__', kind: 'path', anchors: [fromId, toId], segments: [seg], closed: false } as any],
+    constraints: [],
+  }
+  return entityPath(subDoc, '__seg_hit__')
+}
+function onSegmentPointerDown(pathId: EntityId, segIndex: number, ev: PointerEvent) {
+  if (panTrigger(ev)) { startPan(ev); ev.stopPropagation(); return }
+  if (tool.value === 'select') { pickSegment(pathId, segIndex, ev.shiftKey); ev.stopPropagation() }
+}
 function onPointerDownSvg(ev: PointerEvent) {
   if (panTrigger(ev)) { startPan(ev); return }
   if (tool.value === 'select') {
@@ -1102,9 +1208,10 @@ function onPointerUp(ev: PointerEvent) {
     const start = marqueeStart, additive = marqueeAdditive, didMove = marqueeMoved
     marqueeStart = null; marqueeMoved = false; marqueeRect.value = null
     if (!didMove) {
-      // plain click on empty canvas: deselect. Shift+click-empty is a no-op
-      // (shift signals "keep what I have" — nothing to add from empty space).
-      if (!additive) clearSel()
+      // plain click on empty canvas: deselect (both entity AND segment
+      // selection). Shift+click-empty is a no-op (shift signals "keep what
+      // I have" — nothing to add from empty space).
+      if (!additive) { clearSel(); clearSegSel() }
       return
     }
     const { x: ex, y: ey } = svgLocalXY(ev)
@@ -1225,6 +1332,8 @@ function selectTool(t: Tool) {
 function reset() {
   cleanupPendingPath()
   doc.value = { entities: [], constraints: [] }
+  clearSel()
+  clearSegSel()
   pending.value = null
   pendingPath.value = null
   pathDrag = null
@@ -1238,6 +1347,11 @@ onMounted(() => {
     get doc() { return doc.value },
     get tool() { return tool.value },
     get selection() { return selection.value.slice() },
+    // Task 4 test hooks — segment selection is its own channel, mutually
+    // exclusive with entity `selection` above (see pick()/pickSegment()).
+    get selectedSegments() { return selectedSegments.value.slice() },
+    pickSegment: (pathId: EntityId, segIndex: number, additive = false) => pickSegment(pathId, segIndex, additive),
+    clearSegSel: () => clearSegSel(),
     status: () => status.value,
     pathData: () => sketchPathData(doc.value),
     entityCount: () => doc.value.entities.length,
@@ -1329,7 +1443,7 @@ onUnmounted(() => {
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">finish</button>
     </div>
     <div style="display: flex; gap: 6px; margin: 8px 0; min-height: 28px; align-items: center; flex-wrap: wrap">
-      <span style="font-size: 12px; color: #9ca3af">sel: {{ selection.length }}</span>
+      <span style="font-size: 12px; color: #9ca3af">sel: {{ selection.length }}{{ selectedSegments.length ? ' · seg: ' + selectedSegments.length : '' }}</span>
       <button v-for="v in availableConstraints()" :key="v.kind" :data-verb="v.kind"
               @click="() => applyWithValue(v)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">{{ v.label }}</button>
@@ -1355,9 +1469,23 @@ onUnmounted(() => {
       <path :d="pathScreen" fill="none" stroke="#3730a3" stroke-width="1.5" />
       <path :d="constructionScreen" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4 3" />
       <template v-for="e in doc.entities" :key="'hit-' + e.id">
-        <path v-if="e.kind !== 'point'" :d="entityPathScreen(e.id)" fill="none" stroke="transparent" stroke-width="12"
+        <!-- path-kind entities are hit-tested PER SEGMENT below instead of as
+             one whole-entity hit-path — clicking anywhere on a path now picks
+             the segment under the cursor. Whole-entity selection (set via the
+             __sketchDraw.pick API, e.g. for Repeat/Mirror/Construction) still
+             renders its orange highlight here regardless. -->
+        <path v-if="e.kind !== 'point' && e.kind !== 'path'" :d="entityPathScreen(e.id)" fill="none" stroke="transparent" stroke-width="12"
               :style="{ cursor: 'pointer' }" @pointerdown="(ev) => onEntityPointerDown(e.id, ev)" :data-ent="e.id" />
         <path v-if="e.kind !== 'point' && selection.includes(e.id)" :d="entityPathScreen(e.id)" fill="none" stroke="#f59e0b" stroke-width="2.5" pointer-events="none" />
+        <template v-if="e.kind === 'path'">
+          <path v-for="(seg, i) in ((e as any).segments as SegmentSpec[])" :key="'seghit-' + e.id + '-' + i"
+                :d="segmentPathScreen(e.id, i as number)" fill="none" stroke="transparent" stroke-width="12"
+                :style="{ cursor: 'pointer' }" @pointerdown="(ev) => onSegmentPointerDown(e.id, i as number, ev)"
+                :data-seg="e.id + ':' + i" />
+        </template>
+      </template>
+      <template v-for="s in selectedSegments" :key="'segsel-' + s.pathId + '-' + s.segIndex">
+        <path :d="segmentPathScreen(s.pathId, s.segIndex)" fill="none" stroke="#f59e0b" stroke-width="2.5" pointer-events="none" data-seg-selected />
       </template>
       <path v-if="previewD" :d="previewD" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="5 3"
             pointer-events="none" data-path-preview />

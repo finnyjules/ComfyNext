@@ -1038,6 +1038,129 @@ test('Escape aborts a live marquee drag: clears it without deselecting or touchi
   expect(result.ents).toBe(1)         // no stray marquee-select mutation
 })
 
+test('segment selection: pick 2 line segments on a bent path, apply Perpendicular via the API', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // a bent path — 3 anchors, 2 line segments, an arbitrary non-90 corner
+    // angle. pathDown/pathUp with no move in between keeps both segments
+    // straight lines (no bow past the drag threshold) — same recipe as the
+    // corner "Right angle" test above.
+    D.setTool('path')
+    D.pathDown(1, 1); D.pathUp(1, 1)      // a0
+    D.pathDown(5, 1); D.pathUp(5, 1)      // a1 — corner
+    D.pathDown(7, 5); D.pathUp(7, 5)      // a2
+    D.finishPath(false)
+
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+
+    D.setTool('select')
+    D.pickSegment(path.id, 0)
+    D.pickSegment(path.id, 1, true)
+    const segsAfterPick = D.selectedSegments
+    const entitySelAfterPick = D.selection
+    const verbs = D.availableConstraints().map((v: any) => v.kind)
+
+    D.apply('perpendicular')
+
+    const segsAfterApply = D.selectedSegments   // apply() clears segment selection
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const a0 = P(path.anchors[0]), a1 = P(path.anchors[1]), a2 = P(path.anchors[2])
+    const u = { x: a1.x - a0.x, y: a1.y - a0.y }
+    const v = { x: a2.x - a1.x, y: a2.y - a1.y }
+    const dot = u.x * v.x + u.y * v.y
+
+    return { segsAfterPick, entitySelAfterPick, verbs, segsAfterApply, status: D.status(), dot }
+  })
+
+  expect(out.segsAfterPick.length).toBe(2)              // both segments selected
+  expect(out.entitySelAfterPick).toEqual([])             // mutually exclusive with entity selection
+  expect(out.verbs).toContain('perpendicular')
+  expect(out.verbs).toContain('parallel')
+  expect(out.verbs).toContain('equalDist')
+  expect(out.segsAfterApply).toEqual([])                 // apply cleared the segment selection
+  expect(out.status).toMatch(/^solved/)
+  expect(Math.abs(out.dot)).toBeLessThan(0.01)           // the two segments are now orthogonal
+})
+
+test('segment selection: pick a single line segment, apply Horizontal via the API', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const out = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    // a single line segment at an arbitrary (non-horizontal) angle
+    D.setTool('path')
+    D.pathDown(1, 2); D.pathUp(1, 2)      // a0
+    D.pathDown(6, 5); D.pathUp(6, 5)      // a1
+    D.finishPath(false)
+
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+
+    D.setTool('select')
+    D.pickSegment(path.id, 0)
+    const segs = D.selectedSegments
+    const verbs = D.availableConstraints().map((v: any) => v.kind)
+
+    D.apply('horizontal')
+
+    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
+    const a0 = P(path.anchors[0]), a1 = P(path.anchors[1])
+
+    return { segs, verbs, status: D.status(), dy: Math.abs(a1.y - a0.y) }
+  })
+
+  expect(out.segs).toEqual([{ pathId: expect.any(String), segIndex: 0 }])
+  expect(out.verbs).toContain('horizontal')
+  expect(out.verbs).toContain('vertical')
+  expect(out.status).toMatch(/^solved/)
+  expect(out.dy).toBeLessThan(0.01)   // the segment's two anchors now share y
+})
+
+test('segment selection: clicking a segment hit-path selects it and clears entity selection; a live segment renders its own highlighted stroke', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const ids = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('path')
+    // a diagonal first segment (neither axis-aligned) — a perfectly
+    // horizontal/vertical hit-path can end up with a zero-height/width
+    // client rect, which Playwright's actionability check treats as "not
+    // visible" and never clicks; a diagonal segment always has a real 2D box.
+    D.pathDown(1, 1); D.pathUp(1, 1)
+    D.pathDown(5, 4); D.pathUp(5, 4)
+    D.pathDown(8, 1); D.pathUp(8, 1)
+    D.finishPath(false)
+    const path = D.doc.entities.find((e: any) => e.kind === 'path')
+    D.setTool('select')
+    // pre-select an entity so the click's mutual-exclusivity clear is observable
+    D.pick(path.id)
+    return { pathId: path.id }
+  })
+
+  const seg0 = page.locator(`[data-seg="${ids.pathId}:0"]`)
+  await expect(seg0).toHaveCount(1)
+  await seg0.click()
+
+  const result = await page.evaluate(() => ({
+    segs: (window as any).__sketchDraw.selectedSegments,
+    sel: (window as any).__sketchDraw.selection,
+  }))
+  expect(result.segs).toEqual([{ pathId: ids.pathId, segIndex: 0 }])
+  expect(result.sel).toEqual([])   // entity selection cleared by the segment click
+
+  await expect(page.locator('[data-seg-selected]')).toHaveCount(1)
+})
+
 test('Escape aborts a live pan: ends the pan without moving the viewport further', async ({ page }) => {
   await page.goto('/dev/sketch-draw')
   await page.waitForSelector('[data-ready]')
