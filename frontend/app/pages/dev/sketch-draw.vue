@@ -85,7 +85,11 @@ const pending = ref<Pending>(null)
 const cursor = ref<{ x: number; y: number; shift: boolean } | null>(null)
 
 const selection = ref<EntityId[]>([])
-function pick(id: EntityId) {
+// additive=false (plain click): selection becomes exactly [id]. additive=true
+// (shift-click / shift-marquee): toggle `id` within the current selection,
+// same as the old always-toggle behavior.
+function pick(id: EntityId, additive = false) {
+  if (!additive) { selection.value = [id]; return }
   const i = selection.value.indexOf(id)
   if (i >= 0) selection.value.splice(i, 1)
   else selection.value.push(id)
@@ -861,6 +865,46 @@ let moved = false
 let dragHandleIds: EntityId[] = []
 let dragLast: { x: number; y: number } | null = null
 
+// --- select-tool marquee + click-empty-deselect ---
+// A pointerdown on EMPTY canvas (select tool only — entity/point pointerdowns
+// stopPropagation before reaching onPointerDownSvg, so this only ever starts
+// for a miss) always starts a marquee candidate. It resolves on pointerup:
+// no movement past the threshold → a plain click-on-empty-space, which clears
+// the selection (unless additive/shift, which is a no-op — shift implies
+// "keep what I have"); movement past the threshold → an actual box-select via
+// marqueeSelect(). marqueeStart/marqueeMoved/marqueeAdditive are screen
+// (svg-local pixel) state, mirroring the panStart*/dragLast pattern above —
+// never touches `doc`, so none of this is a history-mutating action.
+const marqueeRect = ref<{ x: number; y: number; w: number; h: number } | null>(null)
+let marqueeStart: { x: number; y: number } | null = null
+let marqueeMoved = false
+let marqueeAdditive = false
+const MARQUEE_THRESHOLD_PX = 3
+
+// select every entity with ANY point-closure point (pointClosure — same
+// expansion nudge()/flip() use) inside the world rect [x0,y0]–[x1,y1] — a
+// forgiving "any point touches" test rather than requiring the whole entity
+// inside. additive=true adds to the current selection (shift-marquee);
+// additive=false replaces it. Exposed directly as __sketchDraw.marqueeSelect
+// so E2E can drive the exact same path a real drag resolves to.
+function marqueeSelect(x0: number, y0: number, x1: number, y1: number, additive = false) {
+  const loX = Math.min(x0, x1), hiX = Math.max(x0, x1)
+  const loY = Math.min(y0, y1), hiY = Math.max(y0, y1)
+  const hits: EntityId[] = []
+  for (const e of doc.value.entities) {
+    const closure = pointClosure(doc.value, [e.id])
+    const inRect = closure.some(pid => {
+      const p = doc.value.entities.find(x => x.id === pid) as any
+      return p && p.kind === 'point' && p.x >= loX && p.x <= hiX && p.y >= loY && p.y <= hiY
+    })
+    if (inRect) hits.push(e.id)
+  }
+  if (!additive) { selection.value = hits; return }
+  const set = new Set(selection.value)
+  for (const id of hits) set.add(id)
+  selection.value = Array.from(set)
+}
+
 // handle ids attached to a given anchor: h1 of the segment leaving it, h2 of
 // the segment arriving at it (same adjacency handleArms walks)
 function handleIdsForAnchor(id: EntityId): EntityId[] {
@@ -880,9 +924,17 @@ function handleIdsForAnchor(id: EntityId): EntityId[] {
   return out
 }
 
-function svgXY(ev: PointerEvent) {
+// svg-local pixel coords (no world conversion) — the same frame sx()/sy()
+// render into (the <svg> has no viewBox scaling, so client-rect-relative
+// pixels ARE that frame). Used by the marquee overlay, which draws in screen
+// space so it stays a crisp 1px-ish rect regardless of zoom.
+function svgLocalXY(ev: PointerEvent) {
   const r = (ev.currentTarget as SVGSVGElement).getBoundingClientRect()
-  return { x: wx(ev.clientX - r.left), y: wy(ev.clientY - r.top) }
+  return { x: ev.clientX - r.left, y: ev.clientY - r.top }
+}
+function svgXY(ev: PointerEvent) {
+  const { x, y } = svgLocalXY(ev)
+  return { x: wx(x), y: wy(y) }
 }
 function onWheel(ev: WheelEvent) {
   ev.preventDefault()
@@ -893,7 +945,10 @@ function onWheel(ev: WheelEvent) {
 }
 function onEntityPointerDown(id: EntityId, ev: PointerEvent) {
   if (panTrigger(ev)) { startPan(ev); ev.stopPropagation(); return }
-  if (tool.value === 'select') { pick(id); ev.stopPropagation() }
+  // non-point entities (line/circle/path hit-paths) never drag via pointer —
+  // only points do (see onPointerDownPoint) — so there's no click-vs-drag
+  // ambiguity here: select immediately, replacing unless shift-held.
+  if (tool.value === 'select') { pick(id, ev.shiftKey); ev.stopPropagation() }
 }
 function onPointerDownPoint(id: EntityId, ev: PointerEvent) {
   if (panTrigger(ev)) { startPan(ev); ev.stopPropagation(); return }
@@ -905,8 +960,12 @@ function onPointerDownPoint(id: EntityId, ev: PointerEvent) {
   ev.stopPropagation()
 }
 function onPointerUpPoint(id: EntityId, ev: PointerEvent) {
-  // a click without a drag toggles selection
-  if (tool.value === 'select' && dragId === id && !moved) { pick(id); ev.stopPropagation() }
+  // a click without a drag replaces the selection (or shift-toggles this
+  // point into/out of it); onPointerDownPoint never touched `selection` —
+  // only sets dragId — so a pointer-down on an already-selected point still
+  // starts a drag cleanly, and the selection only changes here, once we know
+  // it was a click and not a drag.
+  if (tool.value === 'select' && dragId === id && !moved) { pick(id, ev.shiftKey); ev.stopPropagation() }
   dragId = null; dragHandleIds = []; dragLast = null
 }
 function entityPathScreen(id: EntityId): string {
@@ -914,7 +973,17 @@ function entityPathScreen(id: EntityId): string {
 }
 function onPointerDownSvg(ev: PointerEvent) {
   if (panTrigger(ev)) { startPan(ev); return }
-  if (tool.value === 'select') return
+  if (tool.value === 'select') {
+    // a miss — entity/point pointerdowns stopPropagation before this handler
+    // ever runs. Start a marquee candidate; resolved on pointerup as either a
+    // click-empty-deselect or a real box-select (see marqueeStart's comment).
+    const { x, y } = svgLocalXY(ev)
+    marqueeStart = { x, y }
+    marqueeMoved = false
+    marqueeAdditive = ev.shiftKey
+    marqueeRect.value = { x, y, w: 0, h: 0 }
+    return
+  }
   const { x, y } = svgXY(ev)
   if (tool.value === 'path') { pathDown(x, y, ev.shiftKey); return }
   place(x, y)
@@ -923,6 +992,16 @@ function onPointerMove(ev: PointerEvent) {
   if (panning.value) {
     panX.value = panStartPanX + (ev.clientX - panStartClientX)
     panY.value = panStartPanY + (ev.clientY - panStartClientY)
+    return
+  }
+  if (marqueeStart) {
+    if (ev.buttons === 0) return   // button released off-canvas — pointerup/leave settles it
+    const { x, y } = svgLocalXY(ev)
+    if (!marqueeMoved && Math.hypot(x - marqueeStart.x, y - marqueeStart.y) > MARQUEE_THRESHOLD_PX) marqueeMoved = true
+    marqueeRect.value = {
+      x: Math.min(marqueeStart.x, x), y: Math.min(marqueeStart.y, y),
+      w: Math.abs(x - marqueeStart.x), h: Math.abs(y - marqueeStart.y),
+    }
     return
   }
   if (tool.value === 'path') {
@@ -951,6 +1030,21 @@ function onPointerUp(ev: PointerEvent) {
     const { x, y } = svgXY(ev)
     pathUp(x, y)
     return
+  }
+  if (marqueeStart) {
+    const start = marqueeStart, additive = marqueeAdditive, didMove = marqueeMoved
+    marqueeStart = null; marqueeMoved = false; marqueeRect.value = null
+    if (!didMove) {
+      // plain click on empty canvas: deselect. Shift+click-empty is a no-op
+      // (shift signals "keep what I have" — nothing to add from empty space).
+      if (!additive) clearSel()
+      return
+    }
+    const { x: ex, y: ey } = svgLocalXY(ev)
+    const w0 = { x: wx(start.x), y: wy(start.y) }
+    const w1 = { x: wx(ex), y: wy(ey) }
+    marqueeSelect(w0.x, w0.y, w1.x, w1.y, additive)
+    return   // selection change only — no commitHistory (not a doc mutation)
   }
   // settle a select-tool point drag as ONE history entry — release can land
   // off the point circle (onPointerUpPoint never fires then), so this is the
@@ -1094,8 +1188,12 @@ onMounted(() => {
     // coverage of the 45° angle snap (see tests/sketch-draw.spec.ts).
     placeShift: (x: number, y: number) => pathDown(x, y, true),
     drag: (id: EntityId, x: number, y: number) => { runSolve({ point: id, x, y }); commitHistory() },
-    pick: (id: EntityId) => pick(id),
+    pick: (id: EntityId, additive = false) => pick(id, additive),
     clearSel: () => clearSel(),
+    // Task 5 test hook: mirrors the real marquee-drag pointerup resolution
+    // (see onPointerUp) — same marqueeSelect() call, just fed a world rect
+    // directly instead of two svg-local pixel points.
+    marqueeSelect: (x0: number, y0: number, x1: number, y1: number, additive = false) => marqueeSelect(x0, y0, x1, y1, additive),
     apply: (kind: ConstraintKind, value?: number) => apply(kind, value),
     del: () => del(),
     availableConstraints: () => availableConstraints(),
@@ -1214,6 +1312,8 @@ onUnmounted(() => {
         <rect :x="pathBowChip.jointX + 6" :y="pathBowChip.jointY - 16" width="16" height="14" rx="3" fill="#111827" opacity="0.85" />
         <text :x="pathBowChip.jointX + 9" :y="pathBowChip.jointY - 5" fill="#e5e7eb" font-size="10" font-family="ui-monospace, monospace">T</text>
       </g>
+      <rect v-if="marqueeRect" :x="marqueeRect.x" :y="marqueeRect.y" :width="marqueeRect.w" :height="marqueeRect.h"
+            fill="rgba(37,99,235,0.08)" stroke="#2563eb" stroke-width="1" stroke-dasharray="4 3" pointer-events="none" data-marquee />
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">
       Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Path click to chain anchors, drag before releasing to bow a segment into an arc, click the first anchor to close. Select drags points; the drawing re-solves.

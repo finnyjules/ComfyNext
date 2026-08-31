@@ -63,7 +63,7 @@ test('select two circles and apply concentric via the API', async ({ page }) => 
   const verbs = await page.evaluate(() => {
     const D = (window as any).__sketchDraw
     const circles = D.doc.entities.filter((e: any) => e.kind === 'circle')
-    D.clearSel(); D.pick(circles[0].id); D.pick(circles[1].id)
+    D.clearSel(); D.pick(circles[0].id); D.pick(circles[1].id, true)
     return D.availableConstraints().map((v: any) => v.kind)
   })
   expect(verbs).toContain('concentric')
@@ -216,7 +216,7 @@ test('select two lines at an angle and apply perpendicular via the API', async (
     D.setTool('line'); D.place(2, 6); D.place(6, 9)      // line B, steep slope
 
     const lines = D.doc.entities.filter((e: any) => e.kind === 'line')
-    D.clearSel(); D.pick(lines[0].id); D.pick(lines[1].id)
+    D.clearSel(); D.pick(lines[0].id); D.pick(lines[1].id, true)
     const verbs = D.availableConstraints().map((v: any) => v.kind)
 
     D.apply('perpendicular')
@@ -661,7 +661,7 @@ test('editable dimension chips: setConstraintValue updates an existing distance 
     D.setTool('point'); D.place(1, 1); D.place(5, 1)
     D.setTool('select')
     const pts = D.doc.entities.filter((e: any) => e.kind === 'point')
-    D.pick(pts[0].id); D.pick(pts[1].id)
+    D.pick(pts[0].id); D.pick(pts[1].id, true)
     D.apply('distance', 3)
     const con = D.doc.constraints.find((c: any) => c.kind === 'distance')
     return { conId: con.id, p1: pts[0].id, p2: pts[1].id }
@@ -681,4 +681,75 @@ test('editable dimension chips: setConstraintValue updates an existing distance 
     (window as any).__sketchDraw.doc.constraints.find((c: any) => c.id === conId), info.conId)
   expect(con.value).toBe(7)
   expect(await distOf()).toBeCloseTo(7, 1)
+})
+
+test('select tool: marquee box-select, click-empty-deselect, plain-click-replaces, shift-click-adds', async ({ page }) => {
+  await page.goto('/dev/sketch-draw')
+  await page.waitForSelector('[data-ready]')
+  await page.waitForFunction(() => !!(window as any).__sketchDraw)
+
+  const ids = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.reset()
+    D.setTool('point')
+    D.place(2, 2)
+    D.place(5, 5)
+    D.place(9, 9)
+    D.setTool('select')
+    const pts = D.doc.entities.filter((e: any) => e.kind === 'point')
+    return { a: pts[0].id, b: pts[1].id, c: pts[2].id }
+  })
+
+  // marqueeSelect a world rect covering exactly (2,2) and (5,5), missing (9,9)
+  const marqueeSel = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.marqueeSelect(1, 1, 6, 6)
+    return D.selection as string[]
+  })
+  expect(new Set(marqueeSel)).toEqual(new Set([ids.a, ids.b]))
+  expect(marqueeSel.length).toBe(2)
+
+  // clearSel resets to empty
+  const afterClear = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.clearSel()
+    return D.selection as string[]
+  })
+  expect(afterClear).toEqual([])
+
+  // plain pick(a) then shift-add pick(b, true) → both selected
+  const shiftAdd = await page.evaluate((ids) => {
+    const D = (window as any).__sketchDraw
+    D.pick(ids.a)
+    D.pick(ids.b, true)
+    return D.selection as string[]
+  }, ids)
+  expect(new Set(shiftAdd)).toEqual(new Set([ids.a, ids.b]))
+  expect(shiftAdd.length).toBe(2)
+
+  // plain (non-additive) pick(c) replaces the whole selection with just c
+  const replaced = await page.evaluate((ids) => {
+    const D = (window as any).__sketchDraw
+    D.pick(ids.c)
+    return D.selection as string[]
+  }, ids)
+  expect(replaced).toEqual([ids.c])
+
+  // shift-marquee ADDS to the existing selection instead of replacing it
+  const shiftMarquee = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    // rect covering only (2,2) — c ((9,9)) stays selected from the prior step
+    D.marqueeSelect(1, 1, 3, 3, true)
+    return D.selection as string[]
+  })
+  expect(new Set(shiftMarquee)).toEqual(new Set([ids.a, ids.c]))
+  expect(shiftMarquee.length).toBe(2)
+
+  // a non-additive marquee over empty space replaces selection with nothing
+  const emptyMarquee = await page.evaluate(() => {
+    const D = (window as any).__sketchDraw
+    D.marqueeSelect(20, 20, 25, 25)
+    return D.selection as string[]
+  })
+  expect(emptyMarquee).toEqual([])
 })
