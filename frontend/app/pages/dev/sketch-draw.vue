@@ -4,14 +4,14 @@
 definePageMeta({ layout: false })
 import { ref, computed, onMounted, toRaw } from 'vue'
 import type { SketchDoc, EntityId, ConstraintKind, SegmentSpec } from '~/lib/sketch/model'
-import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, addSmoothHandles, isPointReferenced } from '~/lib/sketch/edit'
+import { addPoint, addLine, addCircle, addConstraint, deleteEntity, addPath, repeatEntities, mirrorEntities, pointClosure, isPointReferenced } from '~/lib/sketch/edit'
 import { snapPoint, inferCircleTangents, tangentJointArc } from '~/lib/sketch/infer'
 import { solve, type DragTarget } from '~/lib/sketch/solve'
 import { sketchPathData, entityPath } from '~/lib/sketch/sketchPath'
 import { dist, type Vec2 } from '~/lib/sketch/geom'
 import { constraintMarks, arcDimensionMarks } from '~/lib/sketch/annotate'
 
-type Tool = 'select' | 'point' | 'line' | 'circle' | 'path' | 'pen'
+type Tool = 'select' | 'point' | 'line' | 'circle' | 'path'
 
 const doc = ref<SketchDoc>({ entities: [], constraints: [] })
 const tool = ref<Tool>('select')
@@ -32,8 +32,8 @@ type Pending =
   | null
 const pending = ref<Pending>(null)
 
-// live pen/path pointer position, world coords — drives the in-progress
-// draw preview (previewD below); null when not hovering with pen/path tool
+// live path pointer position, world coords — drives the in-progress draw
+// preview (previewD below); null when not hovering with the path tool
 const cursor = ref<{ x: number; y: number } | null>(null)
 
 const selection = ref<EntityId[]>([])
@@ -268,7 +268,7 @@ function jointInfoForSegment(pp: { anchors: EntityId[]; segments: SegmentSpec[] 
 // --- path tool: the real gesture — pointerdown places an anchor (+ a line
 // segment from the previous one, as today); if the pointer moves past the
 // threshold before pointerup, that segment bows into a circular arc through
-// the live pointer (see bowArc). Mirrors the pen tool's down/move/up shape.
+// the live pointer (see bowArc).
 type PathDrag = { anchor: EntityId; prevAnchor: EntityId; startX: number; startY: number; bowed: boolean } | null
 let pathDrag: PathDrag = null
 
@@ -324,11 +324,9 @@ function pathUp(x: number, y: number) {
   runSolve()
 }
 
-// closing segment between last and first anchors; pen paths always close with a cubic.
-// h2 wires the first anchor's own incoming handle back in — if it was drawn smooth,
-// firstHIn holds that handle so the closing curve honors it instead of landing as a cusp.
+// closing segment between last and first anchors — the path tool always closes with a line.
 function closingSegment(): SegmentSpec {
-  return tool.value === 'pen' ? { kind: 'cubic', h1: lastHOut, h2: firstHIn } : { kind: 'line' }
+  return { kind: 'line' }
 }
 
 function finishPath(close = false) {
@@ -337,7 +335,7 @@ function finishPath(close = false) {
   if (!pp || pp.anchors.length < 2) return
   if (close) {
     // closing segment of the current kind between last and first anchors
-    if (tool.value !== 'pen' && nextSegment.value === 'arc') {
+    if (nextSegment.value === 'arc') {
       const a = doc.value.entities.find(e => e.id === pp.anchors[pp.anchors.length - 1]) as any
       const b = doc.value.entities.find(e => e.id === pp.anchors[0]) as any
       const c = addPoint(doc.value, (a.x + b.x) / 2 - (b.y - a.y) / 2, (a.y + b.y) / 2 + (b.x - a.x) / 2)
@@ -345,60 +343,6 @@ function finishPath(close = false) {
     } else pp.segments.push(closingSegment())
   }
   addPath(doc.value, pp.anchors, pp.segments, close)
-  runSolve()
-}
-
-// --- pen tool: click-drag anchor chain; drag beyond 0.15 world units → smooth anchor ---
-type PenDrag = { anchor: EntityId; startX: number; startY: number; smooth: boolean } | null
-let penDrag: PenDrag = null
-let lastHOut: EntityId | null = null
-// the first anchor's incoming handle, if it was drawn smooth — wired into the
-// closing segment's h2 when the path closes (see closingSegment / F3)
-let firstHIn: EntityId | null = null
-
-function penDown(x: number, y: number) {
-  const id = placePoint(x, y)
-  if (!pendingPath.value) {
-    pendingPath.value = { anchors: [id], segments: [] }
-    lastHOut = null
-    firstHIn = null
-    penDrag = { anchor: id, startX: x, startY: y, smooth: false }
-    return
-  }
-  const pp = pendingPath.value
-  if (id === pp.anchors[0] && pp.anchors.length >= 2) { finishPath(true); penDrag = null; return }  // clicked first anchor → close
-  if (id === pp.anchors[pp.anchors.length - 1]) { penDrag = null; return }                            // ignore double-click same point
-  pp.segments.push({ kind: 'cubic', h1: lastHOut, h2: null })
-  pp.anchors.push(id)
-  penDrag = { anchor: id, startX: x, startY: y, smooth: false }
-}
-
-function penMove(x: number, y: number) {
-  // reactive — drives previewD/previewDragHandles live, whether this came from
-  // a real pointermove or a direct __sketchDraw.penMove() call (tests)
-  cursor.value = { x, y }
-  if (!penDrag) return
-  if (dist({ x, y }, { x: penDrag.startX, y: penDrag.startY }) > 0.15) penDrag.smooth = true
-}
-
-function penUp(x: number, y: number) {
-  if (!penDrag) return
-  const { anchor, smooth } = penDrag
-  penDrag = null
-  if (smooth) {
-    const { hOut, hIn } = addSmoothHandles(doc.value, anchor, x, y)
-    const pp = pendingPath.value
-    if (pp && pp.segments.length > 0) {
-      const segIn = pp.segments[pp.segments.length - 1]
-      if (segIn && segIn.kind === 'cubic') segIn.h2 = hIn
-    }
-    if (pp && pp.anchors[0] === anchor) firstHIn = hIn  // this anchor IS the path's first anchor
-    lastHOut = hOut
-  } else {
-    // corner anchor — no outgoing handle; must NOT carry the previous smooth
-    // anchor's hOut into the next segment (F1)
-    lastHOut = null
-  }
   runSolve()
 }
 
@@ -467,59 +411,11 @@ const constructionScreen = computed(() => {
   }
   return parts.join(' ')
 })
-// construction points are handles — only worth drawing while their owning
-// path is selected or is the in-progress draw; otherwise they're stray dots
-const visibleHandleIds = computed(() => {
-  const d = doc.value
-  const out = new Set<EntityId>()
-  const addHandles = (segments: SegmentSpec[]) => {
-    for (const seg of segments) {
-      if (seg.kind !== 'cubic') continue
-      if (seg.h1) out.add(seg.h1)
-      if (seg.h2) out.add(seg.h2)
-    }
-  }
-  for (const e of d.entities) {
-    if (e.kind === 'path' && selection.value.includes(e.id)) addHandles(e.segments)
-  }
-  if (pendingPath.value) addHandles(pendingPath.value.segments)
-  return out
-})
-const pts = computed(() => doc.value.entities.filter(e =>
-  e.kind === 'point' && (!(e as any).construction || visibleHandleIds.value.has(e.id))) as any[])
+const pts = computed(() => doc.value.entities.filter(e => e.kind === 'point') as any[])
 const marks = computed(() => constraintMarks(doc.value))
 // persistent "R n.n" radius chips on every finished arc segment — pure read of
 // the doc, never solves; distinct from pathBowChip's live during-drag chip
 const arcDims = computed(() => arcDimensionMarks(doc.value))
-
-// screen-space arm lines (anchor→handle) for cubic segments of selected or pending paths
-const handleArms = computed(() => {
-  const d = doc.value
-  const out: { x1: number; y1: number; x2: number; y2: number }[] = []
-  const addArms = (anchors: EntityId[], segments: SegmentSpec[]) => {
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i]!
-      if (seg.kind !== 'cubic') continue
-      const fromId = anchors[i]!
-      const toId = anchors[(i + 1) % anchors.length]!
-      if (seg.h1) {
-        const from = d.entities.find(e => e.id === fromId) as any
-        const h1 = d.entities.find(e => e.id === seg.h1) as any
-        if (from && h1) out.push({ x1: sx(from.x), y1: sy(from.y), x2: sx(h1.x), y2: sy(h1.y) })
-      }
-      if (seg.h2) {
-        const to = d.entities.find(e => e.id === toId) as any
-        const h2 = d.entities.find(e => e.id === seg.h2) as any
-        if (to && h2) out.push({ x1: sx(to.x), y1: sy(to.y), x2: sx(h2.x), y2: sy(h2.y) })
-      }
-    }
-  }
-  for (const e of d.entities) {
-    if (e.kind === 'path' && selection.value.includes(e.id)) addArms(e.anchors, e.segments)
-  }
-  if (pendingPath.value) addArms(pendingPath.value.anchors, pendingPath.value.segments)
-  return out
-})
 
 // screen coords of a live (already-in-doc) point entity — used by the preview,
 // which never goes through the shadow-doc clone
@@ -529,13 +425,12 @@ function screenPt(id: EntityId): { x: number; y: number } | null {
   return { x: sx(p.x), y: sy(p.y) }
 }
 
-// live pen/path draw preview: the already-placed pending segments, plus
-// either a rubber band out to the cursor (hovering) or — mid pen-drag past
-// the smooth threshold — the segment into the anchor being placed bending
-// live under the pointer. Pure read of doc + cursor + penDrag; never solves,
-// never mutates the doc.
+// live path draw preview: the already-placed pending segments, plus either a
+// rubber band out to the cursor (hovering) or — mid drag past the bow
+// threshold — the just-placed segment bending live under the pointer. Pure
+// read of doc + cursor + pathDrag; never solves, never mutates the doc.
 const previewD = computed(() => {
-  if (tool.value !== 'pen' && tool.value !== 'path') return ''
+  if (tool.value !== 'path') return ''
   const pp = pendingPath.value
   if (!pp || pp.anchors.length === 0) return ''
   const first = screenPt(pp.anchors[0]!)
@@ -543,8 +438,7 @@ const previewD = computed(() => {
   let d = `M ${first.x} ${first.y}`
   const segCount = pp.segments.length
   const lastAnchorId = pp.anchors[pp.anchors.length - 1]!
-  const dragging = tool.value === 'pen' && !!penDrag && penDrag.anchor === lastAnchorId
-  const bowing = tool.value === 'path' && !!pathDrag && pathDrag.bowed && pathDrag.anchor === lastAnchorId && !!cursor.value
+  const bowing = !!pathDrag && pathDrag.bowed && pathDrag.anchor === lastAnchorId && !!cursor.value
   for (let i = 0; i < segCount; i++) {
     const seg = pp.segments[i]!
     const fromId = pp.anchors[i]!
@@ -579,51 +473,18 @@ const previewD = computed(() => {
         const large = span > Math.PI ? 1 : 0
         d += ` A ${r} ${r} 0 ${large} ${sweep} ${to.x} ${to.y}`
       } else d += ` L ${to.x} ${to.y}`
-    } else if (seg.kind === 'cubic') {
-      if (dragging && i === segCount - 1 && penDrag!.smooth && cursor.value) {
-        // bending live: c1 is the fixed incoming tangent, c2 is the pointer
-        // mirrored through the anchor being placed (matches addSmoothHandles)
-        const anchor = screenPt(lastAnchorId)
-        if (anchor) {
-          const c1 = (seg.h1 && screenPt(seg.h1)) || screenPt(fromId)!
-          const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
-          const mirror = { x: 2 * anchor.x - ptr.x, y: 2 * anchor.y - ptr.y }
-          d += ` C ${c1.x} ${c1.y} ${mirror.x} ${mirror.y} ${anchor.x} ${anchor.y}`
-        } else d += ` L ${to.x} ${to.y}`
-      } else {
-        const c1 = (seg.h1 && screenPt(seg.h1)) || screenPt(fromId)!
-        const c2 = (seg.h2 && screenPt(seg.h2)) || to
-        d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${to.x} ${to.y}`
-      }
     } else {
       d += ` L ${to.x} ${to.y}`
     }
   }
-  if (!dragging && !bowing && cursor.value) {
+  if (!bowing && cursor.value) {
     const last = screenPt(lastAnchorId)
     if (last) {
       const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
-      if (lastHOut) {
-        const h = screenPt(lastHOut)
-        d += h ? ` M ${last.x} ${last.y} C ${h.x} ${h.y} ${ptr.x} ${ptr.y} ${ptr.x} ${ptr.y}`
-                : ` M ${last.x} ${last.y} L ${ptr.x} ${ptr.y}`
-      } else {
-        d += ` M ${last.x} ${last.y} L ${ptr.x} ${ptr.y}`
-      }
+      d += ` M ${last.x} ${last.y} L ${ptr.x} ${ptr.y}`
     }
   }
   return d
-})
-
-// handle arms shown while a pen drag is bending a curve — anchor→pointer and
-// anchor→mirror, same read-only contract as previewD
-const previewDragHandles = computed(() => {
-  if (tool.value !== 'pen' || !penDrag || !penDrag.smooth || !cursor.value) return null
-  const anchor = screenPt(penDrag.anchor)
-  if (!anchor) return null
-  const ptr = { x: sx(cursor.value.x), y: sy(cursor.value.y) }
-  const mirror = { x: 2 * anchor.x - ptr.x, y: 2 * anchor.y - ptr.y }
-  return { anchor, ptr, mirror }
 })
 
 // live radius chip shown near the bowed arc's midpoint while the path tool
@@ -696,18 +557,10 @@ function entityPathScreen(id: EntityId): string {
 function onPointerDownSvg(ev: PointerEvent) {
   if (tool.value === 'select') return
   const { x, y } = svgXY(ev)
-  if (tool.value === 'pen') { penDown(x, y); return }
   if (tool.value === 'path') { pathDown(x, y); return }
   place(x, y)
 }
 function onPointerMove(ev: PointerEvent) {
-  if (tool.value === 'pen') {
-    // always track — drives the live preview even when just hovering, not
-    // only while penDrag is active (that's the "draws blind" fix)
-    const { x, y } = svgXY(ev)
-    penMove(x, y)
-    return
-  }
   if (tool.value === 'path') {
     // always track too — drives the rubber-band hover preview even when not
     // mid-drag, and the live bow while pathDrag is active
@@ -729,11 +582,6 @@ function onPointerMove(ev: PointerEvent) {
   runSolve({ point: dragId, x, y })
 }
 function onPointerUp(ev: PointerEvent) {
-  if (tool.value === 'pen' && penDrag) {
-    const { x, y } = svgXY(ev)
-    penUp(x, y)
-    return
-  }
   if (tool.value === 'path' && pathDrag) {
     const { x, y } = svgXY(ev)
     pathUp(x, y)
@@ -746,7 +594,7 @@ function onPointerLeaveSvg(ev: PointerEvent) {
   cursor.value = null
 }
 
-// an abandoned path/pen draw (tool switched away, or reset, before it was
+// an abandoned path draw (tool switched away, or reset, before it was
 // committed) leaves its anchors and handles sitting in the doc forever. Delete
 // whichever of them nothing committed ends up referencing — an anchor reused
 // via snap-coincidence with existing geometry stays (deleteEntity would
@@ -759,8 +607,6 @@ function cleanupPendingPath() {
     if (s.kind === 'cubic') { if (s.h1) candidates.add(s.h1); if (s.h2) candidates.add(s.h2) }
     else if (s.kind === 'arc') candidates.add(s.center)
   }
-  if (lastHOut) candidates.add(lastHOut)
-  if (firstHIn) candidates.add(firstHIn)
   for (const id of candidates) {
     const p = doc.value.entities.find(e => e.id === id) as any
     if (!p || p.kind !== 'point' || p.fixed) continue
@@ -773,10 +619,7 @@ function selectTool(t: Tool) {
   tool.value = t
   pending.value = null
   pendingPath.value = null
-  penDrag = null
   pathDrag = null
-  lastHOut = null
-  firstHIn = null
   cursor.value = null
 }
 
@@ -785,10 +628,7 @@ function reset() {
   doc.value = { entities: [], constraints: [] }
   pending.value = null
   pendingPath.value = null
-  penDrag = null
   pathDrag = null
-  lastHOut = null
-  firstHIn = null
   cursor.value = null
   status.value = 'ready'
 }
@@ -805,9 +645,6 @@ onMounted(() => {
     setTool: (t: Tool) => selectTool(t),
     reset,
     place: (x: number, y: number) => place(x, y),
-    penDown: (x: number, y: number) => penDown(x, y),
-    penMove: (x: number, y: number) => penMove(x, y),
-    penUp: (x: number, y: number) => penUp(x, y),
     pathDown: (x: number, y: number) => pathDown(x, y),
     pathMove: (x: number, y: number) => pathMove(x, y),
     pathUp: (x: number, y: number) => pathUp(x, y),
@@ -834,7 +671,7 @@ onMounted(() => {
   <div :data-ready="ready ? '' : undefined" style="font-family: ui-sans-serif, system-ui; padding: 12px; color: #e5e5e5; background: #0b0b0b; min-height: 100vh">
     <h1 style="font-size: 14px; margin: 0 0 8px">Sketch Draw</h1>
     <div style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
-      <button v-for="t in (['select','point','line','circle','path','pen'] as Tool[])" :key="t"
+      <button v-for="t in (['select','point','line','circle','path'] as Tool[])" :key="t"
               :data-tool="t" @click="() => selectTool(t)"
               :style="{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #333', cursor: 'pointer',
                         background: tool === t ? '#2563eb' : '#1a1a1a', color: '#fff' }">{{ t }}</button>
@@ -843,13 +680,6 @@ onMounted(() => {
     </div>
     <div v-if="tool === 'path'" style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
       <span style="font-size: 12px; color: #9ca3af">click to place a point — drag before releasing to curve the segment into an arc; click the first point to close</span>
-      <button data-act="close" @click="finishPath(true)"
-              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">close</button>
-      <button data-act="finish" @click="finishPath(false)"
-              style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">finish</button>
-    </div>
-    <div v-else-if="tool === 'pen'" style="display: flex; gap: 6px; margin-bottom: 8px; align-items: center">
-      <span style="font-size: 12px; color: #9ca3af">click for a corner anchor, click-drag for a smooth anchor; click the first anchor to close</span>
       <button data-act="close" @click="finishPath(true)"
               style="padding: 3px 9px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 12px">close</button>
       <button data-act="finish" @click="finishPath(false)"
@@ -886,22 +716,10 @@ onMounted(() => {
               :style="{ cursor: 'pointer' }" @pointerdown="(ev) => { if (tool==='select') { pick(e.id); ev.stopPropagation() } }" :data-ent="e.id" />
         <path v-if="e.kind !== 'point' && selection.includes(e.id)" :d="entityPathScreen(e.id)" fill="none" stroke="#f59e0b" stroke-width="2.5" pointer-events="none" />
       </template>
-      <line v-for="(a, i) in handleArms" :key="'arm-' + i" :x1="a.x1" :y1="a.y1" :x2="a.x2" :y2="a.y2"
-            stroke="#7c3aed" stroke-width="1" pointer-events="none" />
       <path v-if="previewD" :d="previewD" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="5 3"
-            pointer-events="none" data-pen-preview />
-      <template v-if="previewDragHandles">
-        <line :x1="previewDragHandles.anchor.x" :y1="previewDragHandles.anchor.y" :x2="previewDragHandles.ptr.x" :y2="previewDragHandles.ptr.y"
-              stroke="#7c3aed" stroke-width="1" pointer-events="none" />
-        <line :x1="previewDragHandles.anchor.x" :y1="previewDragHandles.anchor.y" :x2="previewDragHandles.mirror.x" :y2="previewDragHandles.mirror.y"
-              stroke="#7c3aed" stroke-width="1" pointer-events="none" />
-        <circle :cx="previewDragHandles.ptr.x" :cy="previewDragHandles.ptr.y" r="3" fill="#7c3aed" pointer-events="none" />
-        <circle :cx="previewDragHandles.mirror.x" :cy="previewDragHandles.mirror.y" r="3" fill="#7c3aed" pointer-events="none" />
-      </template>
-      <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" :r="p.construction ? 4 : 6"
-              :fill="p.construction ? 'none' : (selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb'))"
-              :stroke="p.construction ? (selection.includes(p.id) ? '#f59e0b' : '#7c3aed') : 'none'"
-              :stroke-width="p.construction ? 1.5 : 0"
+            pointer-events="none" data-path-preview />
+      <circle v-for="p in pts" :key="p.id" :cx="sx(p.x)" :cy="sy(p.y)" r="6"
+              :fill="selection.includes(p.id) ? '#f59e0b' : (p.fixed ? '#9ca3af' : '#2563eb')"
               :style="{ cursor: tool === 'select' ? 'grab' : 'crosshair' }"
               @pointerdown="(e) => onPointerDownPoint(p.id, e)" @pointerup="(e) => onPointerUpPoint(p.id, e)" :data-point="p.id" />
       <g v-for="m in marks" :key="m.id" pointer-events="none">
@@ -922,7 +740,7 @@ onMounted(() => {
       </g>
     </svg>
     <p style="font-size: 12px; color: #6b7280; margin-top: 8px">
-      Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Path/Pen click to chain anchors, click the first anchor to close. Pen: click-drag for a smooth anchor. Select drags points; the drawing re-solves.
+      Pick a tool. Point/Line/Circle click to place (snaps to nearby geometry). Path click to chain anchors, drag before releasing to bow a segment into an arc, click the first anchor to close. Select drags points; the drawing re-solves.
     </p>
   </div>
 </template>

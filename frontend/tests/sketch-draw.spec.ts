@@ -154,57 +154,6 @@ test('path: click-and-drag bows a segment into a circular arc', async ({ page })
   expect(result.pathData).toContain(' A ')
 })
 
-test('pen: smooth blob stays smooth under handle and anchor drags', async ({ page }) => {
-  await page.goto('/dev/sketch-draw')
-  await page.waitForSelector('[data-ready]')
-  await page.waitForFunction(() => !!(window as any).__sketchDraw)
-
-  const out = await page.evaluate(async () => {
-    const D = (window as any).__sketchDraw
-    D.reset()
-    D.setTool('pen')
-    // corner anchor, then two smooth anchors (down→move→up), then close
-    D.penDown(2, 2); D.penUp(2, 2)                       // corner
-    D.penDown(8, 2); D.penMove(9.5, 3)                   // smooth — bending mid-drag
-    // the live pen preview updates through the same reactive state penMove
-    // always touches, so this checks the real preview path, not a stand-in
-    await new Promise(r => setTimeout(r, 0))              // let Vue flush the DOM patch
-    const previewEl = document.querySelector('[data-pen-preview]')
-    const previewExists = !!previewEl
-    const previewHasCubic = (previewEl?.getAttribute('d') || '').includes(' C ')
-    D.penUp(9.5, 3)
-    D.penDown(6, 7); D.penMove(4.5, 7.5); D.penUp(4.5, 7.5) // smooth
-    D.penDown(2, 2); D.penUp(2, 2)                       // click first anchor → close
-    const path = D.doc.entities.find((e: any) => e.kind === 'path')
-    const col = D.doc.constraints.filter((c: any) => c.kind === 'collinear')
-    // drag a handle: find the collinear rule of anchor 1 and drag its hOut
-    const rule = col[0]
-    D.drag(rule.refs[2], 10, 4)
-    // smoothness invariant: cross((anchor−hIn),(hOut−hIn)) ≈ 0 for every collinear rule
-    const P = (id: string) => D.doc.entities.find((e: any) => e.id === id)
-    let maxCross = 0
-    for (const c of col) {
-      const hi = P(c.refs[0]), an = P(c.refs[1]), ho = P(c.refs[2])
-      maxCross = Math.max(maxCross, Math.abs((an.x - hi.x) * (ho.y - hi.y) - (an.y - hi.y) * (ho.x - hi.x)))
-    }
-    // and an anchor drag keeps it solvable
-    const res = D.drag(path.anchors[0], 1.5, 1.5)
-    return { closed: path.closed, anchors: path.anchors.length, smoothRules: col.length,
-             cubics: path.segments.filter((s: any) => s.kind === 'cubic').length,
-             maxCross, converged: res.converged, d: D.pathData(), previewExists, previewHasCubic }
-  })
-
-  expect(out.previewExists).toBe(true)      // live pen preview rendered mid-drag
-  expect(out.previewHasCubic).toBe(true)    // ...and it was bending, not just a straight stand-in
-  expect(out.closed).toBe(true)
-  expect(out.anchors).toBe(3)
-  expect(out.smoothRules).toBe(2)
-  expect(out.cubics).toBeGreaterThanOrEqual(3)
-  expect(out.maxCross).toBeLessThan(0.01)   // smooth after the handle drag
-  expect(out.converged).toBe(true)
-  expect(out.d).toContain(' C ')            // real bezier output
-})
-
 test('tangent joint: arc snaps tangent to the previous line and stays smooth', async ({ page }) => {
   await page.goto('/dev/sketch-draw')
   await page.waitForSelector('[data-ready]')
